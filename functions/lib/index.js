@@ -52,24 +52,19 @@ admin.initializeApp();
 // Export functions from other files to make them deployable
 __exportStar(require("./notifier"), exports);
 // Simplified CORS configuration:
-// - Production: prefer origins set via `firebase functions:config:set cors.origins` (string or array)
+// - Production: prefer origins set via CORS_ORIGINS environment variable
 // - Local dev fallback: allow localhost on the patient PWA dev port
 // This provides a single, predictable production source of truth and a safe local fallback.
 let allowedOrigins = ['http://localhost:3001', 'http://127.0.0.1:3001'];
 try {
-    const cfg = functions.config?.().cors;
-    if (cfg && cfg.origins) {
-        if (Array.isArray(cfg.origins)) {
-            allowedOrigins = cfg.origins;
-        }
-        else if (typeof cfg.origins === 'string') {
-            // Support comma-separated string in functions config
-            allowedOrigins = cfg.origins.split(',').map((s) => s.trim()).filter(Boolean);
-        }
+    const corsOrigins = process.env.CORS_ORIGINS;
+    if (corsOrigins) {
+        // Support comma-separated string in environment variable
+        allowedOrigins = corsOrigins.split(',').map((s) => s.trim()).filter(Boolean);
     }
 }
 catch (e) {
-    // If functions.config() isn't available (e.g., local unit tests), keep the local fallback
+    // If environment variable isn't available, keep the local fallback
 }
 // Use cors with a dynamic origin function to validate incoming origin header against allowedOrigins.
 const corsHandler = (0, cors_1.default)({
@@ -99,7 +94,7 @@ exports.helloHttp = regionalFunctions.https.onRequest((req, res) => {
 // Protected by the same x-admin-secret header. REMOVE before production.
 exports.devCompletePatient = regionalFunctions.https.onRequest(async (req, res) => {
     try {
-        const secret = process.env.ADMIN_CLAIM_SECRET || functions.config?.().admin?.claim_secret;
+        const secret = process.env.ADMIN_CLAIM_SECRET;
         const header = req.header('x-admin-secret');
         const devBypass = req.header('x-dev-bypass') === 'true';
         // Allow dev bypass for local testing when admin secret isn't set in the runtime
@@ -222,19 +217,9 @@ exports.devEchoHeaders = regionalFunctions.https.onRequest((req, res) => {
 exports.devShowAdminSecret = regionalFunctions.https.onRequest((req, res) => {
     try {
         const envSecret = process.env.ADMIN_CLAIM_SECRET || null;
-        // functions.config() may be empty in some local setups; guard access
-        let cfgSecret = null;
-        try {
-            cfgSecret = (functions.config && functions.config().admin && functions.config().admin.claim_secret) || null;
-        }
-        catch (e) {
-            cfgSecret = null;
-        }
         res.status(200).json({
             hasEnv: !!envSecret,
             envLen: envSecret ? envSecret.length : null,
-            hasConfig: !!cfgSecret,
-            configLen: cfgSecret ? cfgSecret.length : null,
             timestamp: new Date().toISOString()
         });
     }
@@ -530,9 +515,9 @@ exports.updatePatientStatus = regionalFunctions.https.onCall(async (data, contex
                 throw new functions.https.HttpsError('not-found', 'Patient document not found.');
             }
             const patientData = patientDoc.data();
-            // 2. If completing we also need queue doc (read now before any write)
+            // 2. If completing OR moving to in-progress we need queue doc (read now before any write)
             let queueDoc = null;
-            if (newStatus === 'completed') {
+            if (newStatus === 'completed' || newStatus === 'in-progress') {
                 queueDoc = await transaction.get(queueRef);
                 if (!queueDoc.exists) {
                     throw new functions.https.HttpsError('not-found', 'Queue document not found.');
@@ -556,15 +541,24 @@ exports.updatePatientStatus = regionalFunctions.https.onCall(async (data, contex
                 updatedAt: firestore_1.FieldValue.serverTimestamp()
             };
             transaction.update(patientRef, { status: newStatus, updatedAt: firestore_1.FieldValue.serverTimestamp() });
-            if (newStatus === 'completed' && queueDoc) {
-                const queueData = queueDoc.data();
-                const currentCompletedPatients = queueData?.completedPatients || 0;
+            if (queueDoc) {
                 const patientTokenNumber = patientData?.tokenNumber || 0;
-                transaction.update(queueRef, {
-                    completedPatients: currentCompletedPatients + 1,
-                    currentToken: patientTokenNumber,
-                    updatedAt: firestore_1.FieldValue.serverTimestamp()
-                });
+                if (newStatus === 'completed') {
+                    const queueData = queueDoc.data();
+                    const currentCompletedPatients = queueData?.completedPatients || 0;
+                    transaction.update(queueRef, {
+                        completedPatients: currentCompletedPatients + 1,
+                        currentToken: patientTokenNumber, // last completed patient token
+                        updatedAt: firestore_1.FieldValue.serverTimestamp()
+                    });
+                }
+                else if (newStatus === 'in-progress') {
+                    // Update currentToken immediately when we start serving a patient to avoid UI lag on patient view
+                    transaction.update(queueRef, {
+                        currentToken: patientTokenNumber,
+                        updatedAt: firestore_1.FieldValue.serverTimestamp()
+                    });
+                }
             }
         });
         functions.logger.info('Patient status updated successfully', {
@@ -599,6 +593,23 @@ exports.updatePatientStatus = regionalFunctions.https.onCall(async (data, contex
                     }
                 });
             }
+            if (newStatus === 'cancelled') {
+                try {
+                    await (0, notifier_1.sendNotification)({
+                        to: updatedPatientData?.phone,
+                        type: 'cancelled',
+                        payload: {
+                            name: updatedPatientData?.name,
+                            tokenNumber: updatedPatientData?.tokenNumber,
+                            clinicId, doctorId, queueId,
+                            message: 'Your queue entry has been cancelled. If this was a mistake, please contact the clinic to rejoin.'
+                        }
+                    });
+                }
+                catch (e) {
+                    functions.logger.warn('Failed to send cancellation notification', e);
+                }
+            }
         }
         catch (e) {
             functions.logger.warn('Error handling three-away notification', e);
@@ -621,8 +632,15 @@ exports.updatePatientStatus = regionalFunctions.https.onCall(async (data, contex
                         .get();
                     if (!nextSnap.empty) {
                         const nextDoc = nextSnap.docs[0];
+                        const nextData = nextDoc.data();
+                        const nextToken = nextData?.tokenNumber || 0;
                         await nextDoc.ref.update({ status: 'in-progress', updatedAt: firestore_1.FieldValue.serverTimestamp() });
-                        functions.logger.info('Auto-advance promoted next patient', { nextPatientId: nextDoc.id });
+                        // Also reflect currently served token on queue doc
+                        await admin.firestore().collection('clinics').doc(clinicId)
+                            .collection('doctors').doc(doctorId)
+                            .collection('queues').doc(queueId)
+                            .update({ currentToken: nextToken, updatedAt: firestore_1.FieldValue.serverTimestamp() });
+                        functions.logger.info('Auto-advance promoted next patient', { nextPatientId: nextDoc.id, nextToken });
                     }
                 }
             }

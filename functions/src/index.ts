@@ -15,22 +15,18 @@ export * from './notifier';
 
 
 // Simplified CORS configuration:
-// - Production: prefer origins set via `firebase functions:config:set cors.origins` (string or array)
+// - Production: prefer origins set via CORS_ORIGINS environment variable
 // - Local dev fallback: allow localhost on the patient PWA dev port
 // This provides a single, predictable production source of truth and a safe local fallback.
 let allowedOrigins: string[] = ['http://localhost:3001', 'http://127.0.0.1:3001'];
 try {
-  const cfg = functions.config?.().cors;
-  if (cfg && cfg.origins) {
-    if (Array.isArray(cfg.origins)) {
-      allowedOrigins = cfg.origins;
-    } else if (typeof cfg.origins === 'string') {
-      // Support comma-separated string in functions config
-      allowedOrigins = cfg.origins.split(',').map((s: string) => s.trim()).filter(Boolean);
-    }
+  const corsOrigins = process.env.CORS_ORIGINS;
+  if (corsOrigins) {
+    // Support comma-separated string in environment variable
+    allowedOrigins = corsOrigins.split(',').map((s: string) => s.trim()).filter(Boolean);
   }
 } catch (e) {
-  // If functions.config() isn't available (e.g., local unit tests), keep the local fallback
+  // If environment variable isn't available, keep the local fallback
 }
 
 // Use cors with a dynamic origin function to validate incoming origin header against allowedOrigins.
@@ -66,7 +62,7 @@ export const helloHttp = regionalFunctions.https.onRequest((req, res) => {
 // Protected by the same x-admin-secret header. REMOVE before production.
 export const devCompletePatient = regionalFunctions.https.onRequest(async (req, res) => {
   try {
-    const secret = process.env.ADMIN_CLAIM_SECRET || functions.config?.().admin?.claim_secret;
+    const secret = process.env.ADMIN_CLAIM_SECRET;
     const header = req.header('x-admin-secret');
     const devBypass = req.header('x-dev-bypass') === 'true';
     // Allow dev bypass for local testing when admin secret isn't set in the runtime
@@ -198,19 +194,10 @@ export const devEchoHeaders = regionalFunctions.https.onRequest((req, res) => {
 export const devShowAdminSecret = regionalFunctions.https.onRequest((req, res) => {
   try {
     const envSecret = process.env.ADMIN_CLAIM_SECRET || null;
-    // functions.config() may be empty in some local setups; guard access
-    let cfgSecret: string | null = null;
-    try {
-      cfgSecret = (functions.config && functions.config().admin && functions.config().admin.claim_secret) || null;
-    } catch (e) {
-      cfgSecret = null;
-    }
 
     res.status(200).json({
       hasEnv: !!envSecret,
       envLen: envSecret ? envSecret.length : null,
-      hasConfig: !!cfgSecret,
-      configLen: cfgSecret ? cfgSecret.length : null,
       timestamp: new Date().toISOString()
     });
   } catch (err) {
