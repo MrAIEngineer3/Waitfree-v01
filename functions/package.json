@@ -1,0 +1,30 @@
+{
+  "name": "v-queue-functions",
+  "version": "0.1.0",
+  "private": true,
+  "engines": {
+    "node": "^22.18.0"
+  },
+  "main": "lib/index.js",
+  "scripts": {
+    "clean": "rimraf lib",
+    "build": "npm run clean && tsc",
+    "build:watch": "npm run clean && tsc --watch",
+    "serve": "npm run build && firebase emulators:start --only functions",
+    "deploy": "npm run build && firebase deploy --only functions",
+    "lint": "eslint src --ext .ts"
+  },
+  "dependencies": {
+    "@google-cloud/firestore": "^7",
+    "@types/cors": "^2.8.19",
+    "cors": "^2.8.5",
+    "firebase-admin": "^12",
+    "firebase-functions": "^5"
+  },
+  "devDependencies": {
+    "@types/node": "^20",
+    "eslint": "^9",
+    "typescript": "^5",
+    "rimraf": "^5"
+  }
+}

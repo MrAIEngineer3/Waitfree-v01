@@ -1,0 +1,28 @@
+{
+  "name": "waitfree",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Waitfree - Queue management system",
+  "workspaces": [
+    "clinic-dashboard",
+    "patient-pwa",
+    "functions"
+  ],
+  "scripts": {
+    "dev": "npm run dev --workspace=clinic-dashboard",
+    "build": "npm run build --workspace=clinic-dashboard",
+    "start": "npm run start --workspace=clinic-dashboard",
+    "emulators": "firebase emulators:start",
+    "deploy": "firebase deploy"
+  },
+  "dependencies": {
+    "date-fns": "^4.1.0",
+    "firebase": "^12.3.0",
+    "firebase-admin": "^13.5.0",
+    "firebase-functions": "^6.4.0"
+  },
+  "devDependencies": {
+    "@types/date-fns": "^2.5.3",
+    "typescript": "^5"
+  }
+}

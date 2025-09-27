@@ -1,0 +1,28 @@
+{
+  "functions": {
+    "source": "functions",
+    "runtime": "nodejs20"
+  },
+  "firestore": {
+    "rules": "firestore.rules",
+    "indexes": "firestore.indexes.json"
+  },
+  "emulators": {
+    "functions": {
+      "port": 5002
+    },
+    "firestore": {
+      "port": 8081
+    },
+    "auth": {
+      "port": 9098
+    },
+    "ui": {
+      "enabled": true
+    },
+    "hosting": {
+      "port": 5001
+    },
+    "singleProjectMode": true
+  }
+}

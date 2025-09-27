@@ -1,0 +1,57 @@
+import { initializeApp } from 'firebase/app';
+import { connectAuthEmulator, getAuth } from 'firebase/auth';
+import { connectFirestoreEmulator, getFirestore } from 'firebase/firestore';
+import { connectFunctionsEmulator, getFunctions } from 'firebase/functions';
+
+// Your Firebase configuration
+// Replace these values with your actual Firebase config
+const firebaseConfig = {
+  apiKey: process.env.NEXT_PUBLIC_FIREBASE_API_KEY || "demo-api-key",
+  authDomain: process.env.NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN || "demo-project.firebaseapp.com",
+  projectId: process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID || "waitfree-9b06e",
+  storageBucket: process.env.NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET || "demo-project.appspot.com",
+  messagingSenderId: process.env.NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID || "123456789",
+  appId: process.env.NEXT_PUBLIC_FIREBASE_APP_ID || "1:123456789:web:abc123def456",
+};
+
+// Initialize Firebase
+const app = initializeApp(firebaseConfig);
+
+// Initialize Firebase services
+export const db = getFirestore(app);
+export const auth = getAuth(app);
+export const functions = getFunctions(app, 'asia-south1'); // Match your Cloud Functions region
+
+// Safety & diagnostics wrapper
+if (typeof window !== 'undefined') {
+  const proj = firebaseConfig.projectId;
+  const wantEmu = (process.env.NEXT_PUBLIC_USE_FIREBASE_EMULATOR === 'true' || process.env.NODE_ENV === 'development');
+  if (proj === 'demo-project') {
+    console.warn('[patient-pwa][firebase] WARNING: Using placeholder projectId demo-project. Set NEXT_PUBLIC_FIREBASE_PROJECT_ID for consistent local dev.');
+  }
+  try {
+    if (wantEmu) {
+      console.log('[patient-pwa][firebase] Connecting to Firebase emulators...');
+      connectFirestoreEmulator(db, '127.0.0.1', 8081);
+      connectAuthEmulator(auth, 'http://127.0.0.1:9098', { disableWarnings: true });
+      connectFunctionsEmulator(functions, '127.0.0.1', 5002);
+      // After attempting to connect, verify Firestore points to localhost host; Firestore v9 keeps settings internally
+      const internal: any = db as any;
+      const host = internal._settings?.host;
+      if (!host || !/localhost|127\.0\.0\.1/.test(host)) {
+        console.error('[patient-pwa][firebase] Emulator connection attempt did not set a localhost host. Blocking to avoid prod writes.');
+        throw new Error('Emulator connection failed');
+      }
+      const opts: any = internal._app?.options || internal.app?.options || {};
+      console.log('[patient-pwa][firebase] Emulator connected. projectId:', opts.projectId, 'host:', host);
+    } else {
+      const internal: any = db as any;
+      const opts: any = internal._app?.options || internal.app?.options || {};
+      console.log('[patient-pwa][firebase] NOT using emulators. projectId:', opts.projectId, 'NODE_ENV:', process.env.NODE_ENV);
+    }
+  } catch (err) {
+    console.error('[patient-pwa][firebase] Fatal during emulator safety init:', err);
+  }
+}
+
+export default app;
