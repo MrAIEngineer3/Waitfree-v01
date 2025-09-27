@@ -71,3 +71,9 @@ node_modules/
 
 # dataconnect generated files
 .dataconnect
+
+# Firebase emulator exports and temporary data
+emulator_export/
+functions/firebase-export-*/
+functions/tmp/
+saved-data/

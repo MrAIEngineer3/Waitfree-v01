@@ -48,9 +48,9 @@ export const ConfirmModal: React.FC<ConfirmModalProps> = ({
   allowSkipToday = false,
   defaultSkipToday = false
 }) => {
-  if (!open) return null;
-  const confirmBtnClasses = `${toneMap[confirmTone] || toneMap.blue} px-5 py-2 text-sm rounded-md font-medium text-white focus:outline-none focus:ring-2 disabled:opacity-40 flex items-center gap-2`;
   const [skip, setSkip] = React.useState(defaultSkipToday);
+  const confirmBtnClasses = `${toneMap[confirmTone] || toneMap.blue} px-5 py-2 text-sm rounded-md font-medium text-white focus:outline-none focus:ring-2 disabled:opacity-40 flex items-center gap-2`;
+  if (!open) return null;
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
       <div
