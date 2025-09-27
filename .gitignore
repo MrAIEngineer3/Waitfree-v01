@@ -66,5 +66,8 @@ node_modules/
 .env
 .env.local
 
+# next.js
+.next/
+
 # dataconnect generated files
 .dataconnect
