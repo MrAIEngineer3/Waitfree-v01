@@ -31,21 +31,12 @@ export default function SignupPage() {
     setError(null);
     setLoading(true);
     try {
-      // Create the user account
-      const userCredential = await createUserWithEmailAndPassword(auth, email.trim(), password);
-      console.log('User created:', userCredential.user.uid);
-      
-      // Store signup data in sessionStorage for the setup page
-      sessionStorage.setItem('clinicSignupData', JSON.stringify({
-        clinicName: clinicName.trim(),
-        doctorName: doctorName.trim(),
-        specialty: specialty.trim()
-      }));
-      
-      // Redirect to setup page instead of calling bootstrap directly
-      router.push('/auth/setup');
+      await createUserWithEmailAndPassword(auth, email.trim(), password);
+      const res = await bootstrapFn({ clinicName: clinicName.trim(), doctorName: doctorName.trim(), specialty: specialty.trim() });
+      const data = res.data as BootstrapResult;
+      if (!data?.success) throw new Error('Bootstrap failed');
+      router.push('/');
     } catch (err: unknown) {
-      console.error('Signup error:', err);
       const message = err instanceof Error ? err.message : 'Failed to sign up';
       setError(message);
     } finally {
