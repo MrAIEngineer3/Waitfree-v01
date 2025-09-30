@@ -1,9 +1,10 @@
 "use client";
 
 import { doc, onSnapshot } from 'firebase/firestore';
+import { httpsCallable } from 'firebase/functions';
 import { useParams } from 'next/navigation';
 import { useEffect, useRef, useState } from 'react';
-import { db } from '../../../../../../lib/firebase';
+import { db, functions } from '../../../../../../lib/firebase';
 
 interface Patient {
   id: string;
@@ -83,32 +84,14 @@ export default function QueueStatus() {
               return;
             }
 
-            // Determine Functions base URL consistent with JoinForm
-            const explicitBase = process.env.NEXT_PUBLIC_FUNCTIONS_BASE_URL;
-            const useEmulator = process.env.NEXT_PUBLIC_USE_FIREBASE_EMULATOR === 'true';
-            const defaultRegional = 'https://asia-south1-waitfree-9b06e.cloudfunctions.net';
-            const functionsBase = explicitBase
-              ? explicitBase.replace(/\/$/, '')
-              : (useEmulator
-                ? 'http://127.0.0.1:5002/waitfree-9b06e/asia-south1'
-                : defaultRegional);
+            // Call the callable functions API to obtain the secure patient view
+            const getViewFn = httpsCallable(functions, 'getPatientView');
+            const callResp = await getViewFn({ clinicId, doctorId, queueId, patientId, token: storedToken });
+            const data = callResp?.data as any;
 
-            const resp = await fetch(`${functionsBase}/getPatientView`, {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ clinicId, doctorId, queueId, patientId, token: storedToken })
-            });
-
-            if (!resp.ok) {
-              const err = await resp.json().catch(() => ({}));
-              setError(err.error || 'Failed to fetch patient data');
-              setIsLoading(false);
-              return;
-            }
-
-            const data = await resp.json();
             if (data && data.patient) {
               setPatient(data.patient as Patient);
+
               // After initial secure fetch, attach real-time listener to patient doc for status updates
               const patientRef = doc(db, 'clinics', clinicId, 'doctors', doctorId, 'queues', queueId, 'patients', patientId);
               unsubscribePatient = onSnapshot(patientRef, (snap) => {
@@ -124,10 +107,14 @@ export default function QueueStatus() {
               });
             } else {
               setError('Failed to fetch patient data');
+              setIsLoading(false);
+              return;
             }
           } catch (err) {
-            console.error('Error fetching patient via function:', err);
-            setError('Error fetching patient data');
+            console.error('Error fetching patient via callable function:', err);
+            setError((err as any)?.message || 'Error fetching patient data');
+            setIsLoading(false);
+            return;
           }
         })();
 

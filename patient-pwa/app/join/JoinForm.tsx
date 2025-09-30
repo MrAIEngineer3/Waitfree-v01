@@ -1,9 +1,10 @@
 "use client";
 
 import { doc, getDoc } from 'firebase/firestore';
+import { httpsCallable } from 'firebase/functions';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { useEffect, useState } from 'react';
-import { db } from '../../lib/firebase';
+import { db, functions } from '../../lib/firebase';
 
 export default function JoinForm() {
   // State management
@@ -43,23 +44,16 @@ export default function JoinForm() {
     setIsLoading(true);
 
     try {
-      // Determine Functions base URL dynamically from projectId + region.
+      // Determine emulator usage and environment; firebase lib will connect functions emulator
       const explicitBase = process.env.NEXT_PUBLIC_FUNCTIONS_BASE_URL;
       const useEmulator = process.env.NEXT_PUBLIC_USE_FIREBASE_EMULATOR === 'true';
       const region = 'asia-south1';
       const projectId = process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID || 'waitfree-9b06e';
-      const emulatorBase = `http://127.0.0.1:5002/${projectId}/${region}`;
-      const defaultRegional = `https://${region}-${projectId}.cloudfunctions.net`;
-      const functionsBase = explicitBase
-        ? explicitBase.replace(/\/$/, '')
-        : (useEmulator ? emulatorBase : defaultRegional);
-
-      // Safety: if on localhost, emulator expected, but functionsBase is pointing to production domain, block.
+      // Keep previous safety checks for local dev to avoid accidental production calls
       if (typeof window !== 'undefined' && window.location.hostname === 'localhost') {
         const emulatorExpected = useEmulator || process.env.NODE_ENV === 'development';
-        const isProdLike = functionsBase.startsWith('https://');
-        if (emulatorExpected && isProdLike) {
-          console.error('[JoinForm] Blocking request: expected emulator but functionsBase resolved to production-like URL', functionsBase);
+        if (emulatorExpected && !useEmulator) {
+          console.error('[JoinForm] Blocking request: expected emulator but NEXT_PUBLIC_USE_FIREBASE_EMULATOR is not set');
           setError('Internal configuration error (emulator not engaged). Please refresh after setting env vars.');
           setIsLoading(false);
           return;
@@ -73,13 +67,10 @@ export default function JoinForm() {
         return;
       }
 
-      // Call the Cloud Function (HTTP trigger)
-  const response = await fetch(`${functionsBase}/joinQueue`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
+      // Call the Cloud Function using callable functions (onCall/onCallable)
+      try {
+        const joinFn = httpsCallable(functions, 'joinQueue');
+        const callResult = await joinFn({
           clinicId,
           doctorId,
           patientData: {
@@ -87,28 +78,26 @@ export default function JoinForm() {
             age: ageNumber,
             phone: phone.trim(),
           },
-        }),
-      });
+        });
+        const result = callResult?.data as any;
 
-      if (response.ok) {
-        const result = await response.json();
-        const { patientId, queueId, doctorId: dId, clinicId: cId, accessToken } = result;
-
-        // Store access token in sessionStorage keyed by patient id so it doesn't appear in URL
-        try {
-          if (accessToken && patientId) {
-            sessionStorage.setItem(`patientToken:${patientId}`, accessToken);
+        if (result && result.patientId) {
+          const { patientId, queueId, doctorId: dId, clinicId: cId, accessToken } = result;
+          try {
+            if (accessToken && patientId) {
+              sessionStorage.setItem(`patientToken:${patientId}`, accessToken);
+            }
+          } catch (e) {
+            console.warn('Failed to store access token in sessionStorage', e);
           }
-        } catch (e) {
-          // ignore session storage failures
-          console.warn('Failed to store access token in sessionStorage', e);
+          router.push(`/queue/${cId}/${dId}/${queueId}/${patientId}`);
+        } else {
+          setError('Failed to join queue. Please try again.');
         }
-
-        // Redirect to the new nested queue status page (token is stored in session)
-        router.push(`/queue/${cId}/${dId}/${queueId}/${patientId}`);
-      } else {
-        const errorData = await response.json();
-        setError(errorData.error || 'Failed to join queue. Please try again.');
+      } catch (err: any) {
+        // firebase functions SDK throws a structured error; fall back to message
+        console.error('Error calling joinQueue callable function:', err);
+        setError(err?.message || 'Failed to join queue. Please try again.');
       }
     } catch (err) {
       console.error('Error joining queue:', err);

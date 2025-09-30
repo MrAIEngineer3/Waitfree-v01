@@ -24,7 +24,7 @@
   "devDependencies": {
     "@types/node": "^20",
     "eslint": "^9",
-    "typescript": "^5",
-    "rimraf": "^5"
+    "rimraf": "^5.0.10",
+    "typescript": "^5.9.2"
   }
 }

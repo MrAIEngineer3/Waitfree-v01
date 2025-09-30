@@ -44,7 +44,7 @@ const firestore_1 = require("@google-cloud/firestore");
 const cors_1 = __importDefault(require("cors"));
 const crypto_1 = __importDefault(require("crypto"));
 const admin = __importStar(require("firebase-admin"));
-const functions = __importStar(require("firebase-functions"));
+const functions = __importStar(require("firebase-functions/v1"));
 // Import functions for local use
 const notifier_1 = require("./notifier");
 // Initialize the Admin SDK. This is required for all backend functions.
@@ -52,29 +52,38 @@ admin.initializeApp();
 // Export functions from other files to make them deployable
 __exportStar(require("./notifier"), exports);
 // Simplified CORS configuration:
-// - Production: prefer origins set via CORS_ORIGINS environment variable
+// - Production: prefer origins set via Firebase functions config (cors.origins)
 // - Local dev fallback: allow localhost on the patient PWA dev port
 // This provides a single, predictable production source of truth and a safe local fallback.
 let allowedOrigins = ['http://localhost:3001', 'http://127.0.0.1:3001'];
+let configError = null;
 try {
-    const corsOrigins = process.env.CORS_ORIGINS;
-    if (corsOrigins) {
-        // Support comma-separated string in environment variable
-        allowedOrigins = corsOrigins.split(',').map((s) => s.trim()).filter(Boolean);
+    const corsConfig = functions.config().cors;
+    if (corsConfig && corsConfig.origins) {
+        allowedOrigins = corsConfig.origins.split(',').map((s) => s.trim()).filter(Boolean);
+    }
+    else {
+        configError = "Config object or origins property was missing.";
     }
 }
 catch (e) {
-    // If environment variable isn't available, keep the local fallback
+    configError = `Error fetching functions.config(): ${e.message}`;
 }
+// This log runs ONCE when the function instance starts up.
+console.log(`GLOBAL: Allowed origins loaded: [${allowedOrigins.join(", ")}]. Config error: ${configError || 'None'}`);
 // Use cors with a dynamic origin function to validate incoming origin header against allowedOrigins.
 const corsHandler = (0, cors_1.default)({
     origin: (origin, callback) => {
-        // Allow non-browser requests (e.g., curl, server-to-server) with no origin
-        if (!origin)
-            return callback(null, true);
-        if (allowedOrigins.indexOf(origin) !== -1)
-            return callback(null, true);
-        return callback(new Error('Origin not allowed by CORS'));
+        // This log runs for EVERY request.
+        console.log(`CORS CHECK: Request from origin [${origin}].`);
+        if (!origin || allowedOrigins.includes(origin)) {
+            console.log(`CORS VERDICT: Origin [${origin}] ALLOWED.`);
+            callback(null, true);
+        }
+        else {
+            console.error(`CORS VERDICT: Origin [${origin}] DENIED because it is not in [${allowedOrigins.join(", ")}].`);
+            callback(null, false);
+        }
     }
 });
 // Configure region for all functions
@@ -293,183 +302,153 @@ exports.onPatientStatusChange = regionalFunctions.firestore
     }
 });
 /**
- * HTTP Cloud Function to add a patient to a queue
- * Handles CORS and implements secure queue joining with automatic token assignment
+ * Callable Cloud Function to add a patient to a queue.
+ * This is invoked from the client SDK and handles auth and data serialization.
+ * Implements secure queue joining with automatic token assignment.
  */
-exports.joinQueue = regionalFunctions.https.onRequest((req, res) => {
-    return corsHandler(req, res, async () => {
-        try {
-            // Only allow POST requests
-            if (req.method !== 'POST') {
-                res.status(405).json({ error: 'Method not allowed. Use POST.' });
-                return;
-            }
-            // Extract data from request body
-            const { clinicId, doctorId, patientData } = req.body;
-            // Validate required fields
-            if (!clinicId || !doctorId || !patientData) {
-                res.status(400).json({
-                    error: 'Missing required fields: clinicId, doctorId, and patientData are required'
-                });
-                return;
-            }
-            if (!patientData.name || !patientData.age || !patientData.phone) {
-                res.status(400).json({
-                    error: 'Patient data must include name, age, and phone'
-                });
-                return;
-            }
-            // 1. Get current date in YYYY-MM-DD format for the queue ID
-            const today = new Date().toISOString().split('T')[0]; // YYYY-MM-DD format
-            // 2. Define database references for the doctor, the queue, and the patients sub-collection
-            const db = admin.firestore();
-            const queueRef = db.collection('clinics').doc(clinicId)
-                .collection('doctors').doc(doctorId)
-                .collection('queues').doc(today);
-            const patientsRef = queueRef.collection('patients');
-            let newPatientData;
-            // raw token will be generated inside the transaction and returned to client
-            let rawAccessToken = '';
-            // 3. Start a Firestore transaction
-            await db.runTransaction(async (transaction) => {
-                // 4. Inside the transaction:
-                // 4a. Try to get the queue document for today
-                const queueDoc = await transaction.get(queueRef);
-                let newTokenNumber;
-                if (!queueDoc.exists) {
-                    // 4b. If the queue doesn't exist, create it with initial values and set tokenNumber to 1
-                    newTokenNumber = 1;
-                    const newQueueData = {
-                        id: today,
-                        doctorId: doctorId,
-                        clinicId: clinicId,
-                        status: 'active',
-                        currentToken: 0, // No patients served yet
-                        totalPatients: 1,
-                        completedPatients: 0,
-                        createdAt: firestore_1.FieldValue.serverTimestamp()
-                    };
-                    transaction.set(queueRef, newQueueData);
-                }
-                else {
-                    // 4c. If it exists, increment the totalPatients field to get the new tokenNumber
-                    const queueData = queueDoc.data();
-                    newTokenNumber = (queueData?.totalPatients || 0) + 1;
-                    // 4e. Update the queue document with the new totalPatients count
-                    transaction.update(queueRef, {
-                        totalPatients: newTokenNumber
-                    });
-                }
-                // 4d. Create the new patient document in the 'patients' sub-collection
-                // Generate a secure random token for patient access and store only its hash
-                rawAccessToken = crypto_1.default.randomBytes(32).toString('hex');
-                const accessTokenHash = crypto_1.default.createHash('sha256').update(rawAccessToken).digest('hex');
-                newPatientData = {
-                    id: '', // Will be set after document creation
-                    name: patientData.name,
-                    age: patientData.age,
-                    phone: patientData.phone,
-                    tokenNumber: newTokenNumber,
-                    status: 'waiting',
-                    joinedAt: firestore_1.FieldValue.serverTimestamp(),
-                    queueId: today,
-                    clinicId: clinicId,
+exports.joinQueue = regionalFunctions.https.onCall(async (data, context) => {
+    try {
+        // Extract data from the 'data' parameter provided by the client SDK
+        const { clinicId, doctorId, patientData } = data;
+        // Validate required fields
+        if (!clinicId || !doctorId || !patientData) {
+            throw new functions.https.HttpsError('invalid-argument', 'Missing required fields: clinicId, doctorId, and patientData are required.');
+        }
+        if (!patientData.name || !patientData.age || !patientData.phone) {
+            throw new functions.https.HttpsError('invalid-argument', 'Patient data must include name, age, and phone.');
+        }
+        // 1. Get current date in YYYY-MM-DD format for the queue ID
+        const today = new Date().toISOString().split('T')[0]; // YYYY-MM-DD format
+        // 2. Define database references
+        const db = admin.firestore();
+        const queueRef = db.collection('clinics').doc(clinicId)
+            .collection('doctors').doc(doctorId)
+            .collection('queues').doc(today);
+        const patientsRef = queueRef.collection('patients');
+        let newPatientData;
+        // raw token will be generated inside the transaction and returned to client
+        let rawAccessToken = '';
+        // 3. Start a Firestore transaction
+        await db.runTransaction(async (transaction) => {
+            const queueDoc = await transaction.get(queueRef);
+            let newTokenNumber;
+            if (!queueDoc.exists) {
+                newTokenNumber = 1;
+                const newQueueData = {
+                    id: today,
                     doctorId: doctorId,
-                    // store only the hash; raw token is returned to the frontend
-                    accessTokenHash: accessTokenHash,
+                    clinicId: clinicId,
+                    status: 'active',
+                    currentToken: 0,
+                    totalPatients: 1,
+                    completedPatients: 0,
+                    createdAt: firestore_1.FieldValue.serverTimestamp()
                 };
-                // Create the patient document with auto-generated ID
-                const newPatientRef = patientsRef.doc();
-                newPatientData.id = newPatientRef.id;
-                transaction.set(newPatientRef, newPatientData);
-            });
-            // 5. Commit the transaction (automatically handled by runTransaction)
-            // 6. Return a minimal success response with identifiers so the client can fetch data via server if needed
-            // Send "joined" notification (non-blocking)
-            try {
-                await (0, notifier_1.sendNotification)({
-                    to: newPatientData.phone,
-                    type: 'joined',
-                    payload: {
-                        name: newPatientData.name,
-                        tokenNumber: newPatientData.tokenNumber,
-                        clinicId,
-                        doctorId
-                    }
+                transaction.set(queueRef, newQueueData);
+            }
+            else {
+                const queueData = queueDoc.data();
+                newTokenNumber = (queueData?.totalPatients || 0) + 1;
+                transaction.update(queueRef, {
+                    totalPatients: newTokenNumber
                 });
             }
-            catch (notifyErr) {
-                functions.logger.warn('Failed to send joined notification (continuing):', notifyErr);
-            }
-            res.status(200).json({
-                success: true,
-                message: 'Successfully joined the queue',
-                // Use the patient id assigned earlier and the queue/day identifiers
-                patientId: newPatientData.id,
+            rawAccessToken = crypto_1.default.randomBytes(32).toString('hex');
+            const accessTokenHash = crypto_1.default.createHash('sha256').update(rawAccessToken).digest('hex');
+            newPatientData = {
+                id: '', // Will be set after document creation
+                name: patientData.name,
+                age: patientData.age,
+                phone: patientData.phone,
+                tokenNumber: newTokenNumber,
+                status: 'waiting',
+                joinedAt: firestore_1.FieldValue.serverTimestamp(),
                 queueId: today,
-                doctorId: doctorId,
                 clinicId: clinicId,
-                // Return the raw token so the client can use it to fetch the patient view
-                accessToken: rawAccessToken
+                doctorId: doctorId,
+                accessTokenHash: accessTokenHash,
+            };
+            const newPatientRef = patientsRef.doc();
+            newPatientData.id = newPatientRef.id;
+            transaction.set(newPatientRef, newPatientData);
+        });
+        // Send "joined" notification (non-blocking)
+        try {
+            await (0, notifier_1.sendNotification)({
+                to: newPatientData.phone,
+                type: 'joined',
+                payload: {
+                    name: newPatientData.name,
+                    tokenNumber: newPatientData.tokenNumber,
+                    clinicId,
+                    doctorId
+                }
             });
         }
-        catch (error) {
-            // Basic error handling with logging
-            functions.logger.error('Error in joinQueue function:', error);
-            res.status(500).json({
-                error: 'Internal server error. Please try again later.',
-                details: error instanceof Error ? error.message : 'Unknown error'
-            });
+        catch (notifyErr) {
+            functions.logger.warn('Failed to send joined notification (continuing):', notifyErr);
         }
-    });
+        // Return data to the client
+        return {
+            success: true,
+            message: 'Successfully joined the queue',
+            patientId: newPatientData.id,
+            queueId: today,
+            doctorId: doctorId,
+            clinicId: clinicId,
+            accessToken: rawAccessToken
+        };
+    }
+    catch (error) {
+        functions.logger.error('Error in joinQueue function:', error);
+        // Re-throw HttpsError for the client SDK to handle it correctly
+        if (error instanceof functions.https.HttpsError) {
+            throw error;
+        }
+        // For other errors, throw a generic internal error
+        throw new functions.https.HttpsError('internal', 'An internal error occurred while trying to join the queue.');
+    }
 });
 /**
- * HTTP Cloud Function to return a patient's view after validating a short-lived token
- * Expected POST body: { clinicId, doctorId, queueId, patientId, token }
+ * Callable Cloud Function to return a patient's view after validating a short-lived token.
+ * Expected data: { clinicId, doctorId, queueId, patientId, token }
  */
-exports.getPatientView = regionalFunctions.https.onRequest((req, res) => {
-    return corsHandler(req, res, async () => {
-        try {
-            if (req.method !== 'POST') {
-                res.status(405).json({ error: 'Method not allowed. Use POST.' });
-                return;
-            }
-            const { clinicId, doctorId, queueId, patientId, token } = req.body || {};
-            if (!clinicId || !doctorId || !queueId || !patientId || !token) {
-                res.status(400).json({ error: 'Missing required fields: clinicId, doctorId, queueId, patientId, token' });
-                return;
-            }
-            const db = admin.firestore();
-            const patientRef = db.collection('clinics').doc(clinicId)
-                .collection('doctors').doc(doctorId)
-                .collection('queues').doc(queueId)
-                .collection('patients').doc(patientId);
-            const patientSnap = await patientRef.get();
-            if (!patientSnap.exists) {
-                res.status(404).json({ error: 'Patient not found' });
-                return;
-            }
-            const patientData = patientSnap.data();
-            const storedHash = patientData?.accessTokenHash;
-            if (!storedHash) {
-                res.status(403).json({ error: 'Access token not configured for this patient' });
-                return;
-            }
-            const tokenHash = crypto_1.default.createHash('sha256').update(String(token)).digest('hex');
-            if (tokenHash !== storedHash) {
-                res.status(403).json({ error: 'Invalid token' });
-                return;
-            }
-            // Do not return the accessTokenHash
-            const safeData = { ...patientData };
-            delete safeData.accessTokenHash;
-            res.status(200).json({ success: true, patient: safeData });
+exports.getPatientView = regionalFunctions.https.onCall(async (data, context) => {
+    try {
+        const { clinicId, doctorId, queueId, patientId, token } = data || {};
+        if (!clinicId || !doctorId || !queueId || !patientId || !token) {
+            throw new functions.https.HttpsError('invalid-argument', 'Missing required fields: clinicId, doctorId, queueId, patientId, token');
         }
-        catch (error) {
-            functions.logger.error('Error in getPatientView function:', error);
-            res.status(500).json({ error: 'Internal server error' });
+        const db = admin.firestore();
+        const patientRef = db.collection('clinics').doc(clinicId)
+            .collection('doctors').doc(doctorId)
+            .collection('queues').doc(queueId)
+            .collection('patients').doc(patientId);
+        const patientSnap = await patientRef.get();
+        if (!patientSnap.exists) {
+            throw new functions.https.HttpsError('not-found', 'Patient not found');
         }
-    });
+        const patientData = patientSnap.data();
+        const storedHash = patientData?.accessTokenHash;
+        if (!storedHash) {
+            throw new functions.https.HttpsError('permission-denied', 'Access token not configured for this patient');
+        }
+        const tokenHash = crypto_1.default.createHash('sha256').update(String(token)).digest('hex');
+        if (tokenHash !== storedHash) {
+            throw new functions.https.HttpsError('permission-denied', 'Invalid token');
+        }
+        // Do not return the accessTokenHash
+        const safeData = { ...patientData };
+        delete safeData.accessTokenHash;
+        return { success: true, patient: safeData };
+    }
+    catch (error) {
+        functions.logger.error('Error in getPatientView function:', error);
+        if (error instanceof functions.https.HttpsError) {
+            throw error;
+        }
+        throw new functions.https.HttpsError('internal', 'Internal server error');
+    }
 });
 /**
  * Firebase Callable Function to update a patient's status in the queue
