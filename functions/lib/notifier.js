@@ -37,7 +37,7 @@ exports.sendNotification = sendNotification;
 exports.setStaffClaim = setStaffClaim;
 const firestore_1 = require("@google-cloud/firestore");
 const admin = __importStar(require("firebase-admin"));
-const functions = __importStar(require("firebase-functions"));
+const functions = __importStar(require("firebase-functions/v1"));
 // Single exported sendNotification used by functions. Currently logs via functions.logger
 // Replace with real provider integration (Twilio, WhatsApp, etc.) using env vars/Secret Manager.
 async function sendNotification(opts) {
