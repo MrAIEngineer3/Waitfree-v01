@@ -25,8 +25,13 @@ export default function ClinicJoinQR({ clinicId, className }: Props) {
       const isLocal = /localhost|127\.0\.0\.1/.test(hostname);
       if (!isLocal) {
         // Best-effort inference: if dashboard is on a prod domain and no env is set,
-        // use the current origin rather than pointing users to localhost.
-        // If you host patient PWA on a different subdomain, set NEXT_PUBLIC_PATIENT_BASE_URL.
+        // use the appropriate origin rather than localhost.
+        // Special-case: when the dashboard is served from app.waitfreeclinic.com,
+        // patients should land on waitfreeclinic.com (root domain).
+        if (/^app\.waitfreeclinic\.com$/i.test(hostname)) {
+          return 'https://waitfreeclinic.com';
+        }
+        // Otherwise use current origin.
         console.warn('[ClinicJoinQR] NEXT_PUBLIC_PATIENT_BASE_URL is not set. Inferring base from current origin:', origin);
         return origin.replace(/\/$/, '');
       }
