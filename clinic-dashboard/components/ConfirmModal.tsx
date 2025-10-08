@@ -1,4 +1,5 @@
 import React from 'react';
+import Button from './ui/Button';
 
 interface ConfirmModalProps {
   open: boolean;
@@ -49,7 +50,15 @@ export const ConfirmModal: React.FC<ConfirmModalProps> = ({
   defaultSkipToday = false
 }) => {
   const [skip, setSkip] = React.useState(defaultSkipToday);
-  const confirmBtnClasses = `${toneMap[confirmTone] || toneMap.blue} px-5 py-2 text-sm rounded-md font-medium text-white focus:outline-none focus:ring-2 disabled:opacity-40 flex items-center gap-2`;
+  // Map legacy tone prop to Button variant
+  const toneToVariant: Record<string, string> = {
+    red: 'danger',
+    green: 'secondary',
+    yellow: 'outline', // pause style -> low emphasis
+    orange: 'outline',
+    blue: 'accent'
+  };
+  const confirmVariant = toneToVariant[confirmTone] || 'accent';
   if (!open) return null;
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
@@ -80,19 +89,19 @@ export const ConfirmModal: React.FC<ConfirmModalProps> = ({
           </label>
         )}
         <div className="flex items-center justify-end gap-3 pt-2">
-          <button
+          <Button
             onClick={() => { if (busy) return; onCancel(); }}
-            className="px-4 py-2 text-sm rounded-md border border-gray-300 text-gray-700 hover:bg-gray-100 disabled:opacity-40"
             disabled={busy}
-          >{cancelLabel}</button>
-          <button
+            variant="ghost"
+            size="sm"
+          >{cancelLabel}</Button>
+          <Button
             onClick={() => { if (busy || disableConfirm) return; onConfirm && onConfirm(skip); }}
             disabled={busy || disableConfirm}
-            className={confirmBtnClasses}
-          >
-            {busy && <span className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />}
-            {confirmLabel}
-          </button>
+            variant={confirmVariant as any}
+            size="sm"
+            loading={busy}
+          >{confirmLabel}</Button>
         </div>
       </div>
     </div>

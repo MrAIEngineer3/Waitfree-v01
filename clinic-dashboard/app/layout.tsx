@@ -1,6 +1,5 @@
 import type { Metadata } from "next";
 import { Inter } from "next/font/google";
-import AppShell from "../components/AppShell";
 import "./globals.css";
 
 const inter = Inter({
@@ -13,16 +12,11 @@ export const metadata: Metadata = {
   description: "Queue management system for healthcare providers",
 };
 
-export default function RootLayout({
-  children,
-}: Readonly<{
-  children: React.ReactNode;
-}>) {
+export default function RootLayout({ children }: { children: React.ReactNode }) {
+  // AppShell is now applied only within specific route groups (e.g., (dashboard)).
   return (
     <html lang="en">
-      <body className={`${inter.variable} antialiased`}>
-        <AppShell>{children}</AppShell>
-      </body>
+      <body className={`${inter.variable} antialiased min-h-screen bg-sem-app text-gray-900`}>{children}</body>
     </html>
   );
 }

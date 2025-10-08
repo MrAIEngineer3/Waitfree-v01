@@ -5,6 +5,7 @@ import { httpsCallable } from 'firebase/functions';
 import { useEffect, useState } from 'react';
 import { db, functions } from '../lib/firebase';
 import ConfirmModal from './ConfirmModal';
+import Button from './ui/Button';
 
 interface Patient {
   id: string;
@@ -20,11 +21,14 @@ interface Patient {
 export interface QueueListProps {
   clinicId?: string;
   doctorId?: string;
-  queueStatus?: 'active' | 'paused' | 'ended';
+  queueStatus?: 'active' | 'paused' | 'ended' | 'closed';
+  dayKey: string; // new required prop representing YYYY-MM-DD of queue
+  compact?: boolean; // compact density rows
 }
 
-export default function QueueList({ clinicId: clinicIdProp, doctorId: doctorIdProp, queueStatus }: QueueListProps) {
+export default function QueueList({ clinicId: clinicIdProp, doctorId: doctorIdProp, queueStatus, dayKey, compact = true }: QueueListProps) {
   const [patients, setPatients] = useState<Patient[]>([]);
+  const [loadingPatients, setLoadingPatients] = useState<boolean>(true);
   const [isNextPatientLoading, setIsNextPatientLoading] = useState(false);
   const [isPauseQueueLoading, setIsPauseQueueLoading] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
@@ -73,8 +77,7 @@ export default function QueueList({ clinicId: clinicIdProp, doctorId: doctorIdPr
   // Use props as provided by parent. If missing, do not subscribe.
   const clinicId = clinicIdProp;
   const doctorId = doctorIdProp;
-  const today = new Date().toISOString().split('T')[0];
-  const queueId = today;
+  const queueId = dayKey; // previously today
 
   useEffect(() => {
     console.log('[QueueList] useEffect triggered.');
@@ -205,6 +208,7 @@ export default function QueueList({ clinicId: clinicIdProp, doctorId: doctorIdPr
 
       console.log('[QueueList] Setting patients state with:', patientsList);
       setPatients(patientsList);
+      setLoadingPatients(false);
 
     }, (error) => {
       console.error('[QueueList] onSnapshot listener ERRORED:', error);
@@ -218,8 +222,18 @@ export default function QueueList({ clinicId: clinicIdProp, doctorId: doctorIdPr
     };
   }, [clinicId, doctorId, queueId]);
 
-  // Handler for "Next Patient" button
-  const handleNextPatient = async () => {
+  const isToday = (() => {
+    try { return new Date().toISOString().split('T')[0] === queueId; } catch { return false; }
+  })();
+  const isReadOnly = !isToday || queueStatus === 'closed';
+
+  // Guard mutating handlers if read-only
+  const guarded = <T extends (...args:any)=>any>(fn:T):T => {
+    return ((...a:any[]) => { if (isReadOnly) { setError('This queue is read-only for the selected date.'); return; } return fn(...a); }) as T;
+  };
+
+  // Wrap existing handlers (only those modifying data)
+  const handleNextPatient = guarded(async () => {
     if (queueStatus === 'paused') {
       setError('Queue is paused. Resume it before advancing.');
       return;
@@ -275,10 +289,10 @@ export default function QueueList({ clinicId: clinicIdProp, doctorId: doctorIdPr
     } finally {
       setIsNextPatientLoading(false);
     }
-  };
+  });
 
   // Handler for "Pause Queue" button
-  const handleTogglePauseQueue = async () => {
+  const handleTogglePauseQueue = guarded(async () => {
     setIsPauseQueueLoading(true);
     try {
       console.log('Toggling queue pause status');
@@ -303,7 +317,7 @@ export default function QueueList({ clinicId: clinicIdProp, doctorId: doctorIdPr
     } finally {
       setIsPauseQueueLoading(false);
     }
-  };
+  });
 
   const requestCompletePatient = (patientId: string) => {
     if (!patientId) return;
@@ -332,7 +346,7 @@ export default function QueueList({ clinicId: clinicIdProp, doctorId: doctorIdPr
   };
 
   // Toggle autoAdvance on server
-  const handleToggleAutoAdvance = async (checked: boolean) => {
+  const handleToggleAutoAdvance = guarded(async (checked: boolean) => {
     setIsAutoAdvUpdating(true);
     try {
       const setQueueAutoAdvance = httpsCallable(functions, 'setQueueAutoAdvance');
@@ -345,9 +359,9 @@ export default function QueueList({ clinicId: clinicIdProp, doctorId: doctorIdPr
     } finally {
       setIsAutoAdvUpdating(false);
     }
-  };
+  });
 
-  const handleCallPatient = async (patientId: string) => {
+  const handleCallPatient = guarded(async (patientId: string) => {
     if (!patientId) return;
     if (queueStatus === 'paused') { setError('Queue is paused. Resume first.'); return; }
     try {
@@ -359,7 +373,7 @@ export default function QueueList({ clinicId: clinicIdProp, doctorId: doctorIdPr
       console.error('Call patient failed', e);
       setError('Failed to call patient.');
     }
-  };
+  });
 
   // (removed deprecated direct cancel handler)
   const requestCancelPatient = (patientId: string) => {
@@ -447,108 +461,51 @@ export default function QueueList({ clinicId: clinicIdProp, doctorId: doctorIdPr
   const pausedFlag = fullStatus === 'paused';
   const waitingCount = patients.filter(p=>p.status==='waiting').length;
 
+  // Event listeners for header buttons
+  useEffect(() => {
+    const handleTogglePause = () => {
+      if (pausedFlag) {
+        handleTogglePauseQueue();
+      } else {
+        if (skipPauseToday) {
+          handleTogglePauseQueue();
+        } else {
+          setShowPauseModal(true);
+        }
+      }
+    };
+
+    const handleEnd = () => {
+      setShowEndModal(true);
+    };
+
+    const handleRestart = () => {
+      const updateQueueStatus = httpsCallable(functions, 'updateQueueStatus');
+      updateQueueStatus({ clinicId, doctorId, queueId, newStatus: 'active' })
+        .then(() => { setMessage('Queue restarted and set to Active.'); setError(null); })
+        .catch(e => { console.error('Restart queue failed', e); setError('Failed to restart queue.'); });
+    };
+
+    window.addEventListener('togglePauseQueue', handleTogglePause);
+    window.addEventListener('endQueue', handleEnd);
+    window.addEventListener('restartQueue', handleRestart);
+
+    return () => {
+      window.removeEventListener('togglePauseQueue', handleTogglePause);
+      window.removeEventListener('endQueue', handleEnd);
+      window.removeEventListener('restartQueue', handleRestart);
+    };
+  }, [pausedFlag, skipPauseToday, clinicId, doctorId, queueId]);
+
   return (
-    <div className="space-y-4 max-w-5xl mx-auto px-3 md:px-4 pb-32 md:pb-8">
+  <div className={`space-y-3 w-full px-3 md:px-4 lg:px-6 pt-3 md:pt-4 lg:pt-6 pb-32 md:pb-8 ${compact ? 'queue-compact' : ''}`} aria-live="polite">
       {/* Desktop / tablet toolbar */}
       <div className="hidden sm:flex gap-3 mb-4 flex-wrap">
-        <label className="flex items-center gap-2 text-xs text-gray-700 bg-gray-100/60 px-3 py-2 rounded-lg border border-gray-300">
-          <input
-            type="checkbox"
-            checked={autoAdvance}
-            disabled={isAutoAdvUpdating}
-            onChange={(e) => handleToggleAutoAdvance(e.target.checked)}
-            className="h-4 w-4 rounded border-gray-300 bg-white text-blue-600 focus:ring-blue-500 disabled:opacity-50"
-          />
-          Auto-advance next patient {isAutoAdvUpdating && <span className="text-[10px] text-gray-500">(saving)</span>}
-        </label>
-        <button
-          onClick={()=>{ if (skipAdvanceToday) { handleNextPatient(); } else { setShowAdvanceModal(true); } }}
-          disabled={isNextPatientLoading || !patients.length || endedFlag}
-          className="bg-blue-600 hover:bg-blue-700 disabled:bg-blue-400 disabled:cursor-not-allowed text-white px-4 py-2 rounded-lg font-medium transition-colors flex items-center gap-2"
-        >
-          {isNextPatientLoading ? (
-            <>
-              <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin"></div>
-              Processing...
-            </>
-          ) : (
-            'Next Patient'
-          )}
-        </button>
-        <button
-          onClick={()=>{ if (pausedFlag) { handleTogglePauseQueue(); } else { if (skipPauseToday) { handleTogglePauseQueue(); } else { setShowPauseModal(true); } } }}
-          disabled={isPauseQueueLoading || endedFlag}
-          className="bg-yellow-600 hover:bg-yellow-700 disabled:bg-yellow-400 disabled:cursor-not-allowed text-white px-4 py-2 rounded-lg font-medium transition-colors flex items-center gap-2"
-        >
-          {isPauseQueueLoading ? (
-            <>
-              <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin"></div>
-              Updating...
-            </>
-          ) : (
-            pausedFlag ? 'Resume Queue' : 'Pause Queue'
-          )}
-        </button>
-        {!endedFlag && (
-          <button
-            onClick={() => {
-              setShowEndModal(true);
-             }}
-            disabled={endedFlag}
-            className="bg-red-700 hover:bg-red-800 disabled:bg-red-400 disabled:cursor-not-allowed text-white px-4 py-2 rounded-lg font-medium transition-colors"
-          >End Queue</button>
-        )}
-        {endedFlag && (
-          <button
-            onClick={() => {
-              const updateQueueStatus = httpsCallable(functions, 'updateQueueStatus');
-              updateQueueStatus({ clinicId, doctorId, queueId, newStatus: 'active' })
-                .then(() => { setMessage('Queue restarted and set to Active.'); setError(null); })
-                .catch(e => { console.error('Restart queue failed', e); setError('Failed to restart queue.'); });
-            }}
-            className="bg-green-700 hover:bg-green-800 text-white px-4 py-2 rounded-lg font-medium transition-colors"
-          >Restart Queue</button>
-        )}
+        {/* Toolbar now minimal since controls moved to section headers */}
       </div>
       {/* Mobile sticky action bar */}
   <div className="sm:hidden fixed bottom-0 inset-x-0 z-40 bg-white/95 backdrop-blur border-t border-gray-200 px-3 py-3 flex items-center gap-2 overflow-x-auto" role="toolbar" aria-label="Queue actions" style={{ paddingBottom: 'calc(env(safe-area-inset-bottom,0px) + 0.75rem)' }}>
-        <button
-          onClick={()=>{ if (skipAdvanceToday) { handleNextPatient(); } else { setShowAdvanceModal(true); } }}
-          disabled={isNextPatientLoading || !patients.length || endedFlag}
-          className="flex-1 bg-blue-600 hover:bg-blue-700 disabled:bg-blue-400 disabled:cursor-not-allowed text-white px-3 py-3 rounded-lg font-medium text-xs tracking-wide"
-        >{isNextPatientLoading ? 'Working...' : 'Next'}</button>
-        <button
-          onClick={()=>{ if (pausedFlag) { handleTogglePauseQueue(); } else { if (skipPauseToday) { handleTogglePauseQueue(); } else { setShowPauseModal(true); } } }}
-          disabled={isPauseQueueLoading || endedFlag}
-          className="flex-1 bg-yellow-600 hover:bg-yellow-700 disabled:bg-yellow-400 disabled:cursor-not-allowed text-white px-3 py-3 rounded-lg font-medium text-[11px] tracking-wide"
-        >{isPauseQueueLoading ? 'Updating' : (pausedFlag ? 'Resume' : 'Pause')}</button>
-        {!endedFlag && (
-          <button
-            onClick={()=>setShowEndModal(true)}
-            className="flex-1 bg-red-700 hover:bg-red-800 text-white px-3 py-3 rounded-lg font-medium text-[11px] tracking-wide"
-          >End</button>
-        )}
-        {endedFlag && (
-          <button
-            onClick={() => {
-              const updateQueueStatus = httpsCallable(functions, 'updateQueueStatus');
-              updateQueueStatus({ clinicId, doctorId, queueId, newStatus: 'active' })
-                .then(() => { setMessage('Queue restarted.'); setError(null); })
-                .catch(e => { console.error('Restart queue failed', e); setError('Failed to restart queue.'); });
-            }}
-            className="flex-1 bg-green-700 hover:bg-green-800 text-white px-3 py-3 rounded-lg font-medium text-[11px] tracking-wide"
-          >Restart</button>
-        )}
-        <label className="flex items-center gap-1 text-[10px] text-gray-700 bg-gray-100/70 px-2.5 py-2 rounded-lg border border-gray-300 whitespace-nowrap">
-          <input
-            type="checkbox"
-            checked={autoAdvance}
-            disabled={isAutoAdvUpdating}
-            onChange={(e) => handleToggleAutoAdvance(e.target.checked)}
-            className="h-3.5 w-3.5 rounded border-gray-300 bg-white text-blue-600 focus:ring-blue-500 disabled:opacity-50"
-          />
-          Auto
-        </label>
+        {/* Mobile controls simplified - main controls now in section headers */}
       </div>
       <div className="sm:hidden h-4" />
 
@@ -682,17 +639,36 @@ export default function QueueList({ clinicId: clinicIdProp, doctorId: doctorIdPr
       </ConfirmModal>
 
       {(message || error) && (
-        <div className="mb-4 text-sm">
+        <div className="mb-4 text-sm" role="status">
           {message && <div className="text-green-600">{message}</div>}
-          {error && <div className="text-red-600">{error}</div>}
+          {error && <div className="text-red-600" role="alert">{error}</div>}
+        </div>
+      )}
+      {isReadOnly && (
+        <div className="mb-4 text-xs rounded-md border border-gray-300 bg-gray-100/70 px-3 py-2 text-gray-600">
+          Viewing historical queue data for <span className="font-mono">{queueId}</span>. Actions are disabled.
         </div>
       )}
 
-      {/* Queue Title */}
-  <h3 className="text-xl font-semibold text-gray-800 mb-4 sticky top-0 bg-white/90 backdrop-blur z-10 py-2 px-1 -mx-1 sm:static sm:bg-transparent sm:p-0">Current Queue</h3>
-
       {/* Patient List Grouped */}
       {(() => {
+        if (loadingPatients) {
+          return (
+            <div className="space-y-2" aria-hidden>
+              {Array.from({ length: 4 }).map((_, i) => (
+                <div key={i} className="bg-gray-100 rounded-lg p-4">
+                  <div className="flex items-center gap-4">
+                    <div className="wf-skeleton w-10 h-10 rounded-full" />
+                    <div className="flex-1">
+                      <div className="wf-skeleton h-4 w-1/3 rounded" />
+                      <div className="wf-skeleton h-3 w-1/4 rounded mt-2" />
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          );
+        }
         if (patients.length === 0) {
           return <div className="text-gray-600 text-center py-8">No patients in queue</div>;
         }
@@ -706,9 +682,35 @@ export default function QueueList({ clinicId: clinicIdProp, doctorId: doctorIdPr
           if (!list.length) return null;
           return (
             <div key={groupKey} className="mb-6">
-              <div className="flex items-center mb-3">
-                <h4 className="text-sm font-semibold uppercase tracking-wide text-gray-600">{titles[groupKey]}</h4>
-                <span className="ml-2 text-xs text-gray-500">{list.length}</span>
+              <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 mb-3">
+                <div className="flex items-center">
+                  <h4 className="text-sm font-semibold uppercase tracking-wide text-gray-600">{titles[groupKey]}</h4>
+                  <span className="ml-2 text-xs text-gray-500">{list.length}</span>
+                </div>
+                
+                {/* Add controls for waiting section */}
+                {groupKey === 'waiting' && (
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <button
+                      onClick={()=>{ if (skipAdvanceToday) { handleNextPatient(); } else { setShowAdvanceModal(true); } }}
+                      disabled={isNextPatientLoading || !patients.length || endedFlag || autoAdvance}
+                      className="h-7 px-3 text-xs font-medium text-white bg-blue-500 hover:bg-blue-600 disabled:bg-gray-300 disabled:cursor-not-allowed border-0 rounded-lg transition-all duration-200 shadow-sm hover:shadow"
+                      title={autoAdvance ? "Next Patient is automatic when auto-advance is enabled" : "Call the next waiting patient"}
+                    >
+                      {isNextPatientLoading ? 'Processing…' : 'Next Patient'}
+                    </button>
+                    <label className="flex items-center gap-1.5 text-xs text-slate-600 bg-white hover:bg-slate-50 border border-slate-200 hover:border-slate-300 rounded-lg px-2 py-1 transition-all duration-200 shadow-sm hover:shadow cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={autoAdvance}
+                        disabled={isAutoAdvUpdating}
+                        onChange={(e) => handleToggleAutoAdvance(e.target.checked)}
+                        className="h-3 w-3 rounded border-gray-300 bg-white text-blue-600 focus:ring-blue-500 disabled:opacity-50"
+                      />
+                      <span className="whitespace-nowrap">Auto-advance</span> {isAutoAdvUpdating && <span className="text-[10px] text-gray-400">(saving)</span>}
+                    </label>
+                  </div>
+                )}
               </div>
               <div className="space-y-2">
                 {list.map(patient => {
@@ -720,28 +722,31 @@ export default function QueueList({ clinicId: clinicIdProp, doctorId: doctorIdPr
                   const canCancel = !isCompleted && !isCancelled;
                   const canUncall = isInProgress && !isCompleted && !isCancelled;
                   return (
-                    <div key={patient.id} className="flex flex-col md:flex-row md:items-center md:justify-between gap-3 bg-gray-100 rounded-lg p-4 hover:bg-gray-200 transition-colors shadow-sm">
-                      <div className="flex items-center space-x-4">
-                        <div className="bg-gray-200 text-gray-800 w-10 h-10 rounded-full flex items-center justify-center font-bold">
+                    <div
+                      key={patient.id}
+                      className="queue-row flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 bg-white border border-gray-200 rounded-xl p-3 hover:border-gray-300 hover:shadow-md transition-all duration-200 active:scale-[.995]"
+                    >
+                      <div className="flex items-center space-x-3 min-w-0 flex-1">
+                        <div className="queue-token bg-indigo-50 text-indigo-700 border border-indigo-200 w-10 h-10 rounded-full flex items-center justify-center font-semibold text-sm flex-shrink-0">
                           {patient.tokenNumber}
                         </div>
-                        <div className="space-y-1">
-                          <p className={`font-medium ${isCompleted ? 'text-gray-500 line-through' : 'text-gray-800'}`}>{patient.name}</p>
+                        <div className="space-y-0.5 min-w-0 flex-1">
+                          <p className={`font-medium truncate ${isCompleted ? 'text-gray-500 line-through' : 'text-gray-800'}`}>{patient.name}</p>
                           <div className="flex flex-wrap gap-2 text-xs text-gray-600">
                             {patient.age !== undefined && <span className="inline-flex items-center gap-1"><span className="text-gray-400">Age:</span>{patient.age}</span>}
-                            {patient.phone && <span className="inline-flex items-center gap-1"><span className="text-gray-400">Phone:</span>{patient.phone}</span>}
-                          </div>
-                          <div className="mt-1 flex flex-wrap gap-2 text-xs">
-                            <span className={`px-2 py-0.5 rounded-full ${getStatusBadgeClasses(patient.status)}`}>{getStatusText(patient.status)}</span>
-                            {isInProgress && <span className="px-2 py-0.5 rounded-full bg-indigo-600 text-indigo-100">Now</span>}
+                            {patient.phone && <span className="inline-flex items-center gap-1 truncate"><span className="text-gray-400">Phone:</span>{patient.phone}</span>}
                           </div>
                         </div>
+                        <div className="flex items-center gap-2 text-xs flex-shrink-0">
+                          <span className={`px-2 py-0.5 rounded-full ${getStatusBadgeClasses(patient.status)}`}>{getStatusText(patient.status)}</span>
+                          {isInProgress && <span className="px-2 py-0.5 rounded-full bg-indigo-600 text-indigo-100">Now</span>}
+                        </div>
                       </div>
-                      <div className="flex flex-wrap gap-2 text-xs md:text-sm">
-                        {canCall && <button onClick={() => handleCallPatient(patient.id)} className="bg-blue-600 hover:bg-blue-700 active:scale-[.97] text-white px-3 py-1.5 rounded disabled:bg-blue-400 disabled:cursor-not-allowed">Call</button>}
-                        {canComplete && <button onClick={() => requestCompletePatient(patient.id)} className="bg-green-600 hover:bg-green-700 active:scale-[.97] text-white px-3 py-1.5 rounded disabled:bg-green-400 disabled:cursor-not-allowed">Done</button>}
-                        {canUncall && <button onClick={() => requestUncallPatient(patient.id)} className="bg-orange-600 hover:bg-orange-700 active:scale-[.97] text-white px-3 py-1.5 rounded disabled:bg-orange-400 disabled:cursor-not-allowed">Uncall</button>}
-                        {canCancel && <button onClick={() => requestCancelPatient(patient.id)} className="bg-red-600 hover:bg-red-700 active:scale-[.97] text-white px-3 py-1.5 rounded disabled:bg-red-400 disabled:cursor-not-allowed">Cancel</button>}
+                      <div className="queue-actions flex flex-wrap gap-2 text-xs sm:text-sm flex-shrink-0">
+                        {canCall && <Button onClick={() => handleCallPatient(patient.id)} variant="accent" size="sm" className="px-3 py-1.5 h-auto">Call</Button>}
+                        {canComplete && <Button onClick={() => requestCompletePatient(patient.id)} variant="secondary" size="sm" className="px-3 py-1.5 h-auto">Done</Button>}
+                        {canUncall && <Button onClick={() => requestUncallPatient(patient.id)} variant="outline" size="sm" className="px-3 py-1.5 h-auto">Uncall</Button>}
+                        {canCancel && <Button onClick={() => requestCancelPatient(patient.id)} variant="danger" size="sm" className="px-3 py-1.5 h-auto">Cancel</Button>}
                       </div>
                     </div>
                   );
