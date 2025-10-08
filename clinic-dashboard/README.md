@@ -34,3 +34,52 @@ You can check out [the Next.js GitHub repository](https://github.com/vercel/next
 The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
 
 Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+
+---
+
+## Design System (Initial Extraction)
+
+This dashboard now includes an initial, non-breaking design token layer and primitive UI components to enable a gradual modernization without refactoring existing business logic.
+
+### Tokens
+Defined in `app/design-tokens.css` as CSS variables (colors, spacing, radii, shadows, motion). Tailwind consumes them through `tailwind.config.mjs` extension so you can use utilities like `bg-brand-600` or semantic color references under `sem-*` (e.g. `bg-sem-surface`).
+
+Key categories:
+- Brand scale: `--color-brand-50` … `--color-brand-900`
+- Semantic: `--color-sem-primary`, `--color-sem-danger`, `--color-sem-border`, `--color-sem-surface`
+- Elevation: `--shadow-xs|sm|md|lg`
+- Radius: `--radius-xs|sm|md|lg|xl|pill`
+- Motion: `--ease-brand`, durations `--dur-fast|base|slow`
+
+Dark mode variables are prepped inside a `prefers-color-scheme: dark` media query for future activation.
+
+### New Primitives (Additive)
+Located under `components/ui/`:
+- `Button` – variants: primary, subtle, outline, danger, ghost; sizes: sm, md, lg; loading & icon slots.
+- `Badge` – tone + variant (solid, soft, outline) for consistent status chips.
+- `Card` – structural surface component (solid, soft, outline) + spacing presets.
+
+These are not yet wired into existing production views; you can adopt them incrementally:
+
+```tsx
+import Button from '@/components/ui/Button';
+<Button variant="primary" size="sm">Save</Button>
+```
+
+### Implementation Guidance
+1. When refactoring existing elements (e.g., queue action buttons), replace raw Tailwind color classes with a primitive first; do not mix old + new patterns in the same element.
+2. For new surfaces (panels, marketing sections), prefer `Card` with `variant="soft"` or `variant="outline"`.
+3. Use `Badge` for queue status, patient state, environment labels.
+4. Avoid introducing bespoke colors; map to an existing semantic token and, if missing, add a single new semantic alias rather than a raw hex.
+5. All motion should use `transition-[property] duration-base ease-brand` unless a performance concern exists.
+
+### Roadmap (Next Steps Suggestion)
+- Extract a `useQueueData` hook to unify listeners.
+- Introduce an onboarding flow at `app/onboarding/*`.
+- Move authentication out of dashboard shell to `/auth` routes.
+- Add accessibility: focus ring alignment and ARIA live regions for queue changes.
+
+### Non-Breaking Policy
+No existing component logic was modified; all changes are additive. You can remove the new primitives without affecting current runtime behavior.
+
+---

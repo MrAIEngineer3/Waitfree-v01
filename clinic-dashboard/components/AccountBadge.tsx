@@ -1,47 +1,39 @@
 "use client";
 import { signOut } from 'firebase/auth';
-import { doc, onSnapshot } from 'firebase/firestore';
-import { useEffect, useState } from 'react';
-import { auth, db } from '../lib/firebase';
-
-interface Mapping { clinicId?: string; doctorId?: string; clinicName?: string; doctorName?: string; specialty?: string; }
+import { auth } from '../lib/firebase';
+import Button from './ui/Button';
+import { useUserMapping } from './useUserMapping';
 
 export default function AccountBadge() {
-  const [email, setEmail] = useState<string | null>(null);
-  const [mapping, setMapping] = useState<Mapping | null>(null);
+  const { email, mapping, loading } = useUserMapping();
 
-  useEffect(() => {
-    const unsub = auth.onAuthStateChanged(u => {
-      setEmail(u?.email ?? null);
-      if (!u) {
-        setMapping(null);
-        return;
-      }
-      const ref = doc(db, 'users', u.uid);
-      const off = onSnapshot(ref, snap => {
-        setMapping(snap.exists() ? (snap.data() as Mapping) : null);
-      });
-      return () => off();
-    });
-    return () => unsub();
-  }, []);
+  if (loading) {
+    return (
+      <div className="h-8 px-4 rounded-full bg-white/60 border border-gray-200 flex items-center gap-2 animate-pulse text-[11px] text-gray-500">
+        <div className="w-16 h-3 bg-gray-200 rounded" />
+        <div className="w-10 h-3 bg-gray-200 rounded" />
+      </div>
+    );
+  }
 
   if (!email) {
     return (
-      <div className="flex items-center gap-3 text-xs">
-        <a href="/auth/login" className="px-3 py-1.5 rounded bg-blue-600 text-white font-medium">Sign In</a>
-        <a href="/auth/signup" className="px-3 py-1.5 rounded bg-green-600 text-white font-medium">Create Clinic</a>
+      <div className="flex items-center gap-2 text-xs">
+        {/* Sign in becomes a neutral elevated action */}
+        <Button size="sm" variant="secondary" className="px-3" onClick={() => { window.location.href = '/auth/login'; }}>Sign In</Button>
+        {/* Creation / new entity highlighted with accent */}
+        <Button size="sm" variant="accent" className="px-3" onClick={() => { window.location.href = '/auth/signup'; }}>Create Clinic</Button>
       </div>
     );
   }
 
   return (
-    <div className="flex items-center gap-3 text-xs bg-white/70 border border-gray-200 rounded-full pl-3 pr-2 py-1 shadow-sm">
-      <div className="flex flex-col leading-tight">
+    <div className="flex items-center gap-3 text-xs bg-white/70 border border-gray-200 rounded-full pl-3 pr-1.5 py-1 shadow-sm">
+      <div className="flex flex-col leading-tight pr-1">
         <span className="font-semibold text-gray-800">{mapping?.doctorName || email}</span>
         <span className="text-[10px] text-gray-500">{mapping?.clinicName || 'Clinic pending'}{mapping?.specialty ? ` • ${mapping.specialty}` : ''}</span>
       </div>
-      <button onClick={()=>signOut(auth)} className="text-gray-500 hover:text-gray-800 text-[11px] font-medium px-2 py-0.5 rounded hover:bg-gray-100">Sign out</button>
+      <Button size="sm" variant="ghost" onClick={()=>signOut(auth)} className="h-6 text-[11px] px-2">Sign out</Button>
     </div>
   );
 }

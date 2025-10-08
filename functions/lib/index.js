@@ -39,13 +39,16 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
 };
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.bootstrapClinicAccount = exports.patientStream = exports.setQueueAutoAdvance = exports.updateQueueStatus = exports.updatePatientStatus = exports.getPatientView = exports.joinQueue = exports.onPatientStatusChange = exports.onNewPatient = exports.devShowAdminSecret = exports.devEchoHeaders = exports.devCompletePatient = exports.helloHttp = exports.ping = void 0;
+exports.bootstrapClinicAccount = exports.setQueueAutoAdvance = exports.updateQueueStatus = exports.updatePatientStatus = exports.getPatientView = exports.joinQueue = exports.onPatientStatusChange = exports.onNewPatient = exports.ping = exports.debugGetPatient = exports.debugRecompute = exports.debugPatientPwaBaseUrl = exports.debugRuntimeFlags = void 0;
 const firestore_1 = require("@google-cloud/firestore");
+// Ensure local .env variables are loaded when running in emulator / local scripts
 const cors_1 = __importDefault(require("cors"));
 const crypto_1 = __importDefault(require("crypto"));
 const admin = __importStar(require("firebase-admin"));
 const functions = __importStar(require("firebase-functions/v1"));
+require("./loadEnv");
 // Import functions for local use
+const notificationEngine_1 = require("./notificationEngine");
 const notifier_1 = require("./notifier");
 // Initialize the Admin SDK. This is required for all backend functions.
 admin.initializeApp();
@@ -70,7 +73,9 @@ catch (e) {
     configError = `Error fetching functions.config(): ${e.message}`;
 }
 // This log runs ONCE when the function instance starts up.
-console.log(`GLOBAL: Allowed origins loaded: [${allowedOrigins.join(", ")}]. Config error: ${configError || 'None'}`);
+// Feature flags NEW_NOTIFICATION_ENGINE / PHASE1_NOTIFICATIONS have been removed.
+// Engine + Phase1 notifications are now permanently enabled (unless you change code).
+console.log(`GLOBAL: Allowed origins loaded: [${allowedOrigins.join(", ")}]. Config error: ${configError || 'None'}. Notification engine + phase1 ALWAYS ENABLED (flags removed).`);
 // Use cors with a dynamic origin function to validate incoming origin header against allowedOrigins.
 const corsHandler = (0, cors_1.default)({
     origin: (origin, callback) => {
@@ -88,155 +93,80 @@ const corsHandler = (0, cors_1.default)({
 });
 // Configure region for all functions
 const regionalFunctions = functions.region('asia-south1');
+/** DEBUG: Returns runtime flag visibility and Node version */
+exports.debugRuntimeFlags = regionalFunctions.https.onCall(async (_data, _ctx) => {
+    return {
+        phase1Enabled: true,
+        rawPhase1: 'hardcoded:true',
+        engineEnabled: true,
+        rawEngine: 'hardcoded:true',
+        node: process.version
+    };
+});
+/** DEBUG: Show resolved Patient PWA base URL */
+exports.debugPatientPwaBaseUrl = regionalFunctions.https.onCall(async (_data, _ctx) => {
+    try {
+        const envVal = process.env.PATIENT_PWA_BASE_URL || null;
+        let cfgVal = null;
+        try {
+            const cfg = functions?.config?.();
+            cfgVal = cfg?.app?.patient_pwa_base_url || null;
+        }
+        catch {
+            cfgVal = null;
+        }
+        const resolved = envVal || cfgVal || null;
+        return { env: !!envVal, envVal, cfg: !!cfgVal, cfgVal, resolved };
+    }
+    catch (e) {
+        return { error: e?.message || String(e) };
+    }
+});
+/** DEBUG: Force recompute for a queue (engine default-on). data: { clinicId, doctorId, queueId } */
+exports.debugRecompute = regionalFunctions.https.onCall(async (data, _ctx) => {
+    const { clinicId, doctorId, queueId } = data || {};
+    if (!clinicId || !doctorId || !queueId) {
+        throw new functions.https.HttpsError('invalid-argument', 'clinicId, doctorId, queueId required');
+    }
+    // Log environment variables for debugging
+    functions.logger.info('Environment Variables Check', {
+        TWILIO_ACCOUNT_SID: process.env.TWILIO_ACCOUNT_SID ? 'SET' : 'UNSET',
+        TWILIO_AUTH_TOKEN: process.env.TWILIO_AUTH_TOKEN ? 'SET' : 'UNSET',
+        TWILIO_WHATSAPP_FROM: process.env.TWILIO_WHATSAPP_FROM || 'UNSET',
+        TEST_PHONE_NUMBER: process.env.TEST_PHONE_NUMBER || 'UNSET'
+    });
+    const result = await (0, notificationEngine_1.recomputeQueueNotifications)({ clinicId, doctorId, queueId });
+    return { success: true, result };
+});
+/** DEBUG: Fetch patient doc raw (no auth). data: { clinicId, doctorId, queueId, patientId } */
+exports.debugGetPatient = regionalFunctions.https.onCall(async (data, _ctx) => {
+    const { clinicId, doctorId, queueId, patientId } = data || {};
+    if (!clinicId || !doctorId || !queueId || !patientId) {
+        throw new functions.https.HttpsError('invalid-argument', 'clinicId, doctorId, queueId, patientId required');
+    }
+    const snap = await admin.firestore().collection('clinics').doc(clinicId)
+        .collection('doctors').doc(doctorId)
+        .collection('queues').doc(queueId)
+        .collection('patients').doc(patientId).get();
+    if (!snap.exists)
+        return { found: false };
+    return { found: true, data: snap.data() };
+});
 // NOTE: Staff privilege logic removed for simplification.
 // Any authenticated user may perform queue and patient management actions.
 // Simple HTTPS callable function example
 exports.ping = regionalFunctions.https.onCall(async (data, context) => {
     return { message: 'pong', received: data ?? null, uid: context.auth?.uid ?? null };
 });
-// HTTP function example
-exports.helloHttp = regionalFunctions.https.onRequest((req, res) => {
-    res.json({ ok: true, message: 'Hello from Firebase Functions in Asia South 1' });
-});
+// Removed helloHttp demo endpoint (unused)
 // Removed adminSetStaffClaim and grantStaffRole (no staff system in simplified mode).
-// Dev-only helper: mark a patient as completed and run three-away notification logic.
-// Protected by the same x-admin-secret header. REMOVE before production.
-exports.devCompletePatient = regionalFunctions.https.onRequest(async (req, res) => {
-    try {
-        const secret = process.env.ADMIN_CLAIM_SECRET;
-        const header = req.header('x-admin-secret');
-        const devBypass = req.header('x-dev-bypass') === 'true';
-        // Allow dev bypass for local testing when admin secret isn't set in the runtime
-        if (!(devBypass) && (!secret || header !== secret)) {
-            res.status(403).json({ error: 'Forbidden' });
-            return;
-        }
-        if (req.method !== 'POST') {
-            res.status(405).json({ error: 'Method not allowed. Use POST.' });
-            return;
-        }
-        const { clinicId, doctorId, queueId, patientId } = req.body || {};
-        if (!clinicId || !doctorId || !queueId || !patientId) {
-            res.status(400).json({ error: 'Missing required fields: clinicId, doctorId, queueId, patientId' });
-            return;
-        }
-        const db = admin.firestore();
-        const patientRef = db.collection('clinics').doc(clinicId)
-            .collection('doctors').doc(doctorId)
-            .collection('queues').doc(queueId)
-            .collection('patients').doc(patientId);
-        const queueRef = db.collection('clinics').doc(clinicId)
-            .collection('doctors').doc(doctorId)
-            .collection('queues').doc(queueId);
-        let updatedPatientData;
-        await db.runTransaction(async (transaction) => {
-            const patientDoc = await transaction.get(patientRef);
-            if (!patientDoc.exists) {
-                res.status(404).json({ error: 'Patient not found' });
-                throw new Error('Patient not found');
-            }
-            const patientData = patientDoc.data();
-            updatedPatientData = {
-                ...patientData,
-                status: 'completed',
-                updatedAt: firestore_1.FieldValue.serverTimestamp()
-            };
-            transaction.update(patientRef, {
-                status: 'completed',
-                updatedAt: firestore_1.FieldValue.serverTimestamp()
-            });
-            const queueDoc = await transaction.get(queueRef);
-            if (!queueDoc.exists) {
-                res.status(404).json({ error: 'Queue not found' });
-                throw new Error('Queue not found');
-            }
-            const queueData = queueDoc.data();
-            const currentCompletedPatients = queueData?.completedPatients || 0;
-            const patientTokenNumber = patientData?.tokenNumber || 0;
-            transaction.update(queueRef, {
-                completedPatients: currentCompletedPatients + 1,
-                currentToken: patientTokenNumber,
-                updatedAt: firestore_1.FieldValue.serverTimestamp()
-            });
-        });
-        // After transaction, attempt to notify the patient who is now 3-away
-        try {
-            const threeAwayToken = (updatedPatientData?.tokenNumber || 0) + 3;
-            const patientsRef = db.collection('clinics').doc(clinicId)
-                .collection('doctors').doc(doctorId)
-                .collection('queues').doc(queueId)
-                .collection('patients');
-            const q = patientsRef.where('tokenNumber', '==', threeAwayToken).limit(1);
-            const snaps = await q.get();
-            snaps.forEach(async (snap) => {
-                const p = snap.data();
-                try {
-                    await (0, notifier_1.sendNotification)({
-                        to: p.phone,
-                        type: 'three-away',
-                        payload: { name: p.name, tokenNumber: p.tokenNumber, clinicId, doctorId }
-                    });
-                }
-                catch (e) {
-                    functions.logger.warn('Failed to send three-away notification (dev helper)', e);
-                }
-            });
-        }
-        catch (e) {
-            functions.logger.warn('Error handling three-away notification (dev helper)', e);
-        }
-        res.status(200).json({ success: true, message: 'Patient marked completed (dev helper)', patient: updatedPatientData });
-    }
-    catch (error) {
-        functions.logger.error('Error in devCompletePatient:', error);
-        // If the caller used the dev bypass header, include error details to help debugging locally.
-        try {
-            const isDevBypass = req && typeof req.header === 'function' && req.header('x-dev-bypass') === 'true';
-            if (!res.headersSent) {
-                if (isDevBypass) {
-                    const errAny = error;
-                    res.status(500).json({ error: 'Internal server error', message: errAny?.message || String(error), stack: errAny?.stack || null });
-                }
-                else {
-                    res.status(500).json({ error: 'Internal server error' });
-                }
-            }
-        }
-        catch (e) {
-            // Fallback safe response if anything goes wrong while preparing the debug payload
-            if (!res.headersSent)
-                res.status(500).json({ error: 'Internal server error' });
-        }
-    }
-});
+// Removed devCompletePatient (dev-only, unused)
 // Dev-only debug endpoint: echo the request headers so we can see what the emulator receives.
 // Useful to diagnose header/secret mismatches from different shells.
-exports.devEchoHeaders = regionalFunctions.https.onRequest((req, res) => {
-    try {
-        // Return headers and a small timestamp
-        res.status(200).json({ headers: req.headers, receivedAt: new Date().toISOString() });
-    }
-    catch (err) {
-        functions.logger.error('devEchoHeaders error', err);
-        res.status(500).json({ error: 'dev echo failed' });
-    }
-});
+// Removed devEchoHeaders (dev-only, unused)
 // Dev-only diagnostic: report whether the functions runtime can see the admin secret.
 // Only returns masked/length info to avoid leaking secrets.
-exports.devShowAdminSecret = regionalFunctions.https.onRequest((req, res) => {
-    try {
-        const envSecret = process.env.ADMIN_CLAIM_SECRET || null;
-        res.status(200).json({
-            hasEnv: !!envSecret,
-            envLen: envSecret ? envSecret.length : null,
-            timestamp: new Date().toISOString()
-        });
-    }
-    catch (err) {
-        functions.logger.error('devShowAdminSecret error', err);
-        res.status(500).json({ error: 'dev diagnostic failed' });
-    }
-});
+// Removed devShowAdminSecret (dev-only, unused)
 // Firestore trigger example (adjust collection as needed)
 exports.onNewPatient = regionalFunctions.firestore
     .document('patients/{patientId}')
@@ -255,6 +185,13 @@ exports.onPatientStatusChange = regionalFunctions.firestore
         // Get the patient data before and after the change
         const beforeData = change.before.data();
         const afterData = change.after.data();
+        // Engine is always on now; legacy trigger suppressed permanently.
+        functions.logger.debug('onPatientStatusChange legacy handler permanently suppressed (engine default)', {
+            patientId: context.params.patientId,
+            beforeStatus: beforeData.status,
+            afterStatus: afterData.status
+        });
+        return null;
         // Check if the status field actually changed
         if (beforeData.status === afterData.status) {
             functions.logger.info('Patient document updated but status unchanged', {
@@ -278,7 +215,28 @@ exports.onPatientStatusChange = regionalFunctions.firestore
                 previousStatus: beforeData.status,
                 newStatus: afterData.status
             });
-            // TODO: Add SMS notification logic here in future
+            // Mark and send a 'now' notification if not already sent. We record this on the patient doc
+            // using a `notifications.now` flag so we don't duplicate sends.
+            try {
+                const patientRef = change.after.ref;
+                const patientSnapLatest = await patientRef.get();
+                const p = patientSnapLatest.data();
+                const already = p?.notifications?.now === true;
+                if (!already) {
+                    await patientRef.set({ notifications: { ...(p?.notifications || {}), now: true } }, { merge: true });
+                    await (0, notifier_1.sendNotification)({
+                        to: p?.phone || 'unknown',
+                        type: 'now',
+                        payload: { name: p?.name, tokenNumber: p?.tokenNumber, clinicId: context.params.clinicId, doctorId: context.params.doctorId }
+                    });
+                }
+                else {
+                    functions.logger.info('Now notification already sent for patient', { patientId: context.params.patientId });
+                }
+            }
+            catch (e) {
+                functions.logger.warn('Failed to send or mark now notification', e);
+            }
             return null;
         }
         else {
@@ -374,6 +332,17 @@ exports.joinQueue = regionalFunctions.https.onCall(async (data, context) => {
         });
         // Send "joined" notification (non-blocking)
         try {
+            // Mark the patient's notifications.joined flag (so emulator/debug shows it) and emit a debug notification
+            try {
+                await admin.firestore().collection('clinics').doc(clinicId)
+                    .collection('doctors').doc(doctorId)
+                    .collection('queues').doc(today)
+                    .collection('patients').doc(newPatientData.id)
+                    .set({ notifications: { joined: true } }, { merge: true });
+            }
+            catch (e) {
+                functions.logger.warn('Failed to mark joined notification on patient doc', e);
+            }
             await (0, notifier_1.sendNotification)({
                 to: newPatientData.phone,
                 type: 'joined',
@@ -381,7 +350,10 @@ exports.joinQueue = regionalFunctions.https.onCall(async (data, context) => {
                     name: newPatientData.name,
                     tokenNumber: newPatientData.tokenNumber,
                     clinicId,
-                    doctorId
+                    doctorId,
+                    queueId: today,
+                    patientId: newPatientData.id,
+                    accessToken: rawAccessToken
                 }
             });
         }
@@ -486,6 +458,9 @@ exports.updatePatientStatus = regionalFunctions.https.onCall(async (data, contex
             .collection('doctors').doc(doctorId)
             .collection('queues').doc(queueId);
         let updatedPatientData;
+        // Phase 1 flag (defaults enabled if env not set to '0')
+        const phase1Enabled = true; // Permanently enabled (feature flag removed)
+        functions.logger.debug('Phase1 notifications active (permanently enabled – flags removed)', { phase1Enabled });
         // Use Firestore transaction ensuring all reads occur before any writes
         await db.runTransaction(async (transaction) => {
             // 1. Read patient doc
@@ -514,12 +489,32 @@ exports.updatePatientStatus = regionalFunctions.https.onCall(async (data, contex
                 }
             }
             // 4. Perform writes after all necessary reads gathered
-            updatedPatientData = {
-                ...patientData,
-                status: newStatus,
-                updatedAt: firestore_1.FieldValue.serverTimestamp()
-            };
-            transaction.update(patientRef, { status: newStatus, updatedAt: firestore_1.FieldValue.serverTimestamp() });
+            // Prepare base update
+            const baseUpdate = { status: newStatus, updatedAt: firestore_1.FieldValue.serverTimestamp() };
+            // Phase 1: when moving to in-progress, set service.startedAt if not already set
+            if (phase1Enabled && newStatus === 'in-progress') {
+                const alreadyStarted = patientData?.service?.startedAt;
+                if (!alreadyStarted) {
+                    baseUpdate['service'] = { ...patientData?.service, startedAt: firestore_1.FieldValue.serverTimestamp() };
+                    functions.logger.debug('Phase1 adding service.startedAt', { patientId, newStatus });
+                }
+                else {
+                    functions.logger.debug('Phase1 service.startedAt already present', { patientId });
+                }
+            }
+            // Phase 1: when completing, if we have a startedAt and no completedAt yet, set completedAt and compute duration placeholder (duration computed after transaction with actual timestamps if needed)
+            if (phase1Enabled && newStatus === 'completed') {
+                const svc = patientData?.service || {};
+                if (svc.startedAt && !svc.completedAt) {
+                    baseUpdate['service'] = { ...svc, completedAt: firestore_1.FieldValue.serverTimestamp() };
+                    functions.logger.debug('Phase1 setting service.completedAt placeholder', { patientId });
+                }
+                else {
+                    functions.logger.debug('Phase1 completed branch skipped (missing startedAt or already completedAt)', { patientId, hasStarted: !!svc.startedAt, hasCompleted: !!svc.completedAt });
+                }
+            }
+            updatedPatientData = { ...patientData, ...baseUpdate };
+            transaction.update(patientRef, baseUpdate);
             if (queueDoc) {
                 const patientTokenNumber = patientData?.tokenNumber || 0;
                 if (newStatus === 'completed') {
@@ -548,50 +543,96 @@ exports.updatePatientStatus = regionalFunctions.https.onCall(async (data, contex
             queueId,
             uid: context.auth.uid
         });
-        // If we completed a patient, try to notify the patient who is now 3-away
+        // Phase 1 post-transaction logic
+        // 1. If patient just completed: compute service duration & update queue avg service time; send completed notification once.
+        // 2. Legacy staged notifications remain untouched for now (we append completed flow before them to avoid interfering).
         try {
-            if (newStatus === 'completed') {
-                const threeAwayToken = (updatedPatientData?.tokenNumber || 0) + 3;
-                const patientsRef = db.collection('clinics').doc(clinicId)
+            if (phase1Enabled && newStatus === 'completed') {
+                const db = admin.firestore();
+                const patientSnap = await db.collection('clinics').doc(clinicId)
                     .collection('doctors').doc(doctorId)
                     .collection('queues').doc(queueId)
-                    .collection('patients');
-                const q = patientsRef.where('tokenNumber', '==', threeAwayToken).limit(1);
-                const snaps = await q.get();
-                snaps.forEach(async (snap) => {
-                    const p = snap.data();
+                    .collection('patients').doc(patientId).get();
+                const latest = patientSnap.data();
+                const svc = latest?.service || {};
+                let serviceDurationMs;
+                if (svc.startedAt && svc.completedAt && !svc.serviceDurationMs) {
+                    // Compute duration locally using Timestamp seconds if available
                     try {
-                        await (0, notifier_1.sendNotification)({
-                            to: p.phone,
-                            type: 'three-away',
-                            payload: { name: p.name, tokenNumber: p.tokenNumber, clinicId, doctorId }
-                        });
+                        const startedTs = svc.startedAt;
+                        const completedTs = svc.completedAt;
+                        if (startedTs?.toMillis && completedTs?.toMillis) {
+                            serviceDurationMs = completedTs.toMillis() - startedTs.toMillis();
+                        }
                     }
-                    catch (e) {
-                        functions.logger.warn('Failed to send three-away notification', e);
-                    }
-                });
-            }
-            if (newStatus === 'cancelled') {
-                try {
-                    await (0, notifier_1.sendNotification)({
-                        to: updatedPatientData?.phone,
-                        type: 'cancelled',
-                        payload: {
-                            name: updatedPatientData?.name,
-                            tokenNumber: updatedPatientData?.tokenNumber,
-                            clinicId, doctorId, queueId,
-                            message: 'Your queue entry has been cancelled. If this was a mistake, please contact the clinic to rejoin.'
+                    catch (_) { /* ignore */ }
+                }
+                // Update patient doc with duration if computed
+                if (serviceDurationMs && !svc.serviceDurationMs) {
+                    await patientSnap.ref.set({ service: { ...svc, serviceDurationMs } }, { merge: true });
+                    functions.logger.debug('Phase1 wrote serviceDurationMs', { patientId, serviceDurationMs });
+                }
+                // Update queue average (EMA) if we have a fresh duration
+                if (serviceDurationMs && serviceDurationMs > 0) {
+                    const queueRef = db.collection('clinics').doc(clinicId)
+                        .collection('doctors').doc(doctorId)
+                        .collection('queues').doc(queueId);
+                    await db.runTransaction(async (tx) => {
+                        const qDoc = await tx.get(queueRef);
+                        if (qDoc.exists) {
+                            const qd = qDoc.data() || {};
+                            const oldAvg = qd?.metrics?.avgServiceMs;
+                            const alpha = 0.2; // smoothing factor
+                            const newAvg = oldAvg ? Math.round(oldAvg * (1 - alpha) + serviceDurationMs * alpha) : serviceDurationMs;
+                            const metrics = { ...(qd.metrics || {}), avgServiceMs: newAvg, updatedAt: firestore_1.FieldValue.serverTimestamp() };
+                            tx.set(queueRef, { metrics }, { merge: true });
+                            functions.logger.debug('Phase1 updated queue avgServiceMs', { queueId, newAvg });
                         }
                     });
                 }
-                catch (e) {
-                    functions.logger.warn('Failed to send cancellation notification', e);
+                // Send completed notification if not already flagged (notifications.completed)
+                const alreadyCompletedNotified = latest?.notifications?.completed === true;
+                if (!alreadyCompletedNotified) {
+                    try {
+                        await patientSnap.ref.set({ notifications: { ...(latest?.notifications || {}), completed: true } }, { merge: true });
+                        await (0, notifier_1.sendNotification)({
+                            to: latest?.phone || 'unknown',
+                            type: 'completed',
+                            payload: {
+                                name: latest?.name,
+                                tokenNumber: latest?.tokenNumber,
+                                clinicId, doctorId, queueId,
+                                serviceDurationMs: serviceDurationMs || null
+                            }
+                        });
+                        functions.logger.debug('Phase1 sent completed notification', { patientId });
+                    }
+                    catch (e) {
+                        functions.logger.warn('Failed to send completed notification', e);
+                    }
                 }
             }
         }
         catch (e) {
-            functions.logger.warn('Error handling three-away notification', e);
+            functions.logger.warn('Phase1 completion post-processing failed (non-fatal)', e);
+        }
+        // Legacy staged notification logic removed (engine handles position). Only handle cancellation explicitly.
+        if (newStatus === 'cancelled') {
+            try {
+                await (0, notifier_1.sendNotification)({
+                    to: updatedPatientData?.phone,
+                    type: 'cancelled',
+                    payload: {
+                        name: updatedPatientData?.name,
+                        tokenNumber: updatedPatientData?.tokenNumber,
+                        clinicId, doctorId, queueId,
+                        message: 'Your queue entry has been cancelled. If this was a mistake, please contact the clinic to rejoin.'
+                    }
+                });
+            }
+            catch (e) {
+                functions.logger.warn('Failed to send cancellation notification', e);
+            }
         }
         // Server-side auto-advance: if queue has autoAdvance true, promote next waiting patient automatically
         try {
@@ -626,6 +667,16 @@ exports.updatePatientStatus = regionalFunctions.https.onCall(async (data, contex
         }
         catch (autoErr) {
             functions.logger.warn('Auto-advance failed (non-fatal)', autoErr);
+        }
+        // Phase 2 recompute (top 3 logic) after any status transition of interest
+        try {
+            if (['completed', 'in-progress', 'cancelled'].includes(newStatus)) {
+                functions.logger.debug('Notification engine recompute (default-on)', { clinicId, doctorId, queueId, newStatus });
+                await (0, notificationEngine_1.recomputeQueueNotifications)({ clinicId, doctorId, queueId });
+            }
+        }
+        catch (engErr) {
+            functions.logger.warn('Notification engine recompute failed (non-fatal)', { error: engErr?.message });
         }
         return {
             success: true,
@@ -733,47 +784,7 @@ exports.setQueueAutoAdvance = regionalFunctions.https.onCall(async (data, contex
  * URL params: /sse/clinics/{clinicId}/doctors/{doctorId}/queues/{queueId}/patients
  * Query: ?token=<optional filter>
  */
-exports.patientStream = regionalFunctions.https.onRequest(async (req, res) => {
-    try {
-        // Allow only GET
-        if (req.method !== 'GET') {
-            res.status(405).json({ error: 'Only GET supported' });
-            return;
-        }
-        res.setHeader('Content-Type', 'text/event-stream');
-        res.setHeader('Cache-Control', 'no-cache, no-transform');
-        res.setHeader('Connection', 'keep-alive');
-        res.flushHeaders?.();
-        const { clinicId, doctorId, queueId } = req.query;
-        if (!clinicId || !doctorId || !queueId) {
-            res.write(`event: error\n` + `data: ${JSON.stringify({ error: 'clinicId, doctorId, queueId required' })}\n\n`);
-            res.end();
-            return;
-        }
-        const colRef = admin.firestore().collection('clinics').doc(clinicId)
-            .collection('doctors').doc(doctorId)
-            .collection('queues').doc(queueId)
-            .collection('patients');
-        const unsubscribe = colRef.onSnapshot((snap) => {
-            const payload = [];
-            snap.forEach(d => payload.push({ id: d.id, ...d.data() }));
-            res.write(`event: patients\n` + `data: ${JSON.stringify(payload)}\n\n`);
-        }, (err) => {
-            res.write(`event: error\n` + `data: ${JSON.stringify({ error: err.message })}\n\n`);
-        });
-        req.on('close', () => {
-            unsubscribe();
-            res.end();
-        });
-    }
-    catch (err) {
-        try {
-            res.write(`event: error\n` + `data: ${JSON.stringify({ error: err.message || 'internal' })}\n\n`);
-        }
-        catch (_) { /* ignore */ }
-        res.end();
-    }
-});
+// Removed patientStream SSE endpoint (unused by frontends)
 /**
  * Firebase Callable Function to bootstrap a clinic account with initial data
  * Creates default clinic, doctor, and queue documents, and links them to the user

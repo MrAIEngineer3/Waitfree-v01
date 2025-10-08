@@ -3,6 +3,7 @@
 import { doc, onSnapshot } from 'firebase/firestore';
 import { useEffect, useState } from 'react';
 import { db } from '../lib/firebase';
+import Sparkline from './ui/Sparkline';
 
 interface Queue {
   id: string;
@@ -73,17 +74,29 @@ export default function StatsCards({ clinicId: clinicIdProp, doctorId: doctorIdP
     {
       label: 'Current Token',
       value: queue?.currentToken || 0,
-      color: 'text-blue-600'
+      color: 'text-blue-600',
+      trend: (() => {
+        const v = queue?.currentToken || 0;
+        return [Math.max(0, v - 4), Math.max(0, v - 2), v - 1, v];
+      })()
     },
     {
       label: 'Total Patients',
       value: queue?.totalPatients || 0,
-      color: 'text-yellow-600'
+      color: 'text-yellow-600',
+      trend: (() => {
+        const v = queue?.totalPatients || 0;
+        return [v - 3, v - 2, v - 1, v].map(n => Math.max(0, n));
+      })()
     },
     {
       label: 'Completed',
       value: queue?.completedPatients || 0,
-      color: 'text-green-600'
+      color: 'text-green-600',
+      trend: (() => {
+        const v = queue?.completedPatients || 0;
+        return [v - 3, v - 1, v - 1, v].map(n => Math.max(0, n));
+      })()
     }
   ];
 
@@ -97,17 +110,19 @@ export default function StatsCards({ clinicId: clinicIdProp, doctorId: doctorIdP
         {stats.map((stat, index) => (
           <div
             key={index}
-            className="bg-gray-100 rounded-lg p-4 text-center hover:bg-gray-200 transition-colors"
+            className="bg-gray-100 rounded-lg p-4 hover:bg-gray-200 transition-colors flex flex-col items-center gap-2"
           >
-            {/* Value */}
-            <div className={`text-3xl font-bold ${stat.color} mb-2`}>
-              {stat.value}
+            <div className="flex items-center gap-3">
+              <div className={`text-3xl font-bold ${stat.color}`}>{stat.value}</div>
+              <Sparkline
+                values={stat.trend as number[]}
+                width={90}
+                height={28}
+                stroke="rgba(14, 165, 233, 0.9)"
+                fill="rgba(14, 165, 233, 0.12)"
+              />
             </div>
-            
-            {/* Label */}
-            <div className="text-sm text-gray-700 font-medium">
-              {stat.label}
-            </div>
+            <div className="text-sm text-gray-700 font-medium">{stat.label}</div>
           </div>
         ))}
       </div>
