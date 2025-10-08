@@ -37,6 +37,20 @@ Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/bui
 
 ---
 
+## Production URL for Patient PWA (QR link)
+
+The dashboard renders a QR code that points patients to the PWA join page. By default, the code will:
+
+- Use `NEXT_PUBLIC_PATIENT_BASE_URL` if set (recommended in production)
+- Otherwise, if running on a non-localhost domain, infer the current origin as the base
+- Fall back to `http://localhost:3002` in local development
+
+Set an environment variable on your hosting platform for the dashboard:
+
+- `NEXT_PUBLIC_PATIENT_BASE_URL=https://your-patient-domain.example`
+
+This ensures the printed/copyable link under the QR never points to a localhost URL after deployment.
+
 ## Design System (Initial Extraction)
 
 This dashboard now includes an initial, non-breaking design token layer and primitive UI components to enable a gradual modernization without refactoring existing business logic.
