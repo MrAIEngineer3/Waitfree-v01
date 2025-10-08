@@ -1,5 +1,4 @@
 "use client";
-import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import QrScanner from 'qr-scanner';
 import { useEffect, useRef, useState } from 'react';
@@ -261,13 +260,13 @@ function ClinicIdEntry() {
   };
 
   return (
-    <form onSubmit={goToJoin} className="relative w-full sm:w-auto sm:max-w-xs group">
+    <form onSubmit={goToJoin} className="relative w-auto max-w-[180px] group">
       <input 
         type="text" 
         placeholder="Enter Clinic ID" 
         value={clinicId}
         onChange={(e) => setClinicId(e.target.value)}
-        className="w-full h-12 bg-white rounded-full pl-6 pr-16 text-gray-900 placeholder-gray-400 border border-gray-200/80 shadow-sm focus:ring-2 focus:ring-blue-400 focus:outline-none transition-all"
+        className="w-full h-12 bg-white rounded-full pl-4 pr-12 text-gray-900 placeholder-gray-400 border border-gray-200/80 shadow-sm focus:ring-2 focus:ring-blue-400 focus:outline-none transition-all text-sm"
       />
       <button 
         type="submit" 
@@ -338,28 +337,29 @@ function HeroSection() {
   }
 
   return (
-    <section className="pt-1 sm:pt-2 pb-16 sm:pb-20 text-center">
-      <div>
-        <a href="#" className="inline-flex items-center gap-2 bg-white px-4 py-1.5 rounded-full border border-gray-200/80 shadow-sm text-sm mb-3 hover:shadow-md transition-shadow animate-on-load hero-item-animate" style={{animationDelay: '0.2s'}}>
-          <span className="relative flex h-2 w-2">
+    <section className="pt-8 sm:pt-12 pb-16 sm:pb-20 text-center">
+      <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
+        <a href="#features" className="inline-flex items-center gap-1.5 sm:gap-2 bg-white px-2.5 sm:px-4 py-1 sm:py-1.5 rounded-full border border-gray-200/80 shadow-sm text-xs mb-1 hover:shadow-md transition-shadow animate-on-load hero-item-animate" style={{animationDelay: '0.2s'}}>
+          <span className="relative flex h-1.5 w-1.5 sm:h-2 sm:w-2">
             <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-cyan-400 opacity-75"></span>
-            <span className="relative inline-flex rounded-full h-2 w-2 bg-cyan-500"></span>
+            <span className="relative inline-flex rounded-full h-full w-full bg-cyan-500"></span>
           </span>
-          Introducing our new Queue Intelligence Platform
+          <span className="hidden sm:inline">Introducing our new Queue Intelligence Platform</span>
+          <span className="sm:hidden">New Queue Intelligence Platform</span>
         </a>
-        <h1 className="text-4xl sm:text-6xl md:text-7xl font-extrabold tracking-tighter text-gray-900 leading-tight animate-on-load hero-item-animate" style={{animationDelay: '0.4s'}}>
+        <h1 className="text-3xl sm:text-4xl md:text-6xl lg:text-7xl font-extrabold tracking-tighter text-gray-900 leading-tight animate-on-load hero-item-animate" style={{animationDelay: '0.4s'}}>
           The Waiting Room, <br /> <span className="wf-gradient-text">Reimagined.</span>
         </h1>
-        <p className="max-w-2xl mx-auto mt-6 text-lg text-gray-600 animate-on-load hero-item-animate" style={{animationDelay: '0.6s'}}>
+        <p className="max-w-2xl mx-auto mt-6 text-base sm:text-lg text-gray-600 animate-on-load hero-item-animate" style={{animationDelay: '0.6s'}}>
           Your clinic journey simplified. Discover, book, and track your turn from anywhere. Arrive just-in-time, stress-free.
         </p>
         <div className="mt-10 flex flex-col sm:flex-row items-center justify-center gap-4 animate-on-load hero-item-animate" style={{animationDelay: '0.8s'}}>
           <button 
             type="button" 
             onClick={() => setScanning(true)}
-            className="btn-primary text-white font-semibold py-3 px-8 rounded-full shadow-lg w-full sm:w-auto"
+            className="btn-primary text-white font-semibold h-12 px-4 rounded-full shadow-lg w-auto max-w-[180px]"
           >
-            Scan Clinic QR Code
+            Scan QR Code
           </button>
           <ClinicIdEntry />
         </div>
@@ -403,7 +403,8 @@ function HeroSection() {
 function PhoneMockupSection() {
   return (
     <section className="relative pt-20 sm:pt-24 pb-12 sm:pb-16">
-      <div className="scroll-animation relative w-full max-w-4xl mx-auto h-[400px] sm:h-[600px] flex items-center justify-center">
+      <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
+        <div className="scroll-animation relative w-full max-w-4xl mx-auto h-[400px] sm:h-[600px] flex items-center justify-center">
         {/* Phone Frame */}
         <div className="relative w-72 sm:w-80 h-[580px] sm:h-[620px] bg-gray-800 rounded-[40px] border-[14px] border-gray-800 shadow-2xl shadow-gray-400/30 overflow-hidden">
           {/* Phone Screen Content */}
@@ -455,6 +456,7 @@ function PhoneMockupSection() {
           </div>
         </div>
       </div>
+      </div>
     </section>
   );
 }
@@ -499,9 +501,10 @@ function FeaturesSection() {
 
   return (
     <section id="features" className="py-16 sm:py-20">
-      <div className="text-center mb-16 scroll-animation">
-        <h2 className="text-3xl sm:text-4xl font-bold tracking-tight text-gray-900">A smarter way to wait.</h2>
-        <p className="max-w-xl mx-auto mt-4 text-gray-600">Waitfree empowers you with features that put you in control.</p>
+      <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
+        <div className="text-center mb-16 scroll-animation">
+        <h2 className="text-2xl sm:text-3xl md:text-4xl font-bold tracking-tight text-gray-900">A smarter way to wait.</h2>
+        <p className="max-w-xl mx-auto mt-4 text-sm sm:text-base text-gray-600">Waitfree empowers you with features that put you in control.</p>
       </div>
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-8">
         {features.map((feature, index) => (
@@ -513,10 +516,11 @@ function FeaturesSection() {
             <div className="w-12 h-12 mb-5 rounded-xl bg-blue-100 flex items-center justify-center text-blue-600">
               {feature.icon}
             </div>
-            <h3 className="text-lg font-semibold mb-2">{feature.title}</h3>
-            <p className="text-gray-600 text-sm">{feature.description}</p>
+            <h3 className="text-base sm:text-lg font-semibold mb-2">{feature.title}</h3>
+            <p className="text-gray-600 text-xs sm:text-sm">{feature.description}</p>
           </div>
         ))}
+      </div>
       </div>
     </section>
   );
@@ -544,9 +548,10 @@ function HowItWorksSection() {
 
   return (
     <section id="how-it-works" className="py-16 sm:py-20">
-      <div className="text-center mb-16 scroll-animation">
-        <h2 className="text-3xl sm:text-4xl font-bold tracking-tight text-gray-900">Get started in 3 easy steps.</h2>
-        <p className="max-w-xl mx-auto mt-4 text-gray-600">Your journey to a stress-free clinic visit is simple.</p>
+      <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
+        <div className="text-center mb-16 scroll-animation">
+        <h2 className="text-2xl sm:text-3xl md:text-4xl font-bold tracking-tight text-gray-900">Get started in 3 easy steps.</h2>
+        <p className="max-w-xl mx-auto mt-4 text-sm sm:text-base text-gray-600">Your journey to a stress-free clinic visit is simple.</p>
       </div>
       <div className="relative">
         {/* Dotted Line for Desktop */}
@@ -560,15 +565,16 @@ function HowItWorksSection() {
               style={{transitionDelay: `${index * 150}ms`}}
             >
               <div className="relative inline-block">
-                <div className="w-20 h-20 mx-auto mb-6 flex items-center justify-center bg-white rounded-full text-2xl font-bold wf-gradient-text border-2 border-gray-200 shadow-md">
+                <div className="w-16 h-16 sm:w-20 sm:h-20 mx-auto mb-6 flex items-center justify-center bg-white rounded-full text-xl sm:text-2xl font-bold wf-gradient-text border-2 border-gray-200 shadow-md">
                   {step.number}
                 </div>
               </div>
-              <h3 className="text-lg font-semibold mb-2">{step.title}</h3>
-              <p className="text-gray-600 text-sm">{step.description}</p>
+              <h3 className="text-base sm:text-lg font-semibold mb-2">{step.title}</h3>
+              <p className="text-gray-600 text-xs sm:text-sm">{step.description}</p>
             </div>
           ))}
         </div>
+      </div>
       </div>
     </section>
   );
@@ -578,16 +584,21 @@ function HowItWorksSection() {
 function CtaSection() {
   return (
     <section className="py-16 sm:py-20">
-      <div className="relative rounded-3xl overflow-hidden scroll-animation">
+      <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
+        <div className="relative rounded-3xl overflow-hidden scroll-animation">
         <div className="absolute inset-0 bg-gray-800"></div>
         <div className="absolute inset-0 bg-gradient-to-r from-blue-500/20 via-cyan-500/20 to-transparent opacity-50"></div>
         <div className="relative text-center p-12 sm:p-20">
-          <h2 className="text-3xl sm:text-4xl font-bold tracking-tight text-white">Join the Future of Clinic Visits</h2>
-          <p className="max-w-2xl mx-auto mt-4 text-gray-300">Experience calmer, smarter, patient-centric waiting. No guesswork, no crowding—just timely care.</p>
-          <Link href="/join" className="mt-8 inline-block btn-primary text-white font-semibold py-3 px-8 rounded-full shadow-lg">
+          <h2 className="text-2xl sm:text-3xl md:text-4xl font-bold tracking-tight text-white">Join the Future of Clinic Visits</h2>
+          <p className="max-w-2xl mx-auto mt-4 text-sm sm:text-base text-gray-300">Experience calmer, smarter, patient-centric waiting. No guesswork, no crowding—just timely care.</p>
+          <button 
+            onClick={() => window.scrollTo({ top: 0, behavior: 'smooth' })}
+            className="mt-8 inline-block btn-primary text-white font-semibold py-3 px-8 rounded-full shadow-lg"
+          >
             Get Started for Free
-          </Link>
+          </button>
         </div>
+      </div>
       </div>
     </section>
   );

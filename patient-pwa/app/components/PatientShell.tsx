@@ -36,6 +36,20 @@ export default function PatientShell({ children }: PatientShellProps) {
             <nav className="flex items-center gap-1.5">
               {nav.map(item => {
                 const active = pathname === item.href;
+                
+                // Special handling for "Join Queue" when on home page
+                if (item.label === 'Join Queue' && pathname === '/') {
+                  return (
+                    <button
+                      key={item.href}
+                      onClick={() => window.scrollTo({ top: 0, behavior: 'smooth' })}
+                      className={`px-4 py-2 text-sm font-medium rounded-full transition-colors ${active ? 'text-white bg-gray-900' : 'text-gray-600 hover:text-gray-900 hover:bg-gray-200/50'}`}
+                    >
+                      {item.label}
+                    </button>
+                  );
+                }
+                
                 return (
                   <Link
                     key={item.href}

@@ -13,7 +13,27 @@ type Props = {
  * Optional doctorId can be supported later if we roll out per-doctor codes.
  */
 export default function ClinicJoinQR({ clinicId, className }: Props) {
-  const base = (process.env.NEXT_PUBLIC_PATIENT_BASE_URL || 'http://localhost:3002').replace(/\/$/, '');
+  // Resolve Patient PWA base URL with safe fallbacks:
+  // 1) Explicit env var (recommended for production)
+  // 2) Runtime inference from current origin when not on localhost
+  // 3) Dev fallback to localhost:3002
+  const base = useMemo(() => {
+    const envBase = process.env.NEXT_PUBLIC_PATIENT_BASE_URL?.replace(/\/$/, '');
+    if (envBase) return envBase;
+    if (typeof window !== 'undefined') {
+      const { origin, hostname } = window.location;
+      const isLocal = /localhost|127\.0\.0\.1/.test(hostname);
+      if (!isLocal) {
+        // Best-effort inference: if dashboard is on a prod domain and no env is set,
+        // use the current origin rather than pointing users to localhost.
+        // If you host patient PWA on a different subdomain, set NEXT_PUBLIC_PATIENT_BASE_URL.
+        console.warn('[ClinicJoinQR] NEXT_PUBLIC_PATIENT_BASE_URL is not set. Inferring base from current origin:', origin);
+        return origin.replace(/\/$/, '');
+      }
+    }
+    // Dev default
+    return 'http://localhost:3002';
+  }, []);
   const url = useMemo(() => {
     const u = new URL(base + '/join');
     u.searchParams.set('clinicId', clinicId);
