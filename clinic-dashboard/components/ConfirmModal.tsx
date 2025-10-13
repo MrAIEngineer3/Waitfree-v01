@@ -1,5 +1,7 @@
 import React from 'react';
-import Button from './ui/Button';
+import Button, { type ButtonProps } from './ui/Button';
+
+type ConfirmTone = 'red' | 'green' | 'orange' | 'blue' | 'gray' | 'yellow';
 
 interface ConfirmModalProps {
   open: boolean;
@@ -9,7 +11,7 @@ interface ConfirmModalProps {
   cancelLabel?: string;
   onCancel: () => void;
   busy?: boolean;
-  confirmTone?: 'red' | 'green' | 'orange' | 'blue' | 'gray' | 'yellow';
+  confirmTone?: ConfirmTone;
   /** Disable confirm button (e.g. typed text mismatch) */
   disableConfirm?: boolean;
   /** Optional id for the body text for a11y */
@@ -23,15 +25,6 @@ interface ConfirmModalProps {
   /** Pre-checked state (consumer manages) */
   defaultSkipToday?: boolean;
 }
-
-const toneMap: Record<string, string> = {
-  red: 'bg-red-600 hover:bg-red-700 focus:ring-red-500',
-  green: 'bg-green-600 hover:bg-green-700 focus:ring-green-500',
-  orange: 'bg-orange-600 hover:bg-orange-700 focus:ring-orange-500',
-  blue: 'bg-blue-600 hover:bg-blue-700 focus:ring-blue-500',
-  gray: 'bg-gray-600 hover:bg-gray-700 focus:ring-gray-500',
-  yellow: 'bg-yellow-600 hover:bg-yellow-700 focus:ring-yellow-500'
-};
 
 export const ConfirmModal: React.FC<ConfirmModalProps> = ({
   open,
@@ -51,14 +44,15 @@ export const ConfirmModal: React.FC<ConfirmModalProps> = ({
 }) => {
   const [skip, setSkip] = React.useState(defaultSkipToday);
   // Map legacy tone prop to Button variant
-  const toneToVariant: Record<string, string> = {
+  const toneToVariant: Record<ConfirmTone, ButtonProps['variant']> = {
     red: 'danger',
     green: 'secondary',
-    yellow: 'outline', // pause style -> low emphasis
+    yellow: 'outline',
     orange: 'outline',
-    blue: 'accent'
+    blue: 'accent',
+    gray: 'ghost',
   };
-  const confirmVariant = toneToVariant[confirmTone] || 'accent';
+  const confirmVariant = toneToVariant[confirmTone] ?? 'accent';
   if (!open) return null;
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
@@ -90,15 +84,21 @@ export const ConfirmModal: React.FC<ConfirmModalProps> = ({
         )}
         <div className="flex items-center justify-end gap-3 pt-2">
           <Button
-            onClick={() => { if (busy) return; onCancel(); }}
+            onClick={() => {
+              if (busy) return;
+              onCancel();
+            }}
             disabled={busy}
             variant="ghost"
             size="sm"
           >{cancelLabel}</Button>
           <Button
-            onClick={() => { if (busy || disableConfirm) return; onConfirm && onConfirm(skip); }}
+            onClick={() => {
+              if (busy || disableConfirm) return;
+              if (onConfirm) onConfirm(skip);
+            }}
             disabled={busy || disableConfirm}
-            variant={confirmVariant as any}
+            variant={confirmVariant}
             size="sm"
             loading={busy}
           >{confirmLabel}</Button>

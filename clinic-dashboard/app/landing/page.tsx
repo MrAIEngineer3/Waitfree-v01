@@ -1,9 +1,8 @@
-// @ts-ignore - rely on Next.js TS resolution
 import LandingClient from './LandingClient';
 
 export const metadata = {
-  title: 'Waitfree – Modern Clinic Queue & Flow Platform',
-  description: 'Reduce patient wait anxiety, streamline provider throughput, and gain operational clarity.'
+  title: 'Waitfree – Modern Queue Management for Healthcare',
+  description: 'Elevate patient care with intelligent flow. Reduce wait times, improve satisfaction, and streamline clinic operations with real-time insights.'
 };
 
 export default function LandingPage() {

@@ -1,5 +1,5 @@
 "use client";
-import { onAuthStateChanged, User } from 'firebase/auth';
+import { onAuthStateChanged } from 'firebase/auth';
 import { doc, getDoc } from 'firebase/firestore';
 import { usePathname, useRouter } from 'next/navigation';
 import React, { useEffect, useState } from 'react';
@@ -16,14 +16,12 @@ import { auth, db } from '../../lib/firebase';
  * NOTE: This is intentionally conservative: it only runs for routes placed inside the (dashboard) group layout.
  */
 export default function AuthGuard({ children }: { children: React.ReactNode }) {
-  const [user, setUser] = useState<User | null>(null);
   const [mappingChecked, setMappingChecked] = useState(false);
   const router = useRouter();
   const pathname = usePathname();
 
   useEffect(() => {
     const unsub = onAuthStateChanged(auth, async (u) => {
-      setUser(u);
       if (!u) {
         setMappingChecked(true);
         if (!pathname.startsWith('/auth')) router.replace('/auth/login');

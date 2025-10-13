@@ -1,6 +1,6 @@
 'use client';
 
-import { doc, getDoc } from 'firebase/firestore';
+import { doc, getDoc, type DocumentData, type QueryDocumentSnapshot } from 'firebase/firestore';
 import { httpsCallable } from 'firebase/functions';
 import { useRouter } from 'next/navigation';
 import { useEffect, useRef, useState } from 'react';
@@ -18,7 +18,8 @@ export default function JoinForm() {
   // Dynamic clinic/doctor ids and status
   const [clinicId, setClinicId] = useState<string | null>(null);
   const [doctorId, setDoctorId] = useState<string | null>(null);
-  const [doctors, setDoctors] = useState<Array<{ id: string; name?: string; specialty?: string }>>([]);
+  interface DoctorListEntry { id: string; name?: string; specialty?: string }
+  const [doctors, setDoctors] = useState<DoctorListEntry[]>([]);
   const [status, setStatus] = useState<'loading' | 'valid' | 'invalid'>('loading');
   const [clinicName, setClinicName] = useState('');
   const [clinicData, setClinicData] = useState<{ name?: string; address?: string; phone?: string } | null>(null);
@@ -66,9 +67,26 @@ export default function JoinForm() {
       }
 
       // Call the Cloud Function
-      const joinFn = httpsCallable(functions, 'joinQueue');
+      interface JoinQueuePayload {
+        clinicId: string;
+        doctorId: string;
+        patientData: {
+          name: string;
+          age: number;
+          phone: string;
+        };
+      }
+      interface JoinQueueResult {
+        patientId: string;
+        queueId: string;
+        doctorId: string;
+        clinicId: string;
+        accessToken?: string;
+      }
 
-      const callResult = await joinFn({
+      const joinFn = httpsCallable<JoinQueuePayload, JoinQueueResult>(functions, 'joinQueue');
+
+      const { data: result } = await joinFn({
         clinicId,
         doctorId,
         patientData: {
@@ -77,26 +95,25 @@ export default function JoinForm() {
           phone: normalizedDigits,
         },
       });
-      const result = callResult?.data as any;
-
-      if (result && result.patientId) {
+      if (result?.patientId) {
         const { patientId, queueId, doctorId: dId, clinicId: cId, accessToken } = result;
         try {
           if (accessToken && patientId) {
             sessionStorage.setItem(`patientToken:${patientId}`, accessToken);
           }
-        } catch (e) {
-          console.warn('Failed to store access token in sessionStorage', e);
+        } catch (storageError) {
+          console.warn('Failed to store access token in sessionStorage', storageError);
         }
-  // Redirect with one-time token in URL so the status page can persist and scrub it
-  const joinUrl = `/queue/${cId}/${dId}/${queueId}/${patientId}${accessToken ? `?t=${encodeURIComponent(accessToken)}` : ''}`;
-  router.push(joinUrl);
+        // Redirect with one-time token in URL so the status page can persist and scrub it
+        const joinUrl = `/queue/${cId}/${dId}/${queueId}/${patientId}${accessToken ? `?t=${encodeURIComponent(accessToken)}` : ''}`;
+        router.push(joinUrl);
       } else {
         setError('Failed to join queue. Please try again.');
       }
-    } catch (err: any) {
+    } catch (err: unknown) {
       console.error('Error calling joinQueue callable function:', err);
-      setError(err?.message || 'Failed to join queue. Please try again.');
+      const message = err instanceof Error ? err.message : 'Failed to join queue. Please try again.';
+      setError(message);
     } finally {
       setIsLoading(false);
     }
@@ -122,7 +139,7 @@ export default function JoinForm() {
       }
 
       // Helper to coerce clinic/doctor IDs into safe Firestore path segments
-      const coerceId = (value: string | null | undefined): string | null => {
+          const coerceId = (value: string | null | undefined): string | null => {
         if (!value) return null;
         const str = String(value).trim();
         if (!str) return null;
@@ -131,7 +148,7 @@ export default function JoinForm() {
           const u = new URL(str);
           const byQuery = u.searchParams.get('clinicId') || u.searchParams.get('doctorId') || u.searchParams.get('c') || u.searchParams.get('d');
           if (byQuery && /^[A-Za-z0-9-_.~]+$/.test(byQuery)) return byQuery;
-        } catch (_) { /* not a URL */ }
+        } catch { /* not a URL */ }
         // Otherwise allow a conservative character set
         const cleaned = str.match(/[A-Za-z0-9-_.~]+/g)?.join('') || '';
         return cleaned || null;
@@ -150,9 +167,10 @@ export default function JoinForm() {
             const clinicRef = doc(db, 'clinics', c);
             const docSnap = await getDoc(clinicRef);
             if (docSnap.exists()) {
-              const data = docSnap.data() as any;
-              setClinicData(data);
-              if (data && data.name) setClinicName(data.name);
+              type ClinicDoc = { name?: string };
+              const data = docSnap.data() as ClinicDoc | undefined;
+              setClinicData(data ?? null);
+              if (data?.name) setClinicName(data.name);
             }
           } catch (err) {
             console.error('Error fetching clinic:', err);
@@ -169,9 +187,10 @@ export default function JoinForm() {
               setDoctorsLoading(true);
               const { collection, getDocs } = await import('firebase/firestore');
               const doctorsCol = await getDocs(collection(db, 'clinics', c, 'doctors'));
-              const list: Array<{ id: string; name?: string; specialty?: string }> = [];
-              doctorsCol.forEach((docSnap: any) => {
-                const data = docSnap.data();
+              const list: DoctorListEntry[] = [];
+              doctorsCol.forEach((docSnap: QueryDocumentSnapshot<DocumentData>) => {
+                type DoctorDoc = { name?: string; specialty?: string };
+                const data = docSnap.data() as DoctorDoc | undefined;
                 list.push({ 
                   id: docSnap.id, 
                   name: data?.name || docSnap.id,

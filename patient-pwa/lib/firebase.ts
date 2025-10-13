@@ -1,6 +1,6 @@
-import { initializeApp } from 'firebase/app';
+import { initializeApp, type FirebaseOptions } from 'firebase/app';
 import { connectAuthEmulator, getAuth } from 'firebase/auth';
-import { connectFirestoreEmulator, getFirestore } from 'firebase/firestore';
+import { connectFirestoreEmulator, getFirestore, type Firestore } from 'firebase/firestore';
 import { connectFunctionsEmulator, getFunctions } from 'firebase/functions';
 
 // Your Firebase configuration
@@ -22,6 +22,12 @@ export const db = getFirestore(app);
 export const auth = getAuth(app);
 export const functions = getFunctions(app, 'asia-south1'); // Match your Cloud Functions region
 
+type FirestoreInternals = Firestore & {
+  _settings?: { host?: string };
+  _app?: { options?: FirebaseOptions };
+  app?: { options?: FirebaseOptions };
+};
+
 // Safety & diagnostics wrapper
 if (typeof window !== 'undefined') {
   const proj = firebaseConfig.projectId;
@@ -36,18 +42,18 @@ if (typeof window !== 'undefined') {
       connectAuthEmulator(auth, 'http://127.0.0.1:9098', { disableWarnings: true });
       connectFunctionsEmulator(functions, '127.0.0.1', 5002);
       // After attempting to connect, verify Firestore points to localhost host; Firestore v9 keeps settings internally
-      const internal: any = db as any;
+      const internal = db as FirestoreInternals;
       const host = internal._settings?.host;
       if (!host || !/localhost|127\.0\.0\.1/.test(host)) {
         console.error('[patient-pwa][firebase] Emulator connection attempt did not set a localhost host. Blocking to avoid prod writes.');
         throw new Error('Emulator connection failed');
       }
-      const opts: any = internal._app?.options || internal.app?.options || {};
-      console.log('[patient-pwa][firebase] Emulator connected. projectId:', opts.projectId, 'host:', host);
+      const options = internal._app?.options ?? internal.app?.options;
+      console.log('[patient-pwa][firebase] Emulator connected. projectId:', options?.projectId, 'host:', host);
     } else {
-      const internal: any = db as any;
-      const opts: any = internal._app?.options || internal.app?.options || {};
-      console.log('[patient-pwa][firebase] NOT using emulators. projectId:', opts.projectId, 'NODE_ENV:', process.env.NODE_ENV);
+      const internal = db as FirestoreInternals;
+      const options = internal._app?.options ?? internal.app?.options;
+      console.log('[patient-pwa][firebase] NOT using emulators. projectId:', options?.projectId, 'NODE_ENV:', process.env.NODE_ENV);
     }
   } catch (err) {
     console.error('[patient-pwa][firebase] Fatal during emulator safety init:', err);

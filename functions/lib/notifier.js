@@ -32,9 +32,6 @@ var __importStar = (this && this.__importStar) || (function () {
         return result;
     };
 })();
-var __importDefault = (this && this.__importDefault) || function (mod) {
-    return (mod && mod.__esModule) ? mod : { "default": mod };
-};
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.sendNotification = sendNotification;
 exports.setStaffClaim = setStaffClaim;
@@ -43,8 +40,20 @@ const firestore_1 = require("@google-cloud/firestore");
 const admin = __importStar(require("firebase-admin"));
 const functions = __importStar(require("firebase-functions/v1"));
 require("./loadEnv");
-// Import Twilio for WhatsApp integration
-const twilio_1 = __importDefault(require("twilio"));
+let twilioFactory = null;
+function resolveTwilioFactory() {
+    if (twilioFactory) {
+        return twilioFactory;
+    }
+    try {
+        twilioFactory = require('twilio');
+        return twilioFactory;
+    }
+    catch (err) {
+        functions.logger.debug('Twilio SDK unavailable or not installed', err);
+        return null;
+    }
+}
 // Phone number validation and formatting for WhatsApp
 function formatWhatsAppNumber(phone) {
     // Remove all non-digit characters except +
@@ -134,7 +143,11 @@ function getTwilioClient() {
     if (!accountSid || !authToken) {
         return null; // Return null if credentials not available (for testing)
     }
-    return (0, twilio_1.default)(accountSid, authToken);
+    const factory = resolveTwilioFactory();
+    if (!factory) {
+        return null;
+    }
+    return factory(accountSid, authToken);
 }
 // Single exported sendNotification used by functions.
 // Supports both debug mode (local testing) and production WhatsApp via Twilio

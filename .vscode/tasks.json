@@ -10,6 +10,76 @@
 				"$eslint-stylish"
 			],
 			"group": "build"
+		},
+		{
+			"label": "Build clinic-dashboard",
+			"type": "shell",
+			"command": "npm run build --workspace clinic-dashboard",
+			"isBackground": false,
+			"group": "build"
+		},
+		{
+			"label": "Build clinic-dashboard",
+			"type": "shell",
+			"command": "npm run build --workspace clinic-dashboard",
+			"isBackground": false,
+			"group": "build"
+		},
+		{
+			"label": "Build clinic-dashboard",
+			"type": "shell",
+			"command": "npm run build --workspace clinic-dashboard",
+			"isBackground": false,
+			"group": "build"
+		},
+		{
+			"label": "Build clinic-dashboard",
+			"type": "shell",
+			"command": "npm run build --workspace clinic-dashboard",
+			"isBackground": false,
+			"group": "build"
+		},
+		{
+			"label": "Build clinic-dashboard",
+			"type": "shell",
+			"command": "npm run build --workspace clinic-dashboard",
+			"isBackground": false,
+			"group": "build"
+		},
+		{
+			"label": "Build clinic-dashboard",
+			"type": "shell",
+			"command": "npm run build --workspace clinic-dashboard",
+			"isBackground": false,
+			"group": "build"
+		},
+		{
+			"label": "Build clinic-dashboard",
+			"type": "shell",
+			"command": "npm run build --workspace clinic-dashboard",
+			"isBackground": false,
+			"group": "build"
+		},
+		{
+			"label": "Build clinic-dashboard",
+			"type": "shell",
+			"command": "npm run build --workspace clinic-dashboard",
+			"isBackground": false,
+			"group": "build"
+		},
+		{
+			"label": "Build clinic-dashboard",
+			"type": "shell",
+			"command": "npm run build --workspace clinic-dashboard",
+			"isBackground": false,
+			"group": "build"
+		},
+		{
+			"label": "Build clinic-dashboard",
+			"type": "shell",
+			"command": "npm run build --workspace clinic-dashboard",
+			"isBackground": false,
+			"group": "build"
 		}
 	]
 }

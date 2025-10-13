@@ -9,12 +9,12 @@ service cloud.firestore {
     // WARNING: These rules are NOT suitable for production. Add role-based / field-level restrictions before launch.
 
     match /clinics/{clinicId} {
-      allow read: if true;              // Public can read clinic info
-      allow write: if request.auth != null;  // Any authed user can modify
+      allow read: if true;              // Public can read clinic info (incl. name, contactNumber)
+      allow write: if request.auth != null;  // Any authed user can modify during dev
 
       match /doctors/{doctorId} {
-        allow read: if true;           // Public doctor info
-        allow write: if request.auth != null;
+  allow read: if true;           // Public doctor info
+  allow write: if request.auth != null; // Allow CRUD from dashboard (dev)
 
         match /queues/{queueId} {
           allow get: if true;          // Public can fetch queue metadata (e.g., current token)

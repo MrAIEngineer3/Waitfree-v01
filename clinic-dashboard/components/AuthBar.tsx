@@ -1,6 +1,7 @@
 "use client";
 
 import { createUserWithEmailAndPassword, onAuthStateChanged, signInWithEmailAndPassword, signOut, User } from 'firebase/auth';
+import type { DocumentReference } from 'firebase/firestore';
 import { doc, getDoc, setDoc } from 'firebase/firestore';
 import { useEffect, useState } from 'react';
 import { auth, db } from '../lib/firebase';
@@ -12,7 +13,11 @@ async function ensureDemoClinicStructure() {
   const clinicRef = doc(db, 'clinics', 'demo-clinic');
   const doctorRef = doc(db, 'clinics', 'demo-clinic', 'doctors', 'demo-doctor');
   const queueRef = doc(db, 'clinics', 'demo-clinic', 'doctors', 'demo-doctor', 'queues', today);
-  const maybeCreate = async (ref: any, data: Record<string, unknown>, label: string) => {
+  const maybeCreate = async (
+  ref: DocumentReference,
+    data: Record<string, unknown>,
+    label: string
+  ) => {
     const snap = await getDoc(ref);
     if (!snap.exists()) { await setDoc(ref, data); console.log('Created', label); }
   };

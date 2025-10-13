@@ -1,7 +1,7 @@
 /** Tailwind v4 inline config extension adding semantic tokens.
  * Non-destructive: relies on CSS variables defined in app/design-tokens.css.
  */
-export default {
+const config = {
   content: [
     './app/**/*.{ts,tsx,js,jsx}',
     './components/**/*.{ts,tsx,js,jsx}',
@@ -64,3 +64,5 @@ export default {
     }
   }
 };
+
+export default config;

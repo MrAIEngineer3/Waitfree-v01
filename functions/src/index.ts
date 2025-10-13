@@ -9,9 +9,12 @@ import './loadEnv';
 // Import functions for local use
 import { recomputeQueueNotifications } from './notificationEngine';
 import { sendNotification } from './notifier';
+import { startTiming } from './utils/timing';
 
 // Initialize the Admin SDK. This is required for all backend functions.
 admin.initializeApp();
+
+const db = admin.firestore();
 
 // Export functions from other files to make them deployable
 export * from './notifier';
@@ -40,6 +43,36 @@ try {
 // Engine + Phase1 notifications are now permanently enabled (unless you change code).
 console.log(`GLOBAL: Allowed origins loaded: [${allowedOrigins.join(", ")}]. Config error: ${configError || 'None'}. Notification engine + phase1 ALWAYS ENABLED (flags removed).`);
 
+const runInBackground = (taskName: string, task: () => Promise<unknown>) => {
+  setImmediate(() => {
+    const span = startTiming(`runInBackground.${taskName}`, { taskName });
+    try {
+      Promise.resolve(task()).then(() => {
+        span.succeed({ status: 'resolved' });
+        functions.logger.debug(`${taskName} completed (background)`);
+      }).catch((err) => {
+        span.fail({
+          error: err instanceof Error ? err.message : String(err)
+        });
+        if (err instanceof Error) {
+          functions.logger.warn(`${taskName} failed (background)`, { message: err.message, stack: err.stack });
+        } else {
+          functions.logger.warn(`${taskName} failed (background)`, { error: err });
+        }
+      });
+    } catch (err) {
+      span.fail({
+        error: err instanceof Error ? err.message : String(err)
+      });
+      if (err instanceof Error) {
+        functions.logger.warn(`${taskName} failed (background-sync)`, { message: err.message, stack: err.stack });
+      } else {
+        functions.logger.warn(`${taskName} failed (background-sync)`, { error: err });
+      }
+    }
+  });
+};
+
 // Use cors with a dynamic origin function to validate incoming origin header against allowedOrigins.
 const corsHandler = cors({
   origin: (origin, callback) => {
@@ -58,6 +91,73 @@ const corsHandler = cors({
 
 // Configure region for all functions
 const regionalFunctions = functions.region('asia-south1');
+
+// Runtime options keep latency in check; warm pools opt-in via environment if required later.
+const callableRuntimeOptions: functions.RuntimeOptions = {
+  timeoutSeconds: 60,
+  memory: '512MB'
+};
+
+const minInstancesEnv = process.env.FUNCTIONS_MIN_INSTANCES;
+const parsedMinInstances = minInstancesEnv ? Number(minInstancesEnv) : NaN;
+if (!Number.isNaN(parsedMinInstances) && parsedMinInstances > 0) {
+  callableRuntimeOptions.minInstances = parsedMinInstances;
+  console.log(`Runtime warm pool enabled with minInstances=${parsedMinInstances}`);
+} else {
+  console.log('Runtime warm pool disabled; using on-demand scaling.');
+}
+
+const callableFunctions = regionalFunctions.runWith(callableRuntimeOptions);
+
+type CallableCtx = functions.https.CallableContext;
+type JoinQueueRequest = {
+  clinicId?: string;
+  doctorId?: string;
+  patientData?: {
+    name?: string;
+    age?: number;
+    phone?: string;
+  };
+};
+
+type GetPatientViewRequest = {
+  clinicId?: string;
+  doctorId?: string;
+  queueId?: string;
+  patientId?: string;
+  token?: string;
+};
+
+type UpdatePatientStatusRequest = {
+  clinicId?: string;
+  doctorId?: string;
+  queueId?: string;
+  patientId?: string;
+  newStatus?: string;
+};
+
+type UpdateQueueStatusRequest = {
+  clinicId?: string;
+  doctorId?: string;
+  queueId?: string;
+  newStatus?: string;
+};
+
+type SetQueueAutoAdvanceRequest = {
+  clinicId?: string;
+  doctorId?: string;
+  queueId?: string;
+  enabled?: boolean;
+};
+
+type BootstrapClinicAccountRequest = {
+  clinicName?: string;
+  doctorName?: string;
+  specialty?: string;
+  clinicId?: string;
+  doctorId?: string;
+  clinicPhone?: string;
+};
 
 /** DEBUG: Returns runtime flag visibility and Node version */
 export const debugRuntimeFlags = regionalFunctions.https.onCall(async (_data, _ctx) => {
@@ -125,7 +225,7 @@ export const debugGetPatient = regionalFunctions.https.onCall(async (data, _ctx)
 // Any authenticated user may perform queue and patient management actions.
 
 // Simple HTTPS callable function example
-export const ping = regionalFunctions.https.onCall(async (data, context) => {
+export const ping = callableFunctions.https.onCall(async (data: unknown, context: CallableCtx) => {
   return { message: 'pong', received: data ?? null, uid: context.auth?.uid ?? null };
 });
 
@@ -209,10 +309,12 @@ export const onPatientStatusChange = regionalFunctions.firestore
           const already = p?.notifications?.now === true;
           if (!already) {
             await patientRef.set({ notifications: { ...(p?.notifications || {}), now: true } }, { merge: true });
-            await sendNotification({
+            sendNotification({
               to: p?.phone || 'unknown',
               type: 'now',
               payload: { name: p?.name, tokenNumber: p?.tokenNumber, clinicId: context.params.clinicId, doctorId: context.params.doctorId }
+            }).catch((notifyErr) => {
+              functions.logger.warn('Now notification (background) failed', notifyErr);
             });
           } else {
             functions.logger.info('Now notification already sent for patient', { patientId: context.params.patientId });
@@ -250,7 +352,7 @@ export const onPatientStatusChange = regionalFunctions.firestore
  * This is invoked from the client SDK and handles auth and data serialization.
  * Implements secure queue joining with automatic token assignment.
  */
-export const joinQueue = regionalFunctions.https.onCall(async (data, context) => {
+export const joinQueue = callableFunctions.https.onCall(async (data: JoinQueueRequest, context: CallableCtx) => {
   try {
     // Extract data from the 'data' parameter provided by the client SDK
     const { clinicId, doctorId, patientData } = data;
@@ -345,7 +447,7 @@ export const joinQueue = regionalFunctions.https.onCall(async (data, context) =>
         functions.logger.warn('Failed to mark joined notification on patient doc', e);
       }
 
-      await sendNotification({
+      sendNotification({
         to: newPatientData.phone,
         type: 'joined',
         payload: {
@@ -357,6 +459,8 @@ export const joinQueue = regionalFunctions.https.onCall(async (data, context) =>
           patientId: newPatientData.id,
           accessToken: rawAccessToken
         }
+      }).catch((notifyErr) => {
+        functions.logger.warn('Joined notification (background) failed', notifyErr);
       });
     } catch (notifyErr) {
       functions.logger.warn('Failed to send joined notification (continuing):', notifyErr);
@@ -391,7 +495,7 @@ export const joinQueue = regionalFunctions.https.onCall(async (data, context) =>
  * Callable Cloud Function to return a patient's view after validating a short-lived token.
  * Expected data: { clinicId, doctorId, queueId, patientId, token }
  */
-export const getPatientView = regionalFunctions.https.onCall(async (data, context) => {
+export const getPatientView = callableFunctions.https.onCall(async (data: GetPatientViewRequest, context: CallableCtx) => {
   try {
     const { clinicId, doctorId, queueId, patientId, token } = data || {};
 
@@ -443,10 +547,23 @@ export const getPatientView = regionalFunctions.https.onCall(async (data, contex
  * @param context - Firebase functions context with authentication info
  * @returns Promise with success message and updated patient data
  */
-export const updatePatientStatus = regionalFunctions.https.onCall(async (data, context) => {
+export const updatePatientStatus = callableFunctions.https.onCall(async (data: UpdatePatientStatusRequest, context: CallableCtx) => {
+  const span = startTiming('updatePatientStatus', {
+    uid: context.auth?.uid ?? null,
+    clinicId: data?.clinicId,
+    doctorId: data?.doctorId,
+    queueId: data?.queueId,
+    newStatus: data?.newStatus
+  });
+  let autoAdvancePromoted = false;
+  let recomputeTriggered = false;
+  let phase1DurationMs: number | null = null;
+  let spanClosed = false;
   try {
     // Check authentication and staff claim (supports emulator users/{uid}.staff fallback)
     if (!context.auth) {
+      span.fail({ reason: 'unauthenticated' });
+      spanClosed = true;
       throw new functions.https.HttpsError('unauthenticated', 'The function must be called by an authenticated user.');
     }
     // Simplified: any authenticated user can proceed.
@@ -456,6 +573,8 @@ export const updatePatientStatus = regionalFunctions.https.onCall(async (data, c
     const { clinicId, doctorId, queueId, patientId, newStatus } = data;
 
     if (!clinicId || !doctorId || !queueId || !patientId || !newStatus) {
+      span.fail({ reason: 'invalid-argument' });
+      spanClosed = true;
       throw new functions.https.HttpsError(
         'invalid-argument',
         'Missing required fields: clinicId, doctorId, queueId, patientId, and newStatus are required.'
@@ -465,6 +584,8 @@ export const updatePatientStatus = regionalFunctions.https.onCall(async (data, c
     // Validate status values
     const validStatuses = ['waiting', 'in-progress', 'completed', 'cancelled'];
     if (!validStatuses.includes(newStatus)) {
+      span.fail({ reason: 'invalid-status', provided: newStatus });
+      spanClosed = true;
       throw new functions.https.HttpsError(
         'invalid-argument',
         `Invalid status. Must be one of: ${validStatuses.join(', ')}`
@@ -487,9 +608,30 @@ export const updatePatientStatus = regionalFunctions.https.onCall(async (data, c
   functions.logger.debug('Phase1 notifications active (permanently enabled – flags removed)', { phase1Enabled });
 
     // Use Firestore transaction ensuring all reads occur before any writes
-    await db.runTransaction(async (transaction) => {
+    const txnSpan = startTiming('updatePatientStatus.transaction', {
+      clinicId,
+      doctorId,
+      queueId,
+      patientId,
+      newStatus
+    });
+    try {
+      await db.runTransaction(async (transaction) => {
       // 1. Read patient doc
-      const patientDoc = await transaction.get(patientRef);
+      const readPatientSpan = startTiming('updatePatientStatus.transaction.readPatient', {
+        clinicId,
+        doctorId,
+        queueId,
+        patientId
+      });
+      let patientDoc: FirebaseFirestore.DocumentSnapshot<FirebaseFirestore.DocumentData>;
+      try {
+        patientDoc = await transaction.get(patientRef);
+        readPatientSpan.succeed({ found: patientDoc.exists });
+      } catch (readErr) {
+        readPatientSpan.fail({ error: readErr instanceof Error ? readErr.message : String(readErr) });
+        throw readErr;
+      }
       if (!patientDoc.exists) {
         throw new functions.https.HttpsError('not-found', 'Patient document not found.');
       }
@@ -498,7 +640,19 @@ export const updatePatientStatus = regionalFunctions.https.onCall(async (data, c
       // 2. If completing OR moving to in-progress we need queue doc (read now before any write)
       let queueDoc: FirebaseFirestore.DocumentSnapshot<FirebaseFirestore.DocumentData> | null = null;
       if (newStatus === 'completed' || newStatus === 'in-progress') {
-        queueDoc = await transaction.get(queueRef);
+        const readQueueSpan = startTiming('updatePatientStatus.transaction.readQueue', {
+          clinicId,
+          doctorId,
+          queueId,
+          newStatus
+        });
+        try {
+          queueDoc = await transaction.get(queueRef);
+          readQueueSpan.succeed({ found: queueDoc.exists });
+        } catch (queueErr) {
+          readQueueSpan.fail({ error: queueErr instanceof Error ? queueErr.message : String(queueErr) });
+          throw queueErr;
+        }
         if (!queueDoc.exists) {
           throw new functions.https.HttpsError('not-found', 'Queue document not found.');
         }
@@ -506,13 +660,30 @@ export const updatePatientStatus = regionalFunctions.https.onCall(async (data, c
 
       // 3. If setting in-progress enforce single in-progress patient (read collection now)
       if (newStatus === 'in-progress') {
-        const patientsCollRef = queueRef.collection('patients');
-        const inProgressQuery = await patientsCollRef.where('status', '==', 'in-progress').limit(1).get();
-        if (!inProgressQuery.empty) {
-          const existing = inProgressQuery.docs[0];
-          if (existing.id !== patientId) {
-            throw new functions.https.HttpsError('failed-precondition', 'Another patient is already in progress.');
+        const guardSpan = startTiming('updatePatientStatus.transaction.inProgressGuard', {
+          clinicId,
+          doctorId,
+          queueId,
+          patientId
+        });
+        try {
+          const patientsCollRef = queueRef.collection('patients');
+          const inProgressQuery = await patientsCollRef.where('status', '==', 'in-progress').limit(1).get();
+          if (!inProgressQuery.empty) {
+            const existing = inProgressQuery.docs[0];
+            if (existing.id !== patientId) {
+              guardSpan.fail({ conflictingPatientId: existing.id });
+              throw new functions.https.HttpsError('failed-precondition', 'Another patient is already in progress.');
+            }
+            guardSpan.succeed({ conflictsFound: 1 });
+          } else {
+            guardSpan.succeed({ conflictsFound: 0 });
           }
+        } catch (guardErr) {
+          if (!(guardErr instanceof functions.https.HttpsError && guardErr.code === 'failed-precondition')) {
+            guardSpan.fail({ error: guardErr instanceof Error ? guardErr.message : String(guardErr) });
+          }
+          throw guardErr;
         }
       }
 
@@ -563,7 +734,12 @@ export const updatePatientStatus = regionalFunctions.https.onCall(async (data, c
           });
         }
       }
-    });
+      });
+      txnSpan.succeed({});
+    } catch (txnError) {
+      txnSpan.fail({ error: txnError instanceof Error ? txnError.message : String(txnError) });
+      throw txnError;
+    }
 
     functions.logger.info('Patient status updated successfully', {
       patientId,
@@ -579,78 +755,123 @@ export const updatePatientStatus = regionalFunctions.https.onCall(async (data, c
     // 2. Legacy staged notifications remain untouched for now (we append completed flow before them to avoid interfering).
     try {
       if (phase1Enabled && newStatus === 'completed') {
-        const db = admin.firestore();
-        const patientSnap = await db.collection('clinics').doc(clinicId)
-          .collection('doctors').doc(doctorId)
-          .collection('queues').doc(queueId)
-          .collection('patients').doc(patientId).get();
-        const latest = patientSnap.data() as any;
-        const svc = latest?.service || {};
-        let serviceDurationMs: number | undefined;
-        if (svc.startedAt && svc.completedAt && !svc.serviceDurationMs) {
-          // Compute duration locally using Timestamp seconds if available
+        const phaseSpan = startTiming('updatePatientStatus.phase1Completion', {
+          clinicId,
+          doctorId,
+          queueId,
+          patientId
+        });
+        const phaseStarted = process.hrtime.bigint();
+        try {
+          const db = admin.firestore();
+          const patientSnap = await db.collection('clinics').doc(clinicId)
+            .collection('doctors').doc(doctorId)
+            .collection('queues').doc(queueId)
+            .collection('patients').doc(patientId).get();
+          const latest = patientSnap.data() as any;
+          const svc = latest?.service || {};
+          let serviceDurationMs: number | undefined;
+          if (svc.startedAt && svc.completedAt && !svc.serviceDurationMs) {
+            // Compute duration locally using Timestamp seconds if available
             try {
               const startedTs: any = svc.startedAt;
               const completedTs: any = svc.completedAt;
               if (startedTs?.toMillis && completedTs?.toMillis) {
                 serviceDurationMs = completedTs.toMillis() - startedTs.toMillis();
               }
-            } catch (_) { /* ignore */ }
-        }
-        // Update patient doc with duration if computed
-        if (serviceDurationMs && !svc.serviceDurationMs) {
-          await patientSnap.ref.set({ service: { ...svc, serviceDurationMs } }, { merge: true });
-          functions.logger.debug('Phase1 wrote serviceDurationMs', { patientId, serviceDurationMs });
-        }
-
-        // Update queue average (EMA) if we have a fresh duration
-        if (serviceDurationMs && serviceDurationMs > 0) {
-          const queueRef = db.collection('clinics').doc(clinicId)
-            .collection('doctors').doc(doctorId)
-            .collection('queues').doc(queueId);
-          await db.runTransaction(async (tx) => {
-            const qDoc = await tx.get(queueRef);
-            if (qDoc.exists) {
-              const qd: any = qDoc.data() || {};
-              const oldAvg = qd?.metrics?.avgServiceMs;
-              const alpha = 0.2; // smoothing factor
-              const newAvg = oldAvg ? Math.round(oldAvg * (1 - alpha) + serviceDurationMs * alpha) : serviceDurationMs;
-              const metrics = { ...(qd.metrics || {}), avgServiceMs: newAvg, updatedAt: FieldValue.serverTimestamp() };
-              tx.set(queueRef, { metrics }, { merge: true });
-              functions.logger.debug('Phase1 updated queue avgServiceMs', { queueId, newAvg });
+            } catch (_) {
+              /* ignore */
             }
-          });
-        }
-
-        // Send completed notification if not already flagged (notifications.completed)
-        const alreadyCompletedNotified = latest?.notifications?.completed === true;
-        if (!alreadyCompletedNotified) {
-          try {
-            await patientSnap.ref.set({ notifications: { ...(latest?.notifications || {}), completed: true } }, { merge: true });
-            await sendNotification({
-              to: latest?.phone || 'unknown',
-              type: 'completed',
-              payload: {
-                name: latest?.name,
-                tokenNumber: latest?.tokenNumber,
-                clinicId, doctorId, queueId,
-                serviceDurationMs: serviceDurationMs || null
-              }
-            });
-            functions.logger.debug('Phase1 sent completed notification', { patientId });
-          } catch (e) {
-            functions.logger.warn('Failed to send completed notification', e);
           }
+          // Update patient doc with duration if computed
+          if (serviceDurationMs && !svc.serviceDurationMs) {
+            await patientSnap.ref.set({ service: { ...svc, serviceDurationMs } }, { merge: true });
+            functions.logger.debug('Phase1 wrote serviceDurationMs', { patientId, serviceDurationMs });
+          }
+
+          // Update queue average (EMA) if we have a fresh duration
+          if (serviceDurationMs && serviceDurationMs > 0) {
+            const queueRef = db.collection('clinics').doc(clinicId)
+              .collection('doctors').doc(doctorId)
+              .collection('queues').doc(queueId);
+            const emaSpan = startTiming('updatePatientStatus.phase1Completion.updateQueueAvg', {
+              clinicId,
+              doctorId,
+              queueId,
+              patientId
+            });
+            try {
+              await db.runTransaction(async (tx) => {
+                const qDoc = await tx.get(queueRef);
+                if (qDoc.exists) {
+                  const qd: any = qDoc.data() || {};
+                  const oldAvg = qd?.metrics?.avgServiceMs;
+                  const alpha = 0.2; // smoothing factor
+                  const newAvg = oldAvg ? Math.round(oldAvg * (1 - alpha) + serviceDurationMs * alpha) : serviceDurationMs;
+                  const metrics = { ...(qd.metrics || {}), avgServiceMs: newAvg, updatedAt: FieldValue.serverTimestamp() };
+                  tx.set(queueRef, { metrics }, { merge: true });
+                  functions.logger.debug('Phase1 updated queue avgServiceMs', { queueId, newAvg });
+                  emaSpan.succeed({ newAvg });
+                } else {
+                  emaSpan.succeed({ skipped: 'queue-missing' });
+                }
+              });
+            } catch (emaErr) {
+              emaSpan.fail({ error: emaErr instanceof Error ? emaErr.message : String(emaErr) });
+              throw emaErr;
+            }
+          }
+
+          // Send completed notification if not already flagged (notifications.completed)
+          const alreadyCompletedNotified = latest?.notifications?.completed === true;
+          if (!alreadyCompletedNotified) {
+            const completedSpan = startTiming('updatePatientStatus.phase1Completion.completedNotification', {
+              clinicId,
+              doctorId,
+              queueId,
+              patientId
+            });
+            try {
+              await patientSnap.ref.set({ notifications: { ...(latest?.notifications || {}), completed: true } }, { merge: true });
+              sendNotification({
+                to: latest?.phone || 'unknown',
+                type: 'completed',
+                payload: {
+                  name: latest?.name,
+                  tokenNumber: latest?.tokenNumber,
+                  clinicId, doctorId, queueId,
+                  serviceDurationMs: serviceDurationMs || null
+                }
+              }).catch((sendErr) => {
+                functions.logger.warn('Completed notification (background) failed', sendErr);
+              });
+              functions.logger.debug('Phase1 sent completed notification', { patientId });
+              completedSpan.succeed({});
+            } catch (e) {
+              completedSpan.fail({ error: e instanceof Error ? e.message : String(e) });
+              functions.logger.warn('Failed to send completed notification', e);
+            }
+          }
+
+          const phaseFinished = process.hrtime.bigint();
+          phase1DurationMs = Number(phaseFinished - phaseStarted) / 1_000_000;
+          phaseSpan.succeed({ serviceDurationMs: serviceDurationMs ?? null });
+        } catch (phaseErr) {
+          phaseSpan.fail({ error: phaseErr instanceof Error ? phaseErr.message : String(phaseErr) });
+          throw phaseErr;
         }
       }
     } catch (e) {
+      if (phase1DurationMs === null) {
+        phase1DurationMs = 0;
+      }
       functions.logger.warn('Phase1 completion post-processing failed (non-fatal)', e);
     }
 
     // Legacy staged notification logic removed (engine handles position). Only handle cancellation explicitly.
     if (newStatus === 'cancelled') {
       try {
-        await sendNotification({
+        sendNotification({
           to: updatedPatientData?.phone,
           type: 'cancelled',
           payload: {
@@ -659,6 +880,8 @@ export const updatePatientStatus = regionalFunctions.https.onCall(async (data, c
             clinicId, doctorId, queueId,
             message: 'Your queue entry has been cancelled. If this was a mistake, please contact the clinic to rejoin.'
           }
+        }).catch((cancelErr) => {
+          functions.logger.warn('Cancellation notification (background) failed', cancelErr);
         });
       } catch (e) {
         functions.logger.warn('Failed to send cancellation notification', e);
@@ -668,46 +891,62 @@ export const updatePatientStatus = regionalFunctions.https.onCall(async (data, c
     // Server-side auto-advance: if queue has autoAdvance true, promote next waiting patient automatically
     try {
       if (newStatus === 'completed') {
-        const queueSnap = await admin.firestore().collection('clinics').doc(clinicId)
-          .collection('doctors').doc(doctorId)
-          .collection('queues').doc(queueId).get();
-        const qData: any = queueSnap.data() || {};
-        if (qData.autoAdvance === true && qData.status !== 'ended' && qData.status !== 'paused') {
-          const nextSnap = await admin.firestore().collection('clinics').doc(clinicId)
+        const autoSpan = startTiming('updatePatientStatus.autoAdvance', {
+          clinicId,
+          doctorId,
+          queueId,
+          patientId
+        });
+        try {
+          const queueSnap = await admin.firestore().collection('clinics').doc(clinicId)
             .collection('doctors').doc(doctorId)
-            .collection('queues').doc(queueId)
-            .collection('patients')
-            .where('status', '==', 'waiting')
-            .orderBy('tokenNumber')
-            .limit(1)
-            .get();
-          if (!nextSnap.empty) {
-            const nextDoc = nextSnap.docs[0];
-            const nextData = nextDoc.data() as any;
-            const nextToken = nextData?.tokenNumber || 0;
-            await nextDoc.ref.update({ status: 'in-progress', updatedAt: FieldValue.serverTimestamp() });
-            // Also reflect currently served token on queue doc
-            await admin.firestore().collection('clinics').doc(clinicId)
+            .collection('queues').doc(queueId).get();
+          const qData: any = queueSnap.data() || {};
+          if (qData.autoAdvance === true && qData.status !== 'ended' && qData.status !== 'paused') {
+            const nextSnap = await admin.firestore().collection('clinics').doc(clinicId)
               .collection('doctors').doc(doctorId)
               .collection('queues').doc(queueId)
-              .update({ currentToken: nextToken, updatedAt: FieldValue.serverTimestamp() });
-            functions.logger.info('Auto-advance promoted next patient', { nextPatientId: nextDoc.id, nextToken });
+              .collection('patients')
+              .where('status', '==', 'waiting')
+              .orderBy('tokenNumber')
+              .limit(1)
+              .get();
+            if (!nextSnap.empty) {
+              const nextDoc = nextSnap.docs[0];
+              const nextData = nextDoc.data() as any;
+              const nextToken = nextData?.tokenNumber || 0;
+              await Promise.all([
+                nextDoc.ref.update({ status: 'in-progress', updatedAt: FieldValue.serverTimestamp() }),
+                queueRef.update({ currentToken: nextToken, updatedAt: FieldValue.serverTimestamp() })
+              ]);
+              functions.logger.info('Auto-advance promoted next patient', { nextPatientId: nextDoc.id, nextToken });
+              autoAdvancePromoted = true;
+            }
           }
+          autoSpan.succeed({ promoted: autoAdvancePromoted });
+        } catch (autoInnerErr) {
+          autoSpan.fail({ error: autoInnerErr instanceof Error ? autoInnerErr.message : String(autoInnerErr) });
+          throw autoInnerErr;
         }
       }
     } catch (autoErr) {
       functions.logger.warn('Auto-advance failed (non-fatal)', autoErr);
+      autoAdvancePromoted = false;
     }
 
     // Phase 2 recompute (top 3 logic) after any status transition of interest
-    try {
-      if (['completed','in-progress','cancelled'].includes(newStatus)) {
-        functions.logger.debug('Notification engine recompute (default-on)', { clinicId, doctorId, queueId, newStatus });
-        await recomputeQueueNotifications({ clinicId, doctorId, queueId });
-      }
-    } catch (engErr) {
-      functions.logger.warn('Notification engine recompute failed (non-fatal)', { error: (engErr as any)?.message });
+    if (['completed','in-progress','cancelled'].includes(newStatus)) {
+      functions.logger.debug('Notification engine recompute (default-on)', { clinicId, doctorId, queueId, newStatus });
+      runInBackground('notificationEngine.recompute', () => recomputeQueueNotifications({ clinicId, doctorId, queueId }));
+      recomputeTriggered = true;
     }
+
+    span.succeed({
+      autoAdvancePromoted,
+      recomputeTriggered,
+      phase1DurationMs
+    });
+    spanClosed = true;
 
     return {
       success: true,
@@ -717,6 +956,10 @@ export const updatePatientStatus = regionalFunctions.https.onCall(async (data, c
 
   } catch (error) {
     functions.logger.error('Error in updatePatientStatus function:', error);
+    if (!spanClosed) {
+      span.fail({ error: error instanceof Error ? error.message : String(error) });
+      spanClosed = true;
+    }
     
     // Re-throw HttpsError for proper client handling
     if (error instanceof functions.https.HttpsError) {
@@ -738,10 +981,18 @@ export const updatePatientStatus = regionalFunctions.https.onCall(async (data, c
  * @param context - Firebase functions context with authentication info
  * @returns Promise with success message and updated queue data
  */
-export const updateQueueStatus = regionalFunctions.https.onCall(async (data, context) => {
+export const updateQueueStatus = callableFunctions.https.onCall(async (data: UpdateQueueStatusRequest, context: CallableCtx) => {
+  const span = startTiming('updateQueueStatus', {
+    uid: context.auth?.uid ?? null,
+    clinicId: data?.clinicId,
+    doctorId: data?.doctorId,
+    queueId: data?.queueId,
+    newStatus: data?.newStatus
+  });
   try {
     // Check authentication and staff claim (supports emulator users/{uid}.staff fallback)
     if (!context.auth) {
+      span.fail({ reason: 'unauthenticated' });
       throw new functions.https.HttpsError('unauthenticated', 'The function must be called by an authenticated user.');
     }
     // Simplified: any authenticated user can proceed.
@@ -785,6 +1036,7 @@ export const updateQueueStatus = regionalFunctions.https.onCall(async (data, con
       doctorId,
       uid: context.auth.uid
     });
+    span.succeed({});
 
     return {
       success: true,
@@ -795,6 +1047,7 @@ export const updateQueueStatus = regionalFunctions.https.onCall(async (data, con
 
   } catch (error) {
     functions.logger.error('Error in updateQueueStatus function:', error);
+    span.fail({ error: error instanceof Error ? error.message : String(error) });
     
     // Re-throw HttpsError for proper client handling
     if (error instanceof functions.https.HttpsError) {
@@ -812,13 +1065,22 @@ export const updateQueueStatus = regionalFunctions.https.onCall(async (data, con
  * Toggle or set queue autoAdvance flag.
  * data: { clinicId, doctorId, queueId, enabled }
  */
-export const setQueueAutoAdvance = regionalFunctions.https.onCall(async (data, context) => {
+export const setQueueAutoAdvance = callableFunctions.https.onCall(async (data: SetQueueAutoAdvanceRequest, context: CallableCtx) => {
+  const span = startTiming('setQueueAutoAdvance', {
+    uid: context.auth?.uid ?? null,
+    clinicId: data?.clinicId,
+    doctorId: data?.doctorId,
+    queueId: data?.queueId,
+    enabled: data?.enabled
+  });
   try {
     if (!context.auth) {
+      span.fail({ reason: 'unauthenticated' });
       throw new functions.https.HttpsError('unauthenticated', 'Auth required');
     }
     const { clinicId, doctorId, queueId, enabled } = data || {};
     if (!clinicId || !doctorId || !queueId || typeof enabled !== 'boolean') {
+      span.fail({ reason: 'invalid-argument' });
       throw new functions.https.HttpsError('invalid-argument', 'clinicId, doctorId, queueId, enabled(boolean) required');
     }
     const ref = admin.firestore().collection('clinics').doc(clinicId)
@@ -826,9 +1088,11 @@ export const setQueueAutoAdvance = regionalFunctions.https.onCall(async (data, c
       .collection('queues').doc(queueId);
     await ref.set({ autoAdvance: enabled }, { merge: true });
     functions.logger.info('AutoAdvance flag updated', { clinicId, doctorId, queueId, enabled, uid: context.auth.uid });
+    span.succeed({});
     return { success: true, enabled };
   } catch (err) {
     functions.logger.error('setQueueAutoAdvance error', err);
+    span.fail({ error: err instanceof Error ? err.message : String(err) });
     if (err instanceof functions.https.HttpsError) throw err;
     throw new functions.https.HttpsError('internal', 'Failed to update autoAdvance');
   }
@@ -849,14 +1113,14 @@ export const setQueueAutoAdvance = regionalFunctions.https.onCall(async (data, c
  * @param context - Firebase functions context with authentication info
  * @returns Promise with success message and created/updated identifiers
  */
-export const bootstrapClinicAccount = regionalFunctions.https.onCall(async (data, context) => {
+export const bootstrapClinicAccount = callableFunctions.https.onCall(async (data: BootstrapClinicAccountRequest, context: CallableCtx) => {
   try {
     if (!context.auth) {
       throw new functions.https.HttpsError('unauthenticated', 'Authentication required');
     }
     const authUid = context.auth.uid; // safe after guard
     const authEmail = (context.auth.token as any)?.email || null;
-    const { clinicName, doctorName, specialty, clinicId: providedClinicId, doctorId: providedDoctorId } = data || {};
+  const { clinicName, doctorName, specialty, clinicId: providedClinicId, doctorId: providedDoctorId, clinicPhone } = data || {};
     if (!clinicName || !doctorName || !specialty) {
       throw new functions.https.HttpsError('invalid-argument', 'clinicName, doctorName, specialty are required');
     }
@@ -881,7 +1145,9 @@ export const bootstrapClinicAccount = regionalFunctions.https.onCall(async (data
 
       // Now perform writes based on existence
       if (!clinicSnap.exists) {
-        tx.set(clinicRef, { name: clinicName, createdAt: FieldValue.serverTimestamp(), ownerUid: authUid });
+        tx.set(clinicRef, { name: clinicName, createdAt: FieldValue.serverTimestamp(), ownerUid: authUid, contactNumber: clinicPhone || null });
+      } else if (clinicPhone) {
+        tx.set(clinicRef, { contactNumber: clinicPhone }, { merge: true });
       }
       if (!doctorSnap.exists) {
         tx.set(doctorRef, { name: doctorName, specialty, clinicId, createdAt: FieldValue.serverTimestamp() });

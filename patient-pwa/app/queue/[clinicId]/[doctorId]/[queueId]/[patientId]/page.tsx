@@ -1,7 +1,7 @@
 "use client";
 
 import { signInAnonymously } from 'firebase/auth';
-import { doc, onSnapshot } from 'firebase/firestore';
+import { doc, onSnapshot, type DocumentData, type Timestamp } from 'firebase/firestore';
 import { httpsCallable } from 'firebase/functions';
 import { useParams } from 'next/navigation';
 import { useEffect, useRef, useState } from 'react';
@@ -14,7 +14,7 @@ interface Patient {
   phone: string;
   tokenNumber: number;
   status: 'waiting' | 'in-progress' | 'completed' | 'cancelled';
-  joinedAt: Date | { seconds: number; nanoseconds: number };
+  joinedAt: Date | Timestamp;
   queueId: string;
   clinicId: string;
   doctorId: string;
@@ -28,8 +28,8 @@ interface Queue {
   currentToken: number;
   totalPatients: number;
   completedPatients: number;
-  createdAt?: Date | { seconds: number; nanoseconds: number };
-  updatedAt?: Date | { seconds: number; nanoseconds: number };
+  createdAt?: Date | Timestamp;
+  updatedAt?: Date | Timestamp;
 }
 
 interface Doctor {
@@ -42,11 +42,11 @@ interface Doctor {
 }
 
 export default function QueueStatus() {
-  const params = useParams();
-  const clinicId = Array.isArray((params as any)?.clinicId) ? (params as any).clinicId[0] : (params as any)?.clinicId as string | undefined;
-  const doctorId = Array.isArray((params as any)?.doctorId) ? (params as any).doctorId[0] : (params as any)?.doctorId as string | undefined;
-  const queueId = Array.isArray((params as any)?.queueId) ? (params as any).queueId[0] : (params as any)?.queueId as string | undefined;
-  const patientId = Array.isArray((params as any)?.patientId) ? (params as any).patientId[0] : (params as any)?.patientId as string | undefined;
+  const params = useParams<{ clinicId: string; doctorId: string; queueId: string; patientId: string }>();
+  const clinicId = params?.clinicId;
+  const doctorId = params?.doctorId;
+  const queueId = params?.queueId;
+  const patientId = params?.patientId;
   const [patient, setPatient] = useState<Patient | null>(null);
   const [queue, setQueue] = useState<Queue | null>(null);
   const [doctor, setDoctor] = useState<Doctor | null>(null);
@@ -64,7 +64,7 @@ export default function QueueStatus() {
     }
 
     // Hold unsubscribe functions to clean up listeners on unmount/param change
-  let unsubscribePatient: (() => void) | null = null;
+    let unsubscribePatient: (() => void) | null = null;
     let unsubscribeQueue: (() => void) | null = null;
     let unsubscribeDoctor: (() => void) | null = null;
 
@@ -116,25 +116,42 @@ export default function QueueStatus() {
             }
 
             // Call the callable functions API to obtain the secure patient view
-            const getViewFn = httpsCallable(functions, 'getPatientView');
-            const callResp = await getViewFn({ clinicId, doctorId, queueId, patientId, token: storedToken });
-            const data = callResp?.data as any;
+            interface GetPatientViewPayload {
+              clinicId: string;
+              doctorId: string;
+              queueId: string;
+              patientId: string;
+              token: string;
+            }
+            interface GetPatientViewResult {
+              patient?: Patient;
+            }
 
-            if (data && data.patient) {
-              setPatient(data.patient as Patient);
+            const getViewFn = httpsCallable<GetPatientViewPayload, GetPatientViewResult>(functions, 'getPatientView');
+            const { data } = await getViewFn({ clinicId, doctorId, queueId, patientId, token: storedToken });
+
+            if (data?.patient) {
+              setPatient(data.patient);
 
               // After initial secure fetch, attach real-time listener to patient doc for status updates
-              const patientRef = doc(db, 'clinics', clinicId, 'doctors', doctorId, 'queues', queueId, 'patients', patientId);
               unsubscribePatient = onSnapshot(patientRef, (snap) => {
-                if (snap.exists()) {
-                  const livePatient = { id: snap.id, ...snap.data() } as Patient;
-                  setPatient((prev) => {
-                    // Preserve immutable fields from initial secure fetch if absent in snapshot
-                    return { ...prev, ...livePatient } as Patient;
-                  });
-                }
-              }, (err) => {
-                console.warn('Patient realtime listener error:', err);
+                if (!snap.exists()) return;
+                const raw = snap.data() as DocumentData;
+                const livePatient: Patient = {
+                  id: snap.id,
+                  name: typeof raw.name === 'string' ? raw.name : data.patient!.name,
+                  age: typeof raw.age === 'number' ? raw.age : data.patient!.age,
+                  phone: typeof raw.phone === 'string' ? raw.phone : data.patient!.phone,
+                  tokenNumber: typeof raw.tokenNumber === 'number' ? raw.tokenNumber : data.patient!.tokenNumber,
+                  status: (raw.status as Patient['status']) ?? data.patient!.status,
+                  joinedAt: (raw.joinedAt as Timestamp | Date | undefined) ?? data.patient!.joinedAt,
+                  queueId: typeof raw.queueId === 'string' ? raw.queueId : data.patient!.queueId,
+                  clinicId: typeof raw.clinicId === 'string' ? raw.clinicId : data.patient!.clinicId,
+                  doctorId: typeof raw.doctorId === 'string' ? raw.doctorId : data.patient!.doctorId,
+                };
+                setPatient(livePatient);
+              }, (listenerError) => {
+                console.warn('Patient realtime listener error:', listenerError);
               });
             } else {
               setError('Failed to fetch patient data');
@@ -143,7 +160,8 @@ export default function QueueStatus() {
             }
           } catch (err) {
             console.error('Error fetching patient via callable function:', err);
-            setError((err as any)?.message || 'Error fetching patient data');
+            const message = err instanceof Error ? err.message : 'Error fetching patient data';
+            setError(message);
             setIsLoading(false);
             return;
           }
@@ -152,10 +170,18 @@ export default function QueueStatus() {
         // Queue listener
         unsubscribeQueue = onSnapshot(queueRef, (snapshot) => {
           if (snapshot.exists()) {
-            const queueData = {
+            const raw = snapshot.data() as DocumentData;
+            const queueData: Queue = {
               id: snapshot.id,
-              ...snapshot.data()
-            } as Queue;
+              doctorId: typeof raw.doctorId === 'string' ? raw.doctorId : doctorId,
+              clinicId: typeof raw.clinicId === 'string' ? raw.clinicId : clinicId,
+              status: (raw.status as Queue['status']) ?? 'active',
+              currentToken: typeof raw.currentToken === 'number' ? raw.currentToken : 0,
+              totalPatients: typeof raw.totalPatients === 'number' ? raw.totalPatients : 0,
+              completedPatients: typeof raw.completedPatients === 'number' ? raw.completedPatients : 0,
+              createdAt: (raw.createdAt as Timestamp | Date | undefined) ?? undefined,
+              updatedAt: (raw.updatedAt as Timestamp | Date | undefined) ?? undefined,
+            };
             setQueue(queueData);
           } else {
             setError('Queue document not found');
@@ -168,10 +194,15 @@ export default function QueueStatus() {
         // Doctor listener
         unsubscribeDoctor = onSnapshot(doctorRef, (snapshot) => {
           if (snapshot.exists()) {
-            const doctorData = {
+            const raw = snapshot.data() as DocumentData;
+            const doctorData: Doctor = {
               id: snapshot.id,
-              ...snapshot.data()
-            } as Doctor;
+              name: typeof raw.name === 'string' ? raw.name : 'Doctor',
+              specialty: typeof raw.specialty === 'string' ? raw.specialty : 'General Practice',
+              clinicId: typeof raw.clinicId === 'string' ? raw.clinicId : clinicId,
+              email: typeof raw.email === 'string' ? raw.email : undefined,
+              phone: typeof raw.phone === 'string' ? raw.phone : undefined,
+            };
             setDoctor(doctorData);
             setIsLoading(false); // Set loading to false when we get the first successful data
           } else {
@@ -260,6 +291,14 @@ export default function QueueStatus() {
     // For 'waiting', treat as already 'In Queue' regardless of progress so both 'Joined' and 'In Queue' show as completed.
     return 1;
   })();
+
+  if (isLoading && !error) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-blue-50 via-white to-indigo-50 text-sm text-gray-600">
+        Loading your queue status…
+      </div>
+    );
+  }
 
   // Compact, mobile-first UI inspired by sample: single glass card centered, no scrolling for key info
   return (
