@@ -1,11 +1,12 @@
 "use client";
 import { signOut } from 'firebase/auth';
 import Link from 'next/link';
-import { usePathname } from 'next/navigation';
-import { useState } from 'react';
+import { usePathname, useRouter } from 'next/navigation';
+import { useEffect, useState } from 'react';
 import { auth } from '../lib/firebase';
 import { useClinicContext } from './ClinicContext';
 import ClinicJoinQR from './ClinicJoinQR';
+import DoctorPicker from './DoctorPicker';
 import EnvWarningBanner from './EnvWarningBanner';
 import Badge from './ui/Badge';
 import Button from './ui/Button';
@@ -19,21 +20,43 @@ interface NavItem {
 const nav: NavItem[] = [
   { label: 'Queue', href: '/dashboard' },
   { label: 'Analytics', href: '/analytics' },
-  { label: 'Settings', href: '/settings', soon: true },
+  { label: 'Settings', href: '/settings' },
 ];
 
 export default function AppShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
-  const { clinicId, clinicName, doctorName, doctorSpecialty, queueStatus } = useClinicContext();
+  const router = useRouter();
+  const { clinicId, clinicName, doctorId, queueStatus } = useClinicContext();
   const [showJoinQr, setShowJoinQr] = useState(false);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
 
-  // Derive a simple page title from current route (avoids duplicating clinic/doctor info in header)
-  const currentTitle = (() => {
-    if (pathname?.startsWith('/analytics')) return 'Analytics';
-    if (pathname?.startsWith('/settings')) return 'Settings';
-    return 'Queue';
-  })();
+  useEffect(() => {
+    if (!clinicId || typeof window === 'undefined') {
+      return;
+    }
+
+    const targets = new Set<string>([
+      '/dashboard',
+      '/analytics',
+      '/settings',
+      '/settings/notifications',
+      '/settings/profile',
+      '/settings/preferences',
+      '/settings/doctors',
+      '/settings/security',
+      '/settings/support',
+    ]);
+
+    const timeoutId = window.setTimeout(() => {
+      targets.forEach((href) => {
+        void router.prefetch(href);
+      });
+    }, 250);
+
+    return () => {
+      window.clearTimeout(timeoutId);
+    };
+  }, [clinicId, router]);
 
   const renderQueueStatus = (status: typeof queueStatus) => {
     if (!status) return null;
@@ -41,13 +64,6 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
     const text = status === 'active' ? 'Active' : status === 'paused' ? 'Paused' : 'Ended';
     return <Badge tone={tone} variant="solid" size="sm" className="ml-2">{text}</Badge>;
   };
-
-  const subtitle = (() => {
-    const base = currentTitle === 'Queue' ? '' : currentTitle;
-    const doctorPart = doctorName ? ` • ${doctorName}${doctorSpecialty ? ` — ${doctorSpecialty}` : ''}` : '';
-    const full = `${base}${doctorPart}`;
-    return full.startsWith(' • ') ? full.slice(3) : full;
-  })();
   return (
     <div className="min-h-screen w-full flex bg-gray-50 text-gray-900">
       {/* Sidebar */}
@@ -61,11 +77,14 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
         </div>
         <nav className="flex-1 px-3 py-4 space-y-1 overflow-y-auto">
           {nav.map(item => {
-            const active = pathname === item.href;
+            const active = pathname === item.href || (pathname?.startsWith(item.href + '/') ?? false);
             return (
               <Link
                 key={item.href}
                 href={item.href}
+                onMouseEnter={() => {
+                  void router.prefetch(item.href);
+                }}
                 className={`group flex items-center justify-between rounded-md px-3 py-2 text-sm font-medium transition-colors border ${active ? 'bg-gray-900 text-white border-gray-900 shadow-sm' : 'text-gray-700 hover:text-gray-900 hover:bg-gray-100/60 border-transparent'}`}
               >
                 <span>{item.label}</span>
@@ -88,7 +107,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
                 <div className="h-8 w-8 rounded-md bg-gray-100 flex items-center justify-center text-gray-600 text-xs">WF</div>
               </div>
 
-              {/* Header: Clinic title + subtitle inline to save space */}
+              {/* Header: Clinic title and doctor picker */}
               <div className="min-w-0 flex-1">
                 <div className="flex items-center gap-2">
                   <h1 className="text-sm sm:text-base font-semibold text-gray-900 tracking-wide truncate">
@@ -96,7 +115,11 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
                   </h1>
                   {renderQueueStatus(queueStatus)}
                 </div>
-                <div className="text-[11px] text-gray-500 truncate">{subtitle}</div>
+                {clinicId && (
+                  <div className="mt-1">
+                    <DoctorPicker clinicId={clinicId} value={doctorId ?? undefined} />
+                  </div>
+                )}
               </div>
             </div>
             
@@ -160,6 +183,11 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
               />
               <div className="absolute left-0 right-0 z-50 px-4">
                 <div className="mt-2 rounded-xl border border-gray-200 bg-white shadow-lg overflow-hidden">
+                  {clinicId && (
+                    <div className="px-3 pt-3">
+                      <DoctorPicker clinicId={clinicId} value={doctorId ?? undefined} />
+                    </div>
+                  )}
                   <nav className="py-2">
                     {nav.map(item => {
                       const active = pathname === item.href;
@@ -167,6 +195,9 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
                         <Link
                           key={item.href}
                           href={item.href}
+                          onMouseEnter={() => {
+                            void router.prefetch(item.href);
+                          }}
                           onClick={() => setMobileMenuOpen(false)}
                           className={`flex items-center justify-between px-3 py-2 text-sm ${active ? 'text-gray-900 font-semibold' : 'text-gray-700 hover:bg-gray-50'}`}
                         >

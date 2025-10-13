@@ -48,9 +48,19 @@ export default function DateNavigator({ value, onChange, max, min, disableFuture
     onChange(clamped);
   }, [onChange, min, max]);
 
-  const goPrev = () => { if (prevDisabled) return; apply(shiftDay(value, -1)); };
-  const goNext = () => { if (nextDisabled) return; apply(shiftDay(value, 1)); };
-  const goToday = () => apply(todayKey);
+  const goPrev = useCallback(() => {
+    if (prevDisabled) return;
+    apply(shiftDay(value, -1));
+  }, [apply, prevDisabled, value]);
+
+  const goNext = useCallback(() => {
+    if (nextDisabled) return;
+    apply(shiftDay(value, 1));
+  }, [apply, nextDisabled, value]);
+
+  const goToday = useCallback(() => {
+    apply(todayKey);
+  }, [apply, todayKey]);
 
   const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     apply(e.target.value);
@@ -80,7 +90,7 @@ export default function DateNavigator({ value, onChange, max, min, disableFuture
     };
     window.addEventListener('keydown', handler);
     return () => window.removeEventListener('keydown', handler);
-  }, [open, goPrev, goNext]);
+  }, [open, goPrev, goNext, goToday]);
 
   useEffect(() => { setMounted(true); }, []);
 

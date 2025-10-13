@@ -1,5 +1,5 @@
 "use client";
-import { doc, onSnapshot } from 'firebase/firestore';
+import { doc, onSnapshot, type FirestoreError } from 'firebase/firestore';
 import { useEffect, useState } from 'react';
 import { auth, db } from '../lib/firebase';
 
@@ -40,9 +40,9 @@ export function useUserMapping(): MappingState {
           setMapping(snap.exists() ? (snap.data() as UserMapping) : null);
           setLoading(false);
         },
-        (error) => {
+        (error: FirestoreError) => {
           // This can trigger during sign-out as auth becomes null -> permission-denied.
-          if ((error as any)?.code === 'permission-denied') {
+          if (error.code === 'permission-denied') {
             setMapping(null);
           }
           setLoading(false);

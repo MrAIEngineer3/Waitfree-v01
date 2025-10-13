@@ -1,35 +1,85 @@
 "use client";
 import { onAuthStateChanged } from 'firebase/auth';
-import { doc, onSnapshot } from 'firebase/firestore';
-import { useEffect, useState } from 'react';
+import type { Timestamp, Unsubscribe } from 'firebase/firestore';
+import { doc, getDoc, onSnapshot, serverTimestamp, setDoc } from 'firebase/firestore';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { auth, db } from '../lib/firebase';
+import { clearClinicCache, prefetchValue, setCachedValue } from '../lib/settingsCache';
+import type { NotificationSettingsDoc } from '../types/settings';
 import ClinicContext from './ClinicContext';
 
-interface Doctor {
-  id: string; 
-  name: string; 
-  specialty: string; 
-  clinicId: string; 
-  email?: string; 
-  phone?: string; 
-  createdAt?: any;
+type QueueStatus = 'active' | 'paused' | 'ended';
+type FirestoreTimestamp = Timestamp | { seconds: number; nanoseconds: number } | null;
+
+interface DoctorRecord {
+  name?: string;
+  specialty?: string | null;
+  clinicId?: string;
+  email?: string | null;
+  phone?: string | null;
+  createdAt?: FirestoreTimestamp;
 }
 
-interface Queue { 
-  id: string; 
-  doctorId: string; 
-  clinicId: string; 
-  status: 'active' | 'paused' | 'ended'; 
-  currentToken: number; 
-  totalPatients: number; 
-  completedPatients: number; 
-  createdAt?: any; 
-  updatedAt?: any; 
+interface QueueRecord {
+  doctorId?: string;
+  clinicId?: string;
+  status?: QueueStatus;
+  currentToken?: number;
+  totalPatients?: number;
+  completedPatients?: number;
+  createdAt?: FirestoreTimestamp;
+  updatedAt?: FirestoreTimestamp;
+  autoAdvance?: boolean;
+}
+
+interface UserRecord {
+  clinicId?: string;
+  doctorId?: string;
+}
+
+interface ClinicRecord {
+  name?: string | null;
+}
+
+interface Doctor {
+  id: string;
+  name: string;
+  specialty: string | null;
+  clinicId: string;
+  email?: string | null;
+  phone?: string | null;
+  createdAt?: FirestoreTimestamp;
+}
+
+interface Queue {
+  id: string;
+  doctorId: string;
+  clinicId: string;
+  status: QueueStatus;
+  currentToken: number;
+  totalPatients: number;
+  completedPatients: number;
+  createdAt?: FirestoreTimestamp;
+  updatedAt?: FirestoreTimestamp;
+  autoAdvance?: boolean;
 }
 
 interface ClinicContextProviderProps {
   children: React.ReactNode;
 }
+
+const detach = (unsubscribe: Unsubscribe | null): null => {
+  if (unsubscribe) {
+    unsubscribe();
+  }
+  return null;
+};
+
+const isPermissionDeniedError = (value: unknown): value is { code: string } =>
+  typeof value === 'object'
+  && value !== null
+  && 'code' in value
+  && (value as { code: unknown }).code === 'permission-denied';
 
 export default function ClinicContextProvider({ children }: ClinicContextProviderProps) {
   const [doctor, setDoctor] = useState<Doctor | null>(null);
@@ -37,107 +87,234 @@ export default function ClinicContextProvider({ children }: ClinicContextProvide
   const [clinicId, setClinicId] = useState<string | null>(null);
   const [doctorId, setDoctorId] = useState<string | null>(null);
   const [clinicName, setClinicName] = useState<string | null>(null);
+  const [notificationSettings, setNotificationSettings] = useState<NotificationSettingsDoc | null | undefined>(undefined);
   const todayKey = new Date().toISOString().split('T')[0];
+  const attemptedCreateRef = useRef<Set<string>>(new Set());
+  const latestClinicRef = useRef<string | null>(null);
+
+  const loadNotificationSettings = useCallback(async (clinic: string) => {
+    const path = ['clinics', clinic, 'settings', 'notifications'];
+    try {
+      const data = await prefetchValue<NotificationSettingsDoc | null>(
+        path,
+        async () => {
+          const ref = doc(db, 'clinics', clinic, 'settings', 'notifications');
+          const snap = await getDoc(ref);
+          return snap.exists() ? (snap.data() as NotificationSettingsDoc) : null;
+        },
+        { freshMs: 5 * 60_000 }
+      );
+      if (latestClinicRef.current === clinic) {
+        setNotificationSettings(data ?? null);
+      }
+    } catch (error) {
+      setCachedValue(path, null);
+      if (latestClinicRef.current === clinic) {
+        setNotificationSettings(null);
+      }
+      if (process.env.NODE_ENV === 'development') {
+        const reason = isPermissionDeniedError(error) ? 'permission-denied' : 'unknown';
+        console.warn('[ClinicContext] Failed to prefetch notification settings', reason, error);
+      }
+    }
+  }, []);
+
+  const refreshNotificationSettings = useCallback(async () => {
+    if (!clinicId) {
+      return;
+    }
+    const path = ['clinics', clinicId, 'settings', 'notifications'];
+    try {
+      const ref = doc(db, 'clinics', clinicId, 'settings', 'notifications');
+      const snap = await getDoc(ref);
+  const next = snap.exists() ? (snap.data() as NotificationSettingsDoc) : null;
+  setCachedValue(path, next);
+      if (latestClinicRef.current === clinicId) {
+        setNotificationSettings(next);
+      }
+    } catch (error) {
+      setCachedValue(path, null);
+      if (latestClinicRef.current === clinicId) {
+        setNotificationSettings(null);
+      }
+      if (process.env.NODE_ENV === 'development') {
+        const reason = isPermissionDeniedError(error) ? 'permission-denied' : 'unknown';
+        console.warn('[ClinicContext] Failed to refresh notification settings', reason, error);
+      }
+    }
+  }, [clinicId]);
 
   useEffect(() => {
-    if (typeof window === 'undefined') return;
-    let unsubscribeDoctor: (() => void) | null = null;
-    let unsubscribeQueue: (() => void) | null = null;
-    let unsubscribeClinic: (() => void) | null = null;
-    let unsubscribeUserDoc: (() => void) | null = null;
+    if (typeof window === 'undefined') {
+      return;
+    }
 
-    const attachQueueListener = (cId: string, dId: string, dayKey: string) => {
-      try { if (unsubscribeQueue) unsubscribeQueue(); } catch {}
-      const queueRef = doc(db, 'clinics', cId, 'doctors', dId, 'queues', dayKey);
-      unsubscribeQueue = onSnapshot(queueRef, (snap) => {
-        if (snap.exists()) setQueue({ id: snap.id, ...snap.data() } as any); 
-        else setQueue(null);
+    let unsubscribeDoctor: Unsubscribe | null = null;
+    let unsubscribeQueue: Unsubscribe | null = null;
+    let unsubscribeClinic: Unsubscribe | null = null;
+    let unsubscribeUserDoc: Unsubscribe | null = null;
+
+    const attachQueueListener = (clinic: string, doctor: string, dayKey: string) => {
+      unsubscribeQueue = detach(unsubscribeQueue);
+      const queueRef = doc(db, 'clinics', clinic, 'doctors', doctor, 'queues', dayKey);
+      unsubscribeQueue = onSnapshot(queueRef, async (snap) => {
+        if (snap.exists()) {
+          const data = (snap.data() as QueueRecord | undefined) ?? {};
+          setQueue({
+            id: snap.id,
+            doctorId: data.doctorId ?? doctor,
+            clinicId: data.clinicId ?? clinic,
+            status: data.status ?? 'active',
+            currentToken: data.currentToken ?? 0,
+            totalPatients: data.totalPatients ?? 0,
+            completedPatients: data.completedPatients ?? 0,
+            createdAt: data.createdAt ?? null,
+            updatedAt: data.updatedAt ?? null,
+            autoAdvance: data.autoAdvance ?? true,
+          });
+          return;
+        }
+
+        setQueue(null);
+
+        if (dayKey !== todayKey) {
+          return;
+        }
+
+        const key = `${clinic}/${doctor}/${dayKey}`;
+        if (attemptedCreateRef.current.has(key)) {
+          return;
+        }
+
+        attemptedCreateRef.current.add(key);
+        try {
+          await setDoc(
+            queueRef,
+            {
+              status: 'active',
+              currentToken: 0,
+              totalPatients: 0,
+              completedPatients: 0,
+              autoAdvance: true,
+              createdAt: serverTimestamp(),
+              clinicId: clinic,
+              doctorId: doctor,
+            },
+            { merge: true }
+          );
+        } catch {
+          // Non-fatal; queue controls will stay disabled if creation fails.
+        }
       });
     };
 
-    const unsubAuth = onAuthStateChanged(auth, (user) => {
-      for (const fn of [unsubscribeDoctor, unsubscribeQueue, unsubscribeClinic, unsubscribeUserDoc]) { 
-        try { fn && fn(); } catch {} 
+    const unsubscribeAuth = onAuthStateChanged(auth, (user) => {
+      unsubscribeDoctor = detach(unsubscribeDoctor);
+      unsubscribeQueue = detach(unsubscribeQueue);
+      unsubscribeClinic = detach(unsubscribeClinic);
+      unsubscribeUserDoc = detach(unsubscribeUserDoc);
+
+      if (!user) {
+        if (latestClinicRef.current) {
+          clearClinicCache(latestClinicRef.current);
+        }
+        latestClinicRef.current = null;
+        setClinicId(null);
+        setDoctorId(null);
+        setDoctor(null);
+        setQueue(null);
+  setClinicName(null);
+  setNotificationSettings(undefined);
+        return;
       }
-      unsubscribeDoctor = unsubscribeQueue = unsubscribeClinic = unsubscribeUserDoc = null;
-      
-      if (!user) { 
-        setClinicId(null); 
-        setDoctorId(null); 
-        setDoctor(null); 
-        setQueue(null); 
-        setClinicName(null); 
-        return; 
-      }
-      
+
       const userRef = doc(db, 'users', user.uid);
-      unsubscribeUserDoc = onSnapshot(userRef, (snap) => {
-        let cId: string | null = null; 
-        let dId: string | null = null;
-        
-        if (snap.exists()) {
-          const data = snap.data() as { clinicId?: string; doctorId?: string };
-          if (data?.clinicId) cId = data.clinicId; 
-          if (data?.doctorId) dId = data.doctorId;
-        }
-        
-        setClinicId(cId); 
-        setDoctorId(dId);
-        
-        if (!cId || !dId) { 
-          setDoctor(null); 
-          setQueue(null); 
-          setClinicName(null); 
-          return; 
-        }
-        
-        try { 
-          if (unsubscribeClinic) unsubscribeClinic(); 
-        } catch {}
-        
-        const clinicRef = doc(db, 'clinics', cId);
-        unsubscribeClinic = onSnapshot(clinicRef, snap => { 
-          if (snap.exists()) { 
-            const d = snap.data() as { name?: string }; 
-            setClinicName(d?.name ?? null); 
-          } else {
-            setClinicName(null); 
+      unsubscribeUserDoc = onSnapshot(userRef, (userSnap) => {
+        const data = (userSnap.data() as UserRecord | undefined) ?? {};
+        const nextClinicId = data.clinicId ?? null;
+        const nextDoctorId = data.doctorId ?? null;
+
+        setClinicId(nextClinicId);
+        setDoctorId(nextDoctorId);
+
+        if (!nextClinicId || !nextDoctorId) {
+          if (latestClinicRef.current) {
+            clearClinicCache(latestClinicRef.current);
           }
+          latestClinicRef.current = null;
+          setDoctor(null);
+          setQueue(null);
+          setClinicName(null);
+          setNotificationSettings(undefined);
+          return;
+        }
+
+        if (latestClinicRef.current !== nextClinicId) {
+          if (latestClinicRef.current) {
+            clearClinicCache(latestClinicRef.current);
+          }
+          latestClinicRef.current = nextClinicId;
+          setNotificationSettings(undefined);
+          void loadNotificationSettings(nextClinicId);
+        }
+
+        unsubscribeClinic = detach(unsubscribeClinic);
+        const clinicRef = doc(db, 'clinics', nextClinicId);
+        unsubscribeClinic = onSnapshot(clinicRef, (clinicSnap) => {
+          if (!clinicSnap.exists()) {
+            setClinicName(null);
+            return;
+          }
+          const clinicData = (clinicSnap.data() as ClinicRecord | undefined) ?? {};
+          setClinicName(clinicData.name ?? null);
         });
-        
-        try { 
-          if (unsubscribeDoctor) unsubscribeDoctor(); 
-        } catch {}
-        
-        const doctorRef = doc(db, 'clinics', cId, 'doctors', dId);
-        unsubscribeDoctor = onSnapshot(doctorRef, s => { 
-          if (s.exists()) setDoctor({ id: s.id, ...s.data() } as any); 
-          else setDoctor(null); 
+
+        unsubscribeDoctor = detach(unsubscribeDoctor);
+        const doctorRef = doc(db, 'clinics', nextClinicId, 'doctors', nextDoctorId);
+        unsubscribeDoctor = onSnapshot(doctorRef, (doctorSnap) => {
+          if (!doctorSnap.exists()) {
+            setDoctor(null);
+            return;
+          }
+          const doctorData = (doctorSnap.data() as DoctorRecord | undefined) ?? {};
+          setDoctor({
+            id: doctorSnap.id,
+            name: doctorData.name ?? '',
+            specialty: doctorData.specialty ?? null,
+            clinicId: doctorData.clinicId ?? nextClinicId,
+            email: doctorData.email ?? null,
+            phone: doctorData.phone ?? null,
+            createdAt: doctorData.createdAt ?? null,
+          });
         });
-        
-        attachQueueListener(cId, dId, todayKey);
+
+        attachQueueListener(nextClinicId, nextDoctorId, todayKey);
       });
     });
 
-    return () => { 
-      try { unsubAuth(); } catch {} 
-      for (const fn of [unsubscribeDoctor, unsubscribeQueue, unsubscribeClinic, unsubscribeUserDoc]) { 
-        try { fn && fn(); } catch {} 
-      } 
+    return () => {
+      unsubscribeAuth();
+      unsubscribeDoctor = detach(unsubscribeDoctor);
+      unsubscribeQueue = detach(unsubscribeQueue);
+      unsubscribeClinic = detach(unsubscribeClinic);
+      unsubscribeUserDoc = detach(unsubscribeUserDoc);
     };
-  }, [todayKey]);
+  }, [loadNotificationSettings, todayKey]);
 
-  const contextValue = {
-    clinicId,
-    clinicName,
-    doctorName: doctor?.name || null,
-    doctorSpecialty: doctor?.specialty || null,
-    queueStatus: queue?.status,
-  };
-
-  return (
-    <ClinicContext.Provider value={contextValue}>
-      {children}
-    </ClinicContext.Provider>
+  const contextValue = useMemo(
+    () => ({
+      clinicId,
+      clinicName,
+      doctorId,
+      doctorName: doctor?.name ?? null,
+      doctorSpecialty: doctor?.specialty ?? null,
+      queueStatus: queue?.status,
+      queue,
+      notificationSettings,
+      reloadNotificationSettings: refreshNotificationSettings,
+    }),
+    [clinicId, clinicName, doctor?.name, doctor?.specialty, doctorId, queue, notificationSettings, refreshNotificationSettings]
   );
+
+  return <ClinicContext.Provider value={contextValue}>{children}</ClinicContext.Provider>;
 }

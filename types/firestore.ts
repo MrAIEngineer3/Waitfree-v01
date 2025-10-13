@@ -90,6 +90,24 @@ export interface Queue {
   // patients array removed for security - patients are now in a sub-collection
 }
 
+export interface NotificationChannelsState {
+  whatsapp?: boolean;
+  sms?: boolean;
+  email?: boolean;
+}
+
+export interface NotificationEventsState {
+  tokenUpdates?: boolean;
+  appointmentReminders?: boolean;
+}
+
+export interface NotificationSettingsDoc {
+  channels?: NotificationChannelsState;
+  events?: NotificationEventsState;
+  updatedAt?: Timestamp;
+  updatedBy?: string | null;
+}
+
 /**
  * Patient Document Interface
  * Represents a patient document in the 'patients' sub-collection under a queue

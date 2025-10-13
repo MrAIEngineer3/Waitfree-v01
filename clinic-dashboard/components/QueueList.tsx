@@ -1,9 +1,10 @@
 'use client';
 
-import { collection, collectionGroup, doc, getDoc, getDocs, onSnapshot, query } from 'firebase/firestore';
+import { collection, doc, onSnapshot, query, serverTimestamp, setDoc, updateDoc } from 'firebase/firestore';
 import { httpsCallable } from 'firebase/functions';
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { db, functions } from '../lib/firebase';
+import { markPhase, queueProfilingEnabled, recordRender, recordSnapshot } from '../lib/profiling';
 import ConfirmModal from './ConfirmModal';
 import Button from './ui/Button';
 
@@ -24,16 +25,30 @@ export interface QueueListProps {
   queueStatus?: 'active' | 'paused' | 'ended' | 'closed';
   dayKey: string; // new required prop representing YYYY-MM-DD of queue
   compact?: boolean; // compact density rows
+  autoAdvance?: boolean;
 }
 
-export default function QueueList({ clinicId: clinicIdProp, doctorId: doctorIdProp, queueStatus, dayKey, compact = true }: QueueListProps) {
+export default function QueueList({ clinicId: clinicIdProp, doctorId: doctorIdProp, queueStatus, dayKey, compact = true, autoAdvance: autoAdvanceProp = true }: QueueListProps) {
+  const renderLabel = useMemo(() => {
+    const clinic = clinicIdProp ?? 'clinic?';
+    const doctor = doctorIdProp ?? 'doctor?';
+    return `QueueList:${clinic}:${doctor}:${dayKey}`;
+  }, [clinicIdProp, doctorIdProp, dayKey]);
+  const renderStart = queueProfilingEnabled ? performance.now() : 0;
+  const snapshotTimerRef = useRef<number | null>(null);
+
+  useEffect(() => {
+    if (!queueProfilingEnabled) return;
+    const duration = performance.now() - renderStart;
+    recordRender(renderLabel, duration);
+  }, [renderLabel, renderStart]);
   const [patients, setPatients] = useState<Patient[]>([]);
   const [loadingPatients, setLoadingPatients] = useState<boolean>(true);
   const [isNextPatientLoading, setIsNextPatientLoading] = useState(false);
   const [isPauseQueueLoading, setIsPauseQueueLoading] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [autoAdvance, setAutoAdvance] = useState<boolean>(true); // will sync with queue doc's autoAdvance
+  const [autoAdvance, setAutoAdvance] = useState<boolean>(autoAdvanceProp);
   const [isAutoAdvUpdating, setIsAutoAdvUpdating] = useState<boolean>(false);
   const [showEndModal, setShowEndModal] = useState(false);
   const [endConfirmText, setEndConfirmText] = useState('');
@@ -60,6 +75,36 @@ export default function QueueList({ clinicId: clinicIdProp, doctorId: doctorIdPr
   const [skipAdvanceToday, setSkipAdvanceToday] = useState(false);
   const [skipPauseToday, setSkipPauseToday] = useState(false);
 
+  const activeActionMessage = useMemo(() => {
+    if (isPauseQueueLoading) {
+      return queueStatus === 'paused' ? 'Resuming queue…' : 'Pausing queue…';
+    }
+    if (isNextPatientLoading) {
+      return 'Advancing queue…';
+    }
+    if (isCompletingPatient) {
+      return 'Completing patient…';
+    }
+    if (isCancellingPatient) {
+      return 'Cancelling patient…';
+    }
+    if (isUncallingPatient) {
+      return 'Reverting patient to waiting…';
+    }
+    if (isAutoAdvUpdating) {
+      return 'Saving auto-advance preference…';
+    }
+    return null;
+  }, [
+    isPauseQueueLoading,
+    queueStatus,
+    isNextPatientLoading,
+    isCompletingPatient,
+    isCancellingPatient,
+    isUncallingPatient,
+    isAutoAdvUpdating
+  ]);
+
   // Load skip preferences once on mount
   useEffect(() => {
     if (typeof window === 'undefined') return;
@@ -80,42 +125,22 @@ export default function QueueList({ clinicId: clinicIdProp, doctorId: doctorIdPr
   const queueId = dayKey; // previously today
 
   useEffect(() => {
-    console.log('[QueueList] useEffect triggered.');
+    setAutoAdvance(autoAdvanceProp);
+  }, [autoAdvanceProp]);
 
-    // Only run on client side
+  useEffect(() => {
     if (typeof window === 'undefined') {
-      console.log('[QueueList] Not on client, returning.');
       return;
     }
 
-    // If mapping is missing, don't attempt to subscribe
     if (!clinicId || !doctorId) {
-      console.log('[QueueList] Missing clinicId or doctorId. Clearing patients and returning.', { clinicId, doctorId });
       setPatients([]);
+      setLoadingPatients(false);
       return;
     }
 
-    console.log('[QueueList] Props are valid, proceeding to query.', { clinicId, doctorId, queueId });
+    setLoadingPatients(true);
 
-    // Deep instrumentation: log firebase app options & env flags to detect mismatch
-    try {
-      // Safely attempt to read internal app options without using explicit any
-      const appOptionsContainer = (db as unknown as { _app?: { options?: Record<string, unknown> }; app?: { options?: Record<string, unknown> } });
-      const appOptions = appOptionsContainer._app?.options || appOptionsContainer.app?.options || {};
-      const projId = (appOptions as { projectId?: string }).projectId;
-      const apiKey = (appOptions as { apiKey?: string }).apiKey;
-      console.log('[QueueList][DIAG] App Options projectId:', projId, 'apiKey:', apiKey);
-      console.log('[QueueList][DIAG] Env flags:', {
-        NODE_ENV: process.env.NODE_ENV,
-        NEXT_PUBLIC_USE_FIREBASE_EMULATOR: process.env.NEXT_PUBLIC_USE_FIREBASE_EMULATOR,
-        NEXT_PUBLIC_FIREBASE_PROJECT_ID: process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID,
-        NEXT_PUBLIC_FUNCTIONS_BASE_URL: process.env.NEXT_PUBLIC_FUNCTIONS_BASE_URL
-      });
-    } catch (e) {
-      console.warn('[QueueList][DIAG] Failed to log app options', e);
-    }
-
-    // Create reference to the patients sub-collection
     const patientsRef = collection(
       db,
       'clinics',
@@ -126,101 +151,39 @@ export default function QueueList({ clinicId: clinicIdProp, doctorId: doctorIdPr
       queueId,
       'patients'
     );
-  console.log('[QueueList] Querying Firestore path:', patientsRef.path);
 
-
-    // Create query without ordering to test Firestore response
-    const patientsQuery = query(patientsRef);
-
-    // One-time fetch (getDocs) BEFORE attaching snapshot to compare behavior
-    (async () => {
-      try {
-        console.log('[QueueList][DIAG] Performing one-time getDocs on patients collection...');
-        const snap = await getDocs(patientsRef);
-        console.log('[QueueList][DIAG] getDocs result size:', snap.size);
-        snap.forEach(d => console.log('[QueueList][DIAG] getDocs doc:', d.id, d.data()));
-        if (snap.size === 0) {
-          console.log('[QueueList][DIAG] getDocs empty. Will attempt collectionGroup fallback search by queueId & clinicId to verify visibility.');
-          try {
-            const cg = await getDocs(query(collectionGroup(db, 'patients')));
-            console.log('[QueueList][DIAG] collectionGroup(patients) size:', cg.size);
-            type PatientDocShape = { queueId?: string; clinicId?: string; doctorId?: string; [k: string]: unknown };
-            cg.forEach(d => {
-              const data = d.data() as PatientDocShape;
-              if (data.queueId === queueId && data.clinicId === clinicId && data.doctorId === doctorId) {
-                console.log('[QueueList][DIAG] Found matching patient via collectionGroup but not via direct subcollection path:', d.id, data);
-              }
-            });
-          } catch (cgErr) {
-            console.warn('[QueueList][DIAG] collectionGroup fallback failed:', cgErr);
-          }
+    const unsubscribe = onSnapshot(
+      query(patientsRef),
+      (snapshot) => {
+        const start = queueProfilingEnabled ? performance.now() : 0;
+        const patientsList: Patient[] = snapshot.docs.map((docSnap) => {
+          const data = docSnap.data() as Omit<Patient, 'id'>;
+          return { id: docSnap.id, ...data };
+        });
+        setPatients(patientsList);
+        setLoadingPatients(false);
+        if (queueProfilingEnabled) {
+          const end = performance.now();
+          const sinceLast = snapshotTimerRef.current != null ? end - snapshotTimerRef.current : 0;
+          const processing = end - start;
+          recordSnapshot(`${renderLabel}:patients`, {
+            size: snapshot.size,
+            latencyMs: sinceLast || processing,
+          });
+          snapshotTimerRef.current = end;
         }
-      } catch (gdErr) {
-        console.error('[QueueList][DIAG] getDocs failed:', gdErr);
+      },
+      (error) => {
+        console.error('[QueueList] Failed to subscribe to patients', error);
+        setError('Failed to load patients. Try refreshing the page.');
+        setLoadingPatients(false);
       }
-    })();
+    );
 
-    // Probe one queue doc & doctor doc existence to ensure upstream mapping path valid
-    (async () => {
-      try {
-        const queueDocRef = doc(db, 'clinics', clinicId, 'doctors', doctorId, 'queues', queueId);
-        const queueSnap = await getDoc(queueDocRef);
-        console.log('[QueueList][DIAG] Queue doc exists?', queueSnap.exists(), queueSnap.exists() ? queueSnap.data() : null);
-        if (queueSnap.exists()) {
-          const qData = queueSnap.data() as { autoAdvance?: unknown };
-          if (typeof qData.autoAdvance === 'boolean') {
-            setAutoAdvance(qData.autoAdvance);
-          }
-        }
-        const doctorDocRef = doc(db, 'clinics', clinicId, 'doctors', doctorId);
-        const doctorSnap = await getDoc(doctorDocRef);
-        console.log('[QueueList][DIAG] Doctor doc exists?', doctorSnap.exists());
-      } catch (probeErr) {
-        console.warn('[QueueList][DIAG] Queue/Doctor probe failed:', probeErr);
-      }
-    })();
-
-    // Listen to queue doc for autoAdvance flag changes (and future metadata like status)
-    const queueDocRef = doc(db, 'clinics', clinicId, 'doctors', doctorId, 'queues', queueId);
-    const unsubQueue = onSnapshot(queueDocRef, snap => {
-      if (snap.exists()) {
-        const data = snap.data() as { autoAdvance?: unknown };
-        if (typeof data.autoAdvance === 'boolean') {
-          setAutoAdvance(data.autoAdvance);
-        }
-      }
-    }, err => console.warn('[QueueList] queueDoc onSnapshot error', err));
-
-    // Set up real-time listener
-    console.log('[QueueList] Attaching onSnapshot listener...');
-    const unsubscribe = onSnapshot(patientsQuery, (snapshot) => {
-      console.log('[QueueList] onSnapshot listener FIRED.');
-      console.log(`[QueueList] Snapshot details: empty=${snapshot.empty}, size=${snapshot.size}`);
-
-      const patientsList: Patient[] = [];
-      snapshot.forEach((doc) => {
-        console.log(`[QueueList] Found patient doc: ${doc.id}`, doc.data());
-        patientsList.push({
-          id: doc.id,
-          ...doc.data()
-        } as Patient);
-      });
-
-      console.log('[QueueList] Setting patients state with:', patientsList);
-      setPatients(patientsList);
-      setLoadingPatients(false);
-
-    }, (error) => {
-      console.error('[QueueList] onSnapshot listener ERRORED:', error);
-    });
-
-    // Cleanup function
     return () => {
-      console.log('[QueueList] useEffect cleanup. Unsubscribing from snapshot listener.');
       unsubscribe();
-      unsubQueue();
     };
-  }, [clinicId, doctorId, queueId]);
+  }, [clinicId, doctorId, queueId, renderLabel]);
 
   const isToday = (() => {
     try { return new Date().toISOString().split('T')[0] === queueId; } catch { return false; }
@@ -228,8 +191,14 @@ export default function QueueList({ clinicId: clinicIdProp, doctorId: doctorIdPr
   const isReadOnly = !isToday || queueStatus === 'closed';
 
   // Guard mutating handlers if read-only
-  const guarded = <T extends (...args:any)=>any>(fn:T):T => {
-    return ((...a:any[]) => { if (isReadOnly) { setError('This queue is read-only for the selected date.'); return; } return fn(...a); }) as T;
+  const guarded = <Args extends unknown[], Return>(fn: (...args: Args) => Return) => {
+    return (...args: Args): Return | undefined => {
+      if (isReadOnly) {
+        setError('This queue is read-only for the selected date.');
+        return undefined;
+      }
+      return fn(...args);
+    };
   };
 
   // Wrap existing handlers (only those modifying data)
@@ -239,6 +208,8 @@ export default function QueueList({ clinicId: clinicIdProp, doctorId: doctorIdPr
       return;
     }
     setIsNextPatientLoading(true);
+    const phaseLabel = `${renderLabel}:advance`;
+    if (queueProfilingEnabled) markPhase(phaseLabel, 'start');
     try {
       setError(null); setMessage(null);
       // Get callable reference to updatePatientStatus function
@@ -288,27 +259,42 @@ export default function QueueList({ clinicId: clinicIdProp, doctorId: doctorIdPr
       setError('Failed to advance patient.');
     } finally {
       setIsNextPatientLoading(false);
+      if (queueProfilingEnabled) markPhase(phaseLabel, 'end');
     }
   });
 
   // Handler for "Pause Queue" button
   const handleTogglePauseQueue = guarded(async () => {
     setIsPauseQueueLoading(true);
+    const phaseLabel = `${renderLabel}:pause`;
+    if (queueProfilingEnabled) markPhase(phaseLabel, 'start');
     try {
       console.log('Toggling queue pause status');
 
-      // Get callable reference to updateQueueStatus function
-      const updateQueueStatus = httpsCallable(functions, 'updateQueueStatus');
+      if (!clinicId || !doctorId) {
+        throw new Error('Missing clinic or doctor identifier');
+      }
+
+      setMessage(null);
+      setError(null);
 
       const target = queueStatus === 'paused' ? 'active' : 'paused';
-      const result = await updateQueueStatus({
-        clinicId,
-        doctorId,
-        queueId,
-        newStatus: target
+      const queueDocRef = doc(
+        db,
+        'clinics',
+        clinicId!,
+        'doctors',
+        doctorId!,
+        'queues',
+        queueId
+      );
+
+      await updateDoc(queueDocRef, {
+        status: target,
+        updatedAt: serverTimestamp()
       });
 
-      console.log('Queue status updated successfully:', result.data);
+      console.log('Queue status updated successfully via direct write', { queueId, newStatus: target });
       setMessage(`Queue ${target === 'paused' ? 'paused' : 'resumed'}.`);
       setError(null);
     } catch (error) {
@@ -316,6 +302,7 @@ export default function QueueList({ clinicId: clinicIdProp, doctorId: doctorIdPr
       setError('Failed to update queue status.');
     } finally {
       setIsPauseQueueLoading(false);
+      if (queueProfilingEnabled) markPhase(phaseLabel, 'end');
     }
   });
 
@@ -329,6 +316,8 @@ export default function QueueList({ clinicId: clinicIdProp, doctorId: doctorIdPr
   const confirmCompletePatient = async () => {
     if (!completePatientId) return;
     setIsCompletingPatient(true);
+    const phaseLabel = `${renderLabel}:complete`;
+    if (queueProfilingEnabled) markPhase(phaseLabel, 'start');
     try {
       setError(null); setMessage(null);
       const updatePatientStatus = httpsCallable(functions, 'updatePatientStatus');
@@ -342,15 +331,31 @@ export default function QueueList({ clinicId: clinicIdProp, doctorId: doctorIdPr
       setError('Failed to complete patient.');
     } finally {
       setIsCompletingPatient(false);
+      if (queueProfilingEnabled) markPhase(phaseLabel, 'end');
     }
   };
 
   // Toggle autoAdvance on server
   const handleToggleAutoAdvance = guarded(async (checked: boolean) => {
     setIsAutoAdvUpdating(true);
+    const phaseLabel = `${renderLabel}:auto-advance`;
+    if (queueProfilingEnabled) markPhase(phaseLabel, 'start');
     try {
-      const setQueueAutoAdvance = httpsCallable(functions, 'setQueueAutoAdvance');
-      await setQueueAutoAdvance({ clinicId, doctorId, queueId, enabled: checked });
+      if (!clinicId || !doctorId) {
+        throw new Error('Missing clinic or doctor identifier');
+      }
+      setMessage(null);
+      setError(null);
+      const queueDocRef = doc(
+        db,
+        'clinics',
+        clinicId!,
+        'doctors',
+        doctorId!,
+        'queues',
+        queueId
+      );
+      await setDoc(queueDocRef, { autoAdvance: checked, updatedAt: serverTimestamp() }, { merge: true });
       // optimistic update; real value will flow from queue doc listener too
       setAutoAdvance(checked);
     } catch (e) {
@@ -358,12 +363,15 @@ export default function QueueList({ clinicId: clinicIdProp, doctorId: doctorIdPr
       setError('Failed to update auto-advance flag.');
     } finally {
       setIsAutoAdvUpdating(false);
+      if (queueProfilingEnabled) markPhase(phaseLabel, 'end');
     }
   });
 
   const handleCallPatient = guarded(async (patientId: string) => {
     if (!patientId) return;
     if (queueStatus === 'paused') { setError('Queue is paused. Resume first.'); return; }
+    const phaseLabel = `${renderLabel}:call`;
+    if (queueProfilingEnabled) markPhase(phaseLabel, 'start');
     try {
       setError(null); setMessage(null);
       const updatePatientStatus = httpsCallable(functions, 'updatePatientStatus');
@@ -372,6 +380,8 @@ export default function QueueList({ clinicId: clinicIdProp, doctorId: doctorIdPr
     } catch (e) {
       console.error('Call patient failed', e);
       setError('Failed to call patient.');
+    } finally {
+      if (queueProfilingEnabled) markPhase(phaseLabel, 'end');
     }
   });
 
@@ -386,6 +396,8 @@ export default function QueueList({ clinicId: clinicIdProp, doctorId: doctorIdPr
   const confirmCancelPatient = async () => {
     if (!cancelPatientId) return;
     setIsCancellingPatient(true);
+    const phaseLabel = `${renderLabel}:cancel`;
+    if (queueProfilingEnabled) markPhase(phaseLabel, 'start');
     try {
       setError(null); setMessage(null);
       const updatePatientStatus = httpsCallable(functions, 'updatePatientStatus');
@@ -398,6 +410,7 @@ export default function QueueList({ clinicId: clinicIdProp, doctorId: doctorIdPr
       setError('Failed to cancel patient.');
     } finally {
       setIsCancellingPatient(false);
+      if (queueProfilingEnabled) markPhase(phaseLabel, 'end');
     }
   };
   // Request uncall patient (revert in-progress -> waiting)
@@ -411,6 +424,8 @@ export default function QueueList({ clinicId: clinicIdProp, doctorId: doctorIdPr
   const confirmUncallPatient = async () => {
     if (!uncallPatientId) return;
     setIsUncallingPatient(true);
+    const phaseLabel = `${renderLabel}:uncall`;
+    if (queueProfilingEnabled) markPhase(phaseLabel, 'start');
     try {
       setError(null); setMessage(null);
       const updatePatientStatus = httpsCallable(functions, 'updatePatientStatus');
@@ -423,6 +438,7 @@ export default function QueueList({ clinicId: clinicIdProp, doctorId: doctorIdPr
       setError('Failed to uncall patient.');
     } finally {
       setIsUncallingPatient(false);
+      if (queueProfilingEnabled) markPhase(phaseLabel, 'end');
     }
   };
 
@@ -480,8 +496,15 @@ export default function QueueList({ clinicId: clinicIdProp, doctorId: doctorIdPr
     };
 
     const handleRestart = () => {
-      const updateQueueStatus = httpsCallable(functions, 'updateQueueStatus');
-      updateQueueStatus({ clinicId, doctorId, queueId, newStatus: 'active' })
+      if (!clinicId || !doctorId) {
+        console.error('Restart queue failed: missing clinic/doctor');
+        setError('Failed to restart queue.');
+        return;
+      }
+      setMessage(null);
+      setError(null);
+  const queueDocRef = doc(db, 'clinics', clinicId!, 'doctors', doctorId!, 'queues', queueId);
+      updateDoc(queueDocRef, { status: 'active', updatedAt: serverTimestamp() })
         .then(() => { setMessage('Queue restarted and set to Active.'); setError(null); })
         .catch(e => { console.error('Restart queue failed', e); setError('Failed to restart queue.'); });
     };
@@ -495,7 +518,7 @@ export default function QueueList({ clinicId: clinicIdProp, doctorId: doctorIdPr
       window.removeEventListener('endQueue', handleEnd);
       window.removeEventListener('restartQueue', handleRestart);
     };
-  }, [pausedFlag, skipPauseToday, clinicId, doctorId, queueId]);
+  }, [pausedFlag, skipPauseToday, clinicId, doctorId, queueId, handleTogglePauseQueue]);
 
   return (
   <div className={`space-y-3 w-full px-3 md:px-4 lg:px-6 pt-3 md:pt-4 lg:pt-6 pb-32 md:pb-8 ${compact ? 'queue-compact' : ''}`} aria-live="polite">
@@ -522,8 +545,17 @@ export default function QueueList({ clinicId: clinicIdProp, doctorId: doctorIdPr
         onCancel={()=>{ setShowEndModal(false); setEndConfirmText(''); }}
         onConfirm={()=>{
           if(endConfirmText !== 'END') return;
-          const updateQueueStatus = httpsCallable(functions, 'updateQueueStatus');
-          updateQueueStatus({ clinicId, doctorId, queueId, newStatus: 'ended' })
+          if (!clinicId || !doctorId) {
+            console.error('End queue failed: missing clinic/doctor');
+            setError('Failed to end queue.');
+            setShowEndModal(false);
+            setEndConfirmText('');
+            return;
+          }
+          setMessage(null);
+          setError(null);
+          const queueDocRef = doc(db, 'clinics', clinicId!, 'doctors', doctorId!, 'queues', queueId);
+          updateDoc(queueDocRef, { status: 'ended', updatedAt: serverTimestamp() })
             .then(()=>{ setMessage('Queue ended. You can restart it below if needed.'); setError(null); })
             .catch(e=>{ console.error('End queue failed', e); setError('Failed to end queue.'); })
             .finally(()=>{ setShowEndModal(false); setEndConfirmText(''); });
@@ -637,6 +669,13 @@ export default function QueueList({ clinicId: clinicIdProp, doctorId: doctorIdPr
       >
         <p>Pausing prevents calling or advancing patients until you resume. Current in-progress patient (if any) is unaffected.</p>
       </ConfirmModal>
+
+      {activeActionMessage && (
+        <div className="mb-3 flex items-center gap-2 text-sm text-slate-600" role="status">
+          <span className="h-2 w-2 animate-pulse rounded-full bg-blue-500" aria-hidden />
+          <span>{activeActionMessage}</span>
+        </div>
+      )}
 
       {(message || error) && (
         <div className="mb-4 text-sm" role="status">

@@ -5,7 +5,22 @@ import * as functions from 'firebase-functions/v1';
 import './loadEnv';
 
 // Import Twilio for WhatsApp integration
-import twilio from 'twilio';
+type TwilioModule = typeof import('twilio');
+
+let twilioFactory: TwilioModule | null = null;
+
+function resolveTwilioFactory(): TwilioModule | null {
+  if (twilioFactory) {
+    return twilioFactory;
+  }
+  try {
+    twilioFactory = require('twilio') as TwilioModule;
+    return twilioFactory;
+  } catch (err) {
+    functions.logger.debug('Twilio SDK unavailable or not installed', err);
+    return null;
+  }
+}
 
 // Notification types used by functions. Add granular stages so server can record which
 // per-patient stage notifications were already emitted.
@@ -115,7 +130,11 @@ function getTwilioClient() {
     return null; // Return null if credentials not available (for testing)
   }
   
-  return twilio(accountSid, authToken);
+  const factory = resolveTwilioFactory();
+  if (!factory) {
+    return null;
+  }
+  return factory(accountSid, authToken);
 }
 
 // Single exported sendNotification used by functions.
