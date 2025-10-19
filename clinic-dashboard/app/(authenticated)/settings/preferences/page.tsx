@@ -1,6 +1,6 @@
 "use client";
-import Button from '@/components/ui/Button';
-import Card from '@/components/ui/Card';
+import { Button } from '@/components/ui/Button';
+import { Card } from '@/components/ui/Card';
 import { useState } from 'react';
 
 type LanguageOption = 'en' | 'hi';
@@ -241,7 +241,7 @@ export default function PreferencesSettingsPage() {
 
           {/* Action Buttons */}
           <div className="flex items-center gap-3 pt-6 border-t border-gray-200">
-            <Button variant="primary" onClick={handleSave} loading={saving}>
+            <Button variant="default" onClick={handleSave} loading={saving}>
               Save Preferences
             </Button>
             <Button 

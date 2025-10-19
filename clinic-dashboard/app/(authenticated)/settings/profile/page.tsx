@@ -1,6 +1,6 @@
 "use client";
-import Button from '@/components/ui/Button';
-import Card from '@/components/ui/Card';
+import { Button } from '@/components/ui/Button';
+import { Card } from '@/components/ui/Card';
 import { auth, db, storage } from '@/lib/firebase';
 import { EmailAuthProvider, reauthenticateWithCredential, updateEmail, updateProfile } from 'firebase/auth';
 import { doc, getDoc, setDoc } from 'firebase/firestore';
@@ -264,7 +264,7 @@ export default function ProfileSettingsPage() {
 
           {/* Action Buttons */}
           <div className="flex items-center gap-3 pt-4 border-t border-gray-200">
-            <Button type="submit" loading={saving} variant="primary">
+            <Button type="submit" loading={saving} variant="default">
               Save Changes
             </Button>
             <Button 

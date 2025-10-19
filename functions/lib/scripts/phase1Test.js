@@ -51,13 +51,13 @@ if (!process.env.FIREBASE_AUTH_EMULATOR_HOST) {
     process.env.FIREBASE_AUTH_EMULATOR_HOST = 'localhost:9098';
     console.log('[Harness] FIREBASE_AUTH_EMULATOR_HOST defaulted to', process.env.FIREBASE_AUTH_EMULATOR_HOST);
 }
+// Determine projectId: prefer explicit emulator vars, then GCLOUD_PROJECT, finally fallback known default
+const projectId = process.env.FIREBASE_EMULATOR_PROJECT_ID || process.env.GCLOUD_PROJECT || 'waitfree-9b06e';
 if (!admin.apps.length) {
-    admin.initializeApp({ projectId: process.env.GCLOUD_PROJECT || 'demo-test' });
+    admin.initializeApp({ projectId });
 }
 const host = process.env.FUNCTIONS_HOST || 'http://localhost:5002';
 const region = 'asia-south1';
-// Determine projectId: prefer explicit emulator vars, then GCLOUD_PROJECT, finally fallback known default
-const projectId = process.env.FIREBASE_EMULATOR_PROJECT_ID || process.env.GCLOUD_PROJECT || 'waitfree-9b06e';
 console.log('[Harness] Using projectId =', projectId);
 let authIdToken = null;
 async function ensureAuth() {

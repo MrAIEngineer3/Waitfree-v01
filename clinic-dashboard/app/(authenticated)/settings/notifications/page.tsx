@@ -1,8 +1,8 @@
 "use client";
 
 import { useClinicContext } from '@/components/ClinicContext';
-import Button from '@/components/ui/Button';
-import Card from '@/components/ui/Card';
+import { Button } from '@/components/ui/Button';
+import { Card } from '@/components/ui/Card';
 import { auth, db } from '@/lib/firebase';
 import { getCachedValue, setCachedValue } from '@/lib/settingsCache';
 import type { NotificationSettingsDoc } from '@/types/settings';
@@ -380,7 +380,7 @@ export default function NotificationsSettingsPage() {
           )}
 
           <div className="flex items-center gap-3 pt-6 border-t border-gray-200">
-            <Button variant="primary" onClick={save} loading={saving} disabled={!clinicId || !hasPendingChanges}>
+            <Button variant="default" onClick={save} loading={saving} disabled={!clinicId || !hasPendingChanges}>
               Save Preferences
             </Button>
             <Button variant="outline" onClick={resetToServer} disabled={!hasPendingChanges}>

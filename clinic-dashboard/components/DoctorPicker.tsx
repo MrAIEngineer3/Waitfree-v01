@@ -1,6 +1,7 @@
 "use client";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from './ui/select';
 import { collection, doc, onSnapshot, orderBy, query, updateDoc } from 'firebase/firestore';
-import { type ChangeEvent, useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { auth, db } from '../lib/firebase';
 
 interface Doctor { id: string; name: string; specialty?: string }
@@ -27,8 +28,7 @@ export default function DoctorPicker({ clinicId, value, onChange }:{ clinicId: s
     return ()=> unsub();
   }, [col]);
 
-  async function handleChange(e: ChangeEvent<HTMLSelectElement>){
-    const id = e.target.value;
+  async function handleChange(id: string){
     try{
       const u = auth.currentUser;
       if (u) await updateDoc(doc(db, 'users', u.uid), { doctorId: id });
@@ -36,22 +36,22 @@ export default function DoctorPicker({ clinicId, value, onChange }:{ clinicId: s
     } catch {}
   }
 
-  const hasSelection = !!value;
   return (
     <div className="inline-flex items-center">
-      <select
+      <Select
         value={value ?? ''}
-        onChange={handleChange}
-        className="h-8 text-sm rounded-md border border-gray-300 px-2 bg-white text-gray-800"
-        aria-label="Select doctor"
+        onValueChange={handleChange}
       >
-        {loading && <option>Loading…</option>}
-        {!loading && !hasSelection && <option value="" disabled>Select a doctor…</option>}
-        {!loading && list.length === 0 && <option value="" disabled>No doctors found</option>}
-        {!loading && list.map(d=> (
-          <option key={d.id} value={d.id}>{d.name}{d.specialty? ` • ${d.specialty}`: ''}</option>
-        ))}
-      </select>
+        <SelectTrigger className="h-8 text-sm rounded-md border border-gray-300 px-2 bg-white text-gray-800">
+          <SelectValue placeholder={loading ? "Loading…" : "Select a doctor…"} />
+        </SelectTrigger>
+        <SelectContent>
+          {!loading && list.length === 0 && <SelectItem value="" disabled>No doctors found</SelectItem>}
+          {!loading && list.map(d=> (
+            <SelectItem key={d.id} value={d.id}>{d.name}{d.specialty? ` • ${d.specialty}`: ''}</SelectItem>
+          ))}
+        </SelectContent>
+      </Select>
     </div>
   );
 }

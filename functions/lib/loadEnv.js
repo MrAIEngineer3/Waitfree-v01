@@ -6,8 +6,8 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.loadLocalEnv = loadLocalEnv;
 /**
  * Local environment loader for Firebase Functions emulator & scripts.
- * Production (deployed) functions SHOULD NOT rely on dotenv; use:
- *  - firebase functions:config:set for non-secret config values
+ * Production (deployed) functions SHOULD NOT rely on dotenv files shipped in the bundle; instead use:
+ *  - Firebase CLI managed environment files (.env, .env.production, etc.)
  *  - Secret Manager via functions v2 or environment variables set in deploy pipeline
  *
  * This file attempts to load .env.local (preferred) then fallback to .env
@@ -22,7 +22,6 @@ function loadLocalEnv() {
     if (loaded)
         return; // idempotent
     const isEmulator = process.env.FUNCTIONS_EMULATOR === 'true' || !!process.env.FIRESTORE_EMULATOR_HOST;
-    const isLocal = !process.env.GCLOUD_PROJECT || process.env.GCLOUD_PROJECT?.startsWith('demo-');
     // We load for emulator OR if explicitly marked by NODE_ENV=development
     if (!(isEmulator || process.env.NODE_ENV === 'development')) {
         loaded = true;
@@ -35,7 +34,6 @@ function loadLocalEnv() {
     ];
     try {
         // Lazy require dotenv to avoid adding weight if unused
-        // eslint-disable-next-line @typescript-eslint/no-var-requires
         const dotenv = require('dotenv');
         for (const file of candidates) {
             if (fs_1.default.existsSync(file)) {

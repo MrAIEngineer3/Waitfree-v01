@@ -81,7 +81,7 @@ async function recomputeQueueNotifications(params) {
         .map(d => ({ id: d.id, ...d.data() }))
         .sort((a, b) => (a.tokenNumber || 0) - (b.tokenNumber || 0));
     // Build list for position calculation
-    const inProgressIds = new Set(activeDocs.filter(p => p.status === 'in-progress').map(p => p.id));
+    // const inProgressIds = new Set(activeDocs.filter(p => p.status === 'in-progress').map(p => p.id));
     let notificationsSent = 0;
     for (const patient of activeDocs) {
         const ahead = activeDocs.filter(p => (p.tokenNumber || 0) < (patient.tokenNumber || 0) && p.status !== 'cancelled' && p.status !== 'completed').length;

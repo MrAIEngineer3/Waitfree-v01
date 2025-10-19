@@ -1,4 +1,5 @@
 "use client";
+import { Sheet, SheetContent, SheetTrigger } from './ui/sheet';
 import { signOut } from 'firebase/auth';
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
@@ -8,8 +9,8 @@ import { useClinicContext } from './ClinicContext';
 import ClinicJoinQR from './ClinicJoinQR';
 import DoctorPicker from './DoctorPicker';
 import EnvWarningBanner from './EnvWarningBanner';
-import Badge from './ui/Badge';
-import Button from './ui/Button';
+import { Badge } from './ui/Badge';
+import { Button } from './ui/Button';
 
 interface NavItem {
   label: string;
@@ -28,7 +29,6 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
   const router = useRouter();
   const { clinicId, clinicName, doctorId, queueStatus } = useClinicContext();
   const [showJoinQr, setShowJoinQr] = useState(false);
-  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
 
   useEffect(() => {
     if (!clinicId || typeof window === 'undefined') {
@@ -60,9 +60,9 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
 
   const renderQueueStatus = (status: typeof queueStatus) => {
     if (!status) return null;
-    const tone = status === 'active' ? 'success' : status === 'paused' ? 'warning' : 'danger';
+    const variant = status === 'active' ? 'success' : status === 'paused' ? 'warning' : 'destructive';
     const text = status === 'active' ? 'Active' : status === 'paused' ? 'Paused' : 'Ended';
-    return <Badge tone={tone} variant="solid" size="sm" className="ml-2">{text}</Badge>;
+    return <Badge variant={variant} className="ml-2">{text}</Badge>;
   };
   return (
     <div className="min-h-screen w-full flex bg-gray-50 text-gray-900">
@@ -104,7 +104,75 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
           <div className="max-w-7xl mx-auto px-4 py-3 flex items-center justify-between gap-4">
             <div className="flex items-center gap-4 min-w-0 flex-1">
               <div className="md:hidden block">
-                <div className="h-8 w-8 rounded-md bg-gray-100 flex items-center justify-center text-gray-600 text-xs">WF</div>
+                <Sheet>
+                  <SheetTrigger asChild>
+                    <button
+                      aria-label="Open menu"
+                      className="inline-flex items-center justify-center h-9 w-9 rounded-md border border-gray-300 bg-white text-gray-700 hover:bg-gray-50 active:bg-gray-100 shadow-sm"
+                    >
+                      <svg className="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                        <line x1="3" y1="6" x2="21" y2="6" />
+                        <line x1="3" y1="12" x2="21" y2="12" />
+                        <line x1="3" y1="18" x2="21" y2="18" />
+                      </svg>
+                    </button>
+                  </SheetTrigger>
+                  <SheetContent
+                    side="left"
+                    title="Menu"
+                    description="Main navigation and actions"
+                  >
+                    <div className="px-5 py-5 border-b border-gray-200">
+                      <div className="text-lg font-semibold tracking-tight flex items-center gap-2">
+                        <span className="h-3 w-3 rounded-sm bg-gradient-to-r from-blue-500 to-cyan-400 inline-block" />
+                        Waitfree
+                      </div>
+                    </div>
+                    {clinicId && (
+                      <div className="px-3 pt-3">
+                        <DoctorPicker clinicId={clinicId} value={doctorId ?? undefined} />
+                      </div>
+                    )}
+                    <nav className="py-2">
+                      {nav.map(item => {
+                        const active = pathname === item.href;
+                        return (
+                          <Link
+                            key={item.href}
+                            href={item.href}
+                            onMouseEnter={() => {
+                              void router.prefetch(item.href);
+                            }}
+                            className={`flex items-center justify-between px-3 py-2 text-sm ${active ? 'text-gray-900 font-semibold' : 'text-gray-700 hover:bg-gray-50'}`}
+                          >
+                            <span>{item.label}</span>
+                            {active && <span className="text-[10px] px-1.5 py-0.5 rounded bg-gray-900 text-white">Active</span>}
+                          </Link>
+                        );
+                      })}
+                    </nav>
+                    <div className="border-t border-gray-200" />
+                    <div className="p-2 flex flex-col gap-2">
+                      {clinicId && (
+                        <button
+                          onClick={() => { setShowJoinQr(true); }}
+                          className="h-10 w-full inline-flex items-center justify-center gap-2 rounded-md border border-gray-300 bg-white text-gray-700 hover:bg-gray-50 active:bg-gray-100 shadow-sm"
+                        >
+                          <svg className="w-4 h-4 text-gray-600" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                            <path d="M3 3h7v7H3zM14 3h7v7h-7zM3 14h7v7H3zM17 17h.01M14 14h7v7h-7z" />
+                          </svg>
+                          Show QR
+                        </button>
+                      )}
+                      <button
+                        onClick={() => { signOut(auth); }}
+                        className="h-10 w-full inline-flex items-center justify-center gap-2 rounded-md border border-gray-300 bg-white text-gray-700 hover:bg-gray-50 active:bg-gray-100 shadow-sm"
+                      >
+                        Sign out
+                      </button>
+                    </div>
+                  </SheetContent>
+                </Sheet>
               </div>
 
               {/* Header: Clinic title and doctor picker */}
@@ -158,79 +226,9 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
               <div className="flex items-center gap-2">
                 <div className="h-2 w-2 rounded-full bg-emerald-500 animate-pulse" aria-label="Realtime Connected" />
               </div>
-              <button
-                aria-label="Open menu"
-                onClick={() => setMobileMenuOpen(v => !v)}
-                className="inline-flex items-center justify-center h-9 w-9 rounded-md border border-gray-300 bg-white text-gray-700 hover:bg-gray-50 active:bg-gray-100 shadow-sm"
-              >
-                <svg className="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                  <line x1="3" y1="6" x2="21" y2="6" />
-                  <line x1="3" y1="12" x2="21" y2="12" />
-                  <line x1="3" y1="18" x2="21" y2="18" />
-                </svg>
-              </button>
             </div>
           </div>
           <div className="max-w-7xl mx-auto px-4 pb-2"><EnvWarningBanner /></div>
-
-          {/* Mobile menu dropdown */}
-          {mobileMenuOpen && (
-            <div className="md:hidden relative">
-              {/* Overlay to close */}
-              <div
-                className="fixed inset-0 z-40"
-                onClick={() => setMobileMenuOpen(false)}
-              />
-              <div className="absolute left-0 right-0 z-50 px-4">
-                <div className="mt-2 rounded-xl border border-gray-200 bg-white shadow-lg overflow-hidden">
-                  {clinicId && (
-                    <div className="px-3 pt-3">
-                      <DoctorPicker clinicId={clinicId} value={doctorId ?? undefined} />
-                    </div>
-                  )}
-                  <nav className="py-2">
-                    {nav.map(item => {
-                      const active = pathname === item.href;
-                      return (
-                        <Link
-                          key={item.href}
-                          href={item.href}
-                          onMouseEnter={() => {
-                            void router.prefetch(item.href);
-                          }}
-                          onClick={() => setMobileMenuOpen(false)}
-                          className={`flex items-center justify-between px-3 py-2 text-sm ${active ? 'text-gray-900 font-semibold' : 'text-gray-700 hover:bg-gray-50'}`}
-                        >
-                          <span>{item.label}</span>
-                          {active && <span className="text-[10px] px-1.5 py-0.5 rounded bg-gray-900 text-white">Active</span>}
-                        </Link>
-                      );
-                    })}
-                  </nav>
-                  <div className="border-t border-gray-200" />
-                  <div className="p-2 flex flex-col gap-2">
-                    {clinicId && (
-                      <button
-                        onClick={() => { setShowJoinQr(true); setMobileMenuOpen(false); }}
-                        className="h-10 w-full inline-flex items-center justify-center gap-2 rounded-md border border-gray-300 bg-white text-gray-700 hover:bg-gray-50 active:bg-gray-100 shadow-sm"
-                      >
-                        <svg className="w-4 h-4 text-gray-600" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                          <path d="M3 3h7v7H3zM14 3h7v7h-7zM3 14h7v7H3zM17 17h.01M14 14h7v7h-7z" />
-                        </svg>
-                        Show QR
-                      </button>
-                    )}
-                    <button
-                      onClick={() => { setMobileMenuOpen(false); signOut(auth); }}
-                      className="h-10 w-full inline-flex items-center justify-center gap-2 rounded-md border border-gray-300 bg-white text-gray-700 hover:bg-gray-50 active:bg-gray-100 shadow-sm"
-                    >
-                      Sign out
-                    </button>
-                  </div>
-                </div>
-              </div>
-            </div>
-          )}
         </header>
         <main className="flex-1 max-w-7xl w-full mx-auto px-4 py-4">
           {children}

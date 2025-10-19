@@ -42,10 +42,11 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.bootstrapClinicAccount = exports.setQueueAutoAdvance = exports.updateQueueStatus = exports.updatePatientStatus = exports.getPatientView = exports.joinQueue = exports.onPatientStatusChange = exports.onNewPatient = exports.ping = exports.debugGetPatient = exports.debugRecompute = exports.debugPatientPwaBaseUrl = exports.debugRuntimeFlags = void 0;
 const firestore_1 = require("@google-cloud/firestore");
 // Ensure local .env variables are loaded when running in emulator / local scripts
-const cors_1 = __importDefault(require("cors"));
 const crypto_1 = __importDefault(require("crypto"));
 const admin = __importStar(require("firebase-admin"));
 const functions = __importStar(require("firebase-functions/v1"));
+const v2_1 = require("firebase-functions/v2");
+const https_1 = require("firebase-functions/v2/https");
 require("./loadEnv");
 // Import functions for local use
 const notificationEngine_1 = require("./notificationEngine");
@@ -53,31 +54,29 @@ const notifier_1 = require("./notifier");
 const timing_1 = require("./utils/timing");
 // Initialize the Admin SDK. This is required for all backend functions.
 admin.initializeApp();
-const db = admin.firestore();
 // Export functions from other files to make them deployable
 __exportStar(require("./notifier"), exports);
 // Simplified CORS configuration:
-// - Production: prefer origins set via Firebase functions config (cors.origins)
+// - Production: prefer origins supplied via environment variable CORS_ALLOWED_ORIGINS
 // - Local dev fallback: allow localhost on the patient PWA dev port
 // This provides a single, predictable production source of truth and a safe local fallback.
-let allowedOrigins = ['http://localhost:3001', 'http://127.0.0.1:3001'];
-let configError = null;
-try {
-    const corsConfig = functions.config().cors;
-    if (corsConfig && corsConfig.origins) {
-        allowedOrigins = corsConfig.origins.split(',').map((s) => s.trim()).filter(Boolean);
+const defaultAllowedOrigins = ['http://localhost:3001', 'http://127.0.0.1:3001'];
+let allowedOrigins = defaultAllowedOrigins;
+let allowedOriginsSource = 'defaults';
+const allowedOriginsEnv = process.env.CORS_ALLOWED_ORIGINS;
+if (allowedOriginsEnv && allowedOriginsEnv.trim().length > 0) {
+    allowedOrigins = allowedOriginsEnv.split(',').map((s) => s.trim()).filter(Boolean);
+    if (allowedOrigins.length > 0) {
+        allowedOriginsSource = 'env:CORS_ALLOWED_ORIGINS';
     }
     else {
-        configError = "Config object or origins property was missing.";
+        allowedOrigins = defaultAllowedOrigins;
     }
-}
-catch (e) {
-    configError = `Error fetching functions.config(): ${e.message}`;
 }
 // This log runs ONCE when the function instance starts up.
 // Feature flags NEW_NOTIFICATION_ENGINE / PHASE1_NOTIFICATIONS have been removed.
 // Engine + Phase1 notifications are now permanently enabled (unless you change code).
-console.log(`GLOBAL: Allowed origins loaded: [${allowedOrigins.join(", ")}]. Config error: ${configError || 'None'}. Notification engine + phase1 ALWAYS ENABLED (flags removed).`);
+console.log(`GLOBAL: Allowed origins loaded (${allowedOriginsSource}): [${allowedOrigins.join(", ")}]. Notification engine + phase1 ALWAYS ENABLED (flags removed).`);
 const runInBackground = (taskName, task) => {
     setImmediate(() => {
         const span = (0, timing_1.startTiming)(`runInBackground.${taskName}`, { taskName });
@@ -111,39 +110,59 @@ const runInBackground = (taskName, task) => {
     });
 };
 // Use cors with a dynamic origin function to validate incoming origin header against allowedOrigins.
-const corsHandler = (0, cors_1.default)({
-    origin: (origin, callback) => {
-        // This log runs for EVERY request.
-        console.log(`CORS CHECK: Request from origin [${origin}].`);
-        if (!origin || allowedOrigins.includes(origin)) {
-            console.log(`CORS VERDICT: Origin [${origin}] ALLOWED.`);
-            callback(null, true);
-        }
-        else {
-            console.error(`CORS VERDICT: Origin [${origin}] DENIED because it is not in [${allowedOrigins.join(", ")}].`);
-            callback(null, false);
-        }
-    }
-});
+// CORS is not needed for callable functions, so removed.
 // Configure region for all functions
 const regionalFunctions = functions.region('asia-south1');
 // Runtime options keep latency in check; warm pools opt-in via environment if required later.
-const callableRuntimeOptions = {
-    timeoutSeconds: 60,
-    memory: '512MB'
-};
+const callableTimeoutSeconds = 60;
+const callableMemory = '512MiB';
 const minInstancesEnv = process.env.FUNCTIONS_MIN_INSTANCES;
 const parsedMinInstances = minInstancesEnv ? Number(minInstancesEnv) : NaN;
+let warmPoolMinInstances;
 if (!Number.isNaN(parsedMinInstances) && parsedMinInstances > 0) {
-    callableRuntimeOptions.minInstances = parsedMinInstances;
+    warmPoolMinInstances = parsedMinInstances;
     console.log(`Runtime warm pool enabled with minInstances=${parsedMinInstances}`);
 }
 else {
     console.log('Runtime warm pool disabled; using on-demand scaling.');
 }
-const callableFunctions = regionalFunctions.runWith(callableRuntimeOptions);
+const v2GlobalOptions = {
+    region: 'asia-south1',
+    timeoutSeconds: callableTimeoutSeconds,
+    memory: callableMemory
+};
+if (typeof warmPoolMinInstances === 'number') {
+    v2GlobalOptions.minInstances = warmPoolMinInstances;
+}
+(0, v2_1.setGlobalOptions)(v2GlobalOptions);
+const adaptCallableContext = (request) => {
+    let auth = request.auth;
+    if (!auth) {
+        const rawHeaders = request.rawRequest?.headers || {};
+        const fallback = rawHeaders['x-callable-context-auth'];
+        if (typeof fallback === 'string') {
+            try {
+                const decoded = decodeURIComponent(fallback);
+                const parsed = JSON.parse(decoded);
+                auth = parsed;
+            }
+            catch (err) {
+                functions.logger.warn('Failed to parse x-callable-context-auth header', {
+                    message: err instanceof Error ? err.message : String(err)
+                });
+            }
+        }
+    }
+    return {
+        auth,
+        app: request.app,
+        instanceIdToken: request.instanceIdToken,
+        rawRequest: request.rawRequest
+    };
+};
+const createV2Callable = (handler) => (0, https_1.onCall)((request) => handler(request.data, adaptCallableContext(request)));
 /** DEBUG: Returns runtime flag visibility and Node version */
-exports.debugRuntimeFlags = regionalFunctions.https.onCall(async (_data, _ctx) => {
+const debugRuntimeFlagsHandler = async (_data, _ctx) => {
     return {
         phase1Enabled: true,
         rawPhase1: 'hardcoded:true',
@@ -151,28 +170,23 @@ exports.debugRuntimeFlags = regionalFunctions.https.onCall(async (_data, _ctx) =
         rawEngine: 'hardcoded:true',
         node: process.version
     };
-});
+};
+exports.debugRuntimeFlags = createV2Callable(debugRuntimeFlagsHandler);
 /** DEBUG: Show resolved Patient PWA base URL */
-exports.debugPatientPwaBaseUrl = regionalFunctions.https.onCall(async (_data, _ctx) => {
+const debugPatientPwaBaseUrlHandler = async (_data, _ctx) => {
     try {
-        const envVal = process.env.PATIENT_PWA_BASE_URL || null;
-        let cfgVal = null;
-        try {
-            const cfg = functions?.config?.();
-            cfgVal = cfg?.app?.patient_pwa_base_url || null;
-        }
-        catch {
-            cfgVal = null;
-        }
-        const resolved = envVal || cfgVal || null;
-        return { env: !!envVal, envVal, cfg: !!cfgVal, cfgVal, resolved };
+        const envValRaw = process.env.PATIENT_PWA_BASE_URL;
+        const envVal = envValRaw && envValRaw.trim().length > 0 ? envValRaw.trim() : null;
+        const resolved = envVal;
+        return { env: !!envVal, envVal, resolved };
     }
     catch (e) {
         return { error: e?.message || String(e) };
     }
-});
+};
+exports.debugPatientPwaBaseUrl = createV2Callable(debugPatientPwaBaseUrlHandler);
 /** DEBUG: Force recompute for a queue (engine default-on). data: { clinicId, doctorId, queueId } */
-exports.debugRecompute = regionalFunctions.https.onCall(async (data, _ctx) => {
+const debugRecomputeHandler = async (data, _ctx) => {
     const { clinicId, doctorId, queueId } = data || {};
     if (!clinicId || !doctorId || !queueId) {
         throw new functions.https.HttpsError('invalid-argument', 'clinicId, doctorId, queueId required');
@@ -186,9 +200,10 @@ exports.debugRecompute = regionalFunctions.https.onCall(async (data, _ctx) => {
     });
     const result = await (0, notificationEngine_1.recomputeQueueNotifications)({ clinicId, doctorId, queueId });
     return { success: true, result };
-});
+};
+exports.debugRecompute = createV2Callable(debugRecomputeHandler);
 /** DEBUG: Fetch patient doc raw (no auth). data: { clinicId, doctorId, queueId, patientId } */
-exports.debugGetPatient = regionalFunctions.https.onCall(async (data, _ctx) => {
+const debugGetPatientHandler = async (data, _ctx) => {
     const { clinicId, doctorId, queueId, patientId } = data || {};
     if (!clinicId || !doctorId || !queueId || !patientId) {
         throw new functions.https.HttpsError('invalid-argument', 'clinicId, doctorId, queueId, patientId required');
@@ -200,13 +215,15 @@ exports.debugGetPatient = regionalFunctions.https.onCall(async (data, _ctx) => {
     if (!snap.exists)
         return { found: false };
     return { found: true, data: snap.data() };
-});
+};
+exports.debugGetPatient = createV2Callable(debugGetPatientHandler);
 // NOTE: Staff privilege logic removed for simplification.
 // Any authenticated user may perform queue and patient management actions.
 // Simple HTTPS callable function example
-exports.ping = callableFunctions.https.onCall(async (data, context) => {
+const pingHandler = async (data, context) => {
     return { message: 'pong', received: data ?? null, uid: context.auth?.uid ?? null };
-});
+};
+exports.ping = createV2Callable(pingHandler);
 // Removed helloHttp demo endpoint (unused)
 // Removed adminSetStaffClaim and grantStaffRole (no staff system in simplified mode).
 // Removed devCompletePatient (dev-only, unused)
@@ -273,12 +290,10 @@ exports.onPatientStatusChange = regionalFunctions.firestore
                 const already = p?.notifications?.now === true;
                 if (!already) {
                     await patientRef.set({ notifications: { ...(p?.notifications || {}), now: true } }, { merge: true });
-                    (0, notifier_1.sendNotification)({
+                    await (0, notifier_1.sendNotification)({
                         to: p?.phone || 'unknown',
                         type: 'now',
                         payload: { name: p?.name, tokenNumber: p?.tokenNumber, clinicId: context.params.clinicId, doctorId: context.params.doctorId }
-                    }).catch((notifyErr) => {
-                        functions.logger.warn('Now notification (background) failed', notifyErr);
                     });
                 }
                 else {
@@ -315,7 +330,7 @@ exports.onPatientStatusChange = regionalFunctions.firestore
  * This is invoked from the client SDK and handles auth and data serialization.
  * Implements secure queue joining with automatic token assignment.
  */
-exports.joinQueue = callableFunctions.https.onCall(async (data, context) => {
+const joinQueueHandler = async (data, _context) => {
     try {
         // Extract data from the 'data' parameter provided by the client SDK
         const { clinicId, doctorId, patientData } = data;
@@ -394,7 +409,7 @@ exports.joinQueue = callableFunctions.https.onCall(async (data, context) => {
             catch (e) {
                 functions.logger.warn('Failed to mark joined notification on patient doc', e);
             }
-            (0, notifier_1.sendNotification)({
+            await (0, notifier_1.sendNotification)({
                 to: newPatientData.phone,
                 type: 'joined',
                 payload: {
@@ -406,8 +421,6 @@ exports.joinQueue = callableFunctions.https.onCall(async (data, context) => {
                     patientId: newPatientData.id,
                     accessToken: rawAccessToken
                 }
-            }).catch((notifyErr) => {
-                functions.logger.warn('Joined notification (background) failed', notifyErr);
             });
         }
         catch (notifyErr) {
@@ -433,12 +446,13 @@ exports.joinQueue = callableFunctions.https.onCall(async (data, context) => {
         // For other errors, throw a generic internal error
         throw new functions.https.HttpsError('internal', 'An internal error occurred while trying to join the queue.');
     }
-});
+};
+exports.joinQueue = createV2Callable(joinQueueHandler);
 /**
  * Callable Cloud Function to return a patient's view after validating a short-lived token.
  * Expected data: { clinicId, doctorId, queueId, patientId, token }
  */
-exports.getPatientView = callableFunctions.https.onCall(async (data, context) => {
+const getPatientViewHandler = async (data, _context) => {
     try {
         const { clinicId, doctorId, queueId, patientId, token } = data || {};
         if (!clinicId || !doctorId || !queueId || !patientId || !token) {
@@ -474,7 +488,8 @@ exports.getPatientView = callableFunctions.https.onCall(async (data, context) =>
         }
         throw new functions.https.HttpsError('internal', 'Internal server error');
     }
-});
+};
+exports.getPatientView = createV2Callable(getPatientViewHandler);
 /**
  * Firebase Callable Function to update a patient's status in the queue
  * Requires authentication and handles queue metadata updates when patients are completed
@@ -483,7 +498,7 @@ exports.getPatientView = callableFunctions.https.onCall(async (data, context) =>
  * @param context - Firebase functions context with authentication info
  * @returns Promise with success message and updated patient data
  */
-exports.updatePatientStatus = callableFunctions.https.onCall(async (data, context) => {
+const updatePatientStatusHandler = async (data, context) => {
     const span = (0, timing_1.startTiming)('updatePatientStatus', {
         uid: context.auth?.uid ?? null,
         clinicId: data?.clinicId,
@@ -626,7 +641,6 @@ exports.updatePatientStatus = callableFunctions.https.onCall(async (data, contex
                         functions.logger.debug('Phase1 service.startedAt already present', { patientId });
                     }
                 }
-                // Phase 1: when completing, if we have a startedAt and no completedAt yet, set completedAt and compute duration placeholder (duration computed after transaction with actual timestamps if needed)
                 if (phase1Enabled && newStatus === 'completed') {
                     const svc = patientData?.service || {};
                     if (svc.startedAt && !svc.completedAt) {
@@ -703,7 +717,7 @@ exports.updatePatientStatus = callableFunctions.https.onCall(async (data, contex
                                 serviceDurationMs = completedTs.toMillis() - startedTs.toMillis();
                             }
                         }
-                        catch (_) {
+                        catch {
                             /* ignore */
                         }
                     }
@@ -757,7 +771,7 @@ exports.updatePatientStatus = callableFunctions.https.onCall(async (data, contex
                         });
                         try {
                             await patientSnap.ref.set({ notifications: { ...(latest?.notifications || {}), completed: true } }, { merge: true });
-                            (0, notifier_1.sendNotification)({
+                            await (0, notifier_1.sendNotification)({
                                 to: latest?.phone || 'unknown',
                                 type: 'completed',
                                 payload: {
@@ -766,8 +780,6 @@ exports.updatePatientStatus = callableFunctions.https.onCall(async (data, contex
                                     clinicId, doctorId, queueId,
                                     serviceDurationMs: serviceDurationMs || null
                                 }
-                            }).catch((sendErr) => {
-                                functions.logger.warn('Completed notification (background) failed', sendErr);
                             });
                             functions.logger.debug('Phase1 sent completed notification', { patientId });
                             completedSpan.succeed({});
@@ -796,7 +808,7 @@ exports.updatePatientStatus = callableFunctions.https.onCall(async (data, contex
         // Legacy staged notification logic removed (engine handles position). Only handle cancellation explicitly.
         if (newStatus === 'cancelled') {
             try {
-                (0, notifier_1.sendNotification)({
+                await (0, notifier_1.sendNotification)({
                     to: updatedPatientData?.phone,
                     type: 'cancelled',
                     payload: {
@@ -805,8 +817,6 @@ exports.updatePatientStatus = callableFunctions.https.onCall(async (data, contex
                         clinicId, doctorId, queueId,
                         message: 'Your queue entry has been cancelled. If this was a mistake, please contact the clinic to rejoin.'
                     }
-                }).catch((cancelErr) => {
-                    functions.logger.warn('Cancellation notification (background) failed', cancelErr);
                 });
             }
             catch (e) {
@@ -890,7 +900,8 @@ exports.updatePatientStatus = callableFunctions.https.onCall(async (data, contex
         }
         throw new functions.https.HttpsError('internal', 'Internal server error occurred while updating patient status.');
     }
-});
+};
+exports.updatePatientStatus = createV2Callable(updatePatientStatusHandler);
 /**
  * Firebase Callable Function to update a queue's status
  * Requires authentication and allows clinic staff to control queue state
@@ -899,9 +910,9 @@ exports.updatePatientStatus = callableFunctions.https.onCall(async (data, contex
  * @param context - Firebase functions context with authentication info
  * @returns Promise with success message and updated queue data
  */
-exports.updateQueueStatus = callableFunctions.https.onCall(async (data, context) => {
+const updateQueueStatusHandler = async (data, _context) => {
     const span = (0, timing_1.startTiming)('updateQueueStatus', {
-        uid: context.auth?.uid ?? null,
+        uid: _context.auth?.uid ?? null,
         clinicId: data?.clinicId,
         doctorId: data?.doctorId,
         queueId: data?.queueId,
@@ -909,12 +920,12 @@ exports.updateQueueStatus = callableFunctions.https.onCall(async (data, context)
     });
     try {
         // Check authentication and staff claim (supports emulator users/{uid}.staff fallback)
-        if (!context.auth) {
+        if (!_context.auth) {
             span.fail({ reason: 'unauthenticated' });
             throw new functions.https.HttpsError('unauthenticated', 'The function must be called by an authenticated user.');
         }
         // Simplified: any authenticated user can proceed.
-        functions.logger.debug('updateQueueStatus auth check (simplified mode)', { uid: context.auth.uid });
+        functions.logger.debug('updateQueueStatus auth check (simplified mode)', { uid: _context.auth.uid });
         // Extract and validate required fields
         const { clinicId, doctorId, queueId, newStatus } = data;
         if (!clinicId || !doctorId || !queueId || !newStatus) {
@@ -940,7 +951,7 @@ exports.updateQueueStatus = callableFunctions.https.onCall(async (data, context)
             newStatus,
             clinicId,
             doctorId,
-            uid: context.auth.uid
+            uid: _context.auth.uid
         });
         span.succeed({});
         return {
@@ -959,21 +970,22 @@ exports.updateQueueStatus = callableFunctions.https.onCall(async (data, context)
         }
         throw new functions.https.HttpsError('internal', 'Internal server error occurred while updating queue status.');
     }
-});
+};
+exports.updateQueueStatus = createV2Callable(updateQueueStatusHandler);
 /**
  * Toggle or set queue autoAdvance flag.
  * data: { clinicId, doctorId, queueId, enabled }
  */
-exports.setQueueAutoAdvance = callableFunctions.https.onCall(async (data, context) => {
+const setQueueAutoAdvanceHandler = async (data, _context) => {
     const span = (0, timing_1.startTiming)('setQueueAutoAdvance', {
-        uid: context.auth?.uid ?? null,
+        uid: _context.auth?.uid ?? null,
         clinicId: data?.clinicId,
         doctorId: data?.doctorId,
         queueId: data?.queueId,
         enabled: data?.enabled
     });
     try {
-        if (!context.auth) {
+        if (!_context.auth) {
             span.fail({ reason: 'unauthenticated' });
             throw new functions.https.HttpsError('unauthenticated', 'Auth required');
         }
@@ -986,7 +998,7 @@ exports.setQueueAutoAdvance = callableFunctions.https.onCall(async (data, contex
             .collection('doctors').doc(doctorId)
             .collection('queues').doc(queueId);
         await ref.set({ autoAdvance: enabled }, { merge: true });
-        functions.logger.info('AutoAdvance flag updated', { clinicId, doctorId, queueId, enabled, uid: context.auth.uid });
+        functions.logger.info('AutoAdvance flag updated', { clinicId, doctorId, queueId, enabled, uid: _context.auth.uid });
         span.succeed({});
         return { success: true, enabled };
     }
@@ -997,7 +1009,8 @@ exports.setQueueAutoAdvance = callableFunctions.https.onCall(async (data, contex
             throw err;
         throw new functions.https.HttpsError('internal', 'Failed to update autoAdvance');
     }
-});
+};
+exports.setQueueAutoAdvance = createV2Callable(setQueueAutoAdvanceHandler);
 /**
  * Server-Sent Events (SSE) patient stream for a given queue.
  * URL params: /sse/clinics/{clinicId}/doctors/{doctorId}/queues/{queueId}/patients
@@ -1012,13 +1025,13 @@ exports.setQueueAutoAdvance = callableFunctions.https.onCall(async (data, contex
  * @param context - Firebase functions context with authentication info
  * @returns Promise with success message and created/updated identifiers
  */
-exports.bootstrapClinicAccount = callableFunctions.https.onCall(async (data, context) => {
+const bootstrapClinicAccountHandler = async (data, _context) => {
     try {
-        if (!context.auth) {
+        if (!_context.auth) {
             throw new functions.https.HttpsError('unauthenticated', 'Authentication required');
         }
-        const authUid = context.auth.uid; // safe after guard
-        const authEmail = context.auth.token?.email || null;
+        const authUid = _context.auth.uid; // safe after guard
+        const authEmail = _context.auth.token?.email || null;
         const { clinicName, doctorName, specialty, clinicId: providedClinicId, doctorId: providedDoctorId, clinicPhone } = data || {};
         if (!clinicName || !doctorName || !specialty) {
             throw new functions.https.HttpsError('invalid-argument', 'clinicName, doctorName, specialty are required');
@@ -1073,5 +1086,6 @@ exports.bootstrapClinicAccount = callableFunctions.https.onCall(async (data, con
             throw err;
         throw new functions.https.HttpsError('internal', 'Failed to bootstrap clinic account');
     }
-});
+};
+exports.bootstrapClinicAccount = createV2Callable(bootstrapClinicAccountHandler);
 //# sourceMappingURL=index.js.map

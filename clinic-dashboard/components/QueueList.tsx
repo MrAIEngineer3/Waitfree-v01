@@ -5,8 +5,8 @@ import { httpsCallable } from 'firebase/functions';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { db, functions } from '../lib/firebase';
 import { markPhase, queueProfilingEnabled, recordRender, recordSnapshot } from '../lib/profiling';
-import ConfirmModal from './ConfirmModal';
-import Button from './ui/Button';
+import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "./ui/alert-dialog";
+import { Button } from './ui/Button';
 
 interface Patient {
   id: string;
@@ -44,10 +44,10 @@ export default function QueueList({ clinicId: clinicIdProp, doctorId: doctorIdPr
   }, [renderLabel, renderStart]);
   const [patients, setPatients] = useState<Patient[]>([]);
   const [loadingPatients, setLoadingPatients] = useState<boolean>(true);
+  const [error, setError] = useState<string | null>(null);
+  const [message, setMessage] = useState<string | null>(null);
   const [isNextPatientLoading, setIsNextPatientLoading] = useState(false);
   const [isPauseQueueLoading, setIsPauseQueueLoading] = useState(false);
-  const [message, setMessage] = useState<string | null>(null);
-  const [error, setError] = useState<string | null>(null);
   const [autoAdvance, setAutoAdvance] = useState<boolean>(autoAdvanceProp);
   const [isAutoAdvUpdating, setIsAutoAdvUpdating] = useState<boolean>(false);
   const [showEndModal, setShowEndModal] = useState(false);
@@ -537,138 +537,154 @@ export default function QueueList({ clinicId: clinicIdProp, doctorId: doctorIdPr
           Queue is ended. New patients joining are recorded as waiting but cannot be called until you restart.
         </div>
       )}
-      <ConfirmModal
-        open={showEndModal && !endedFlag}
-        title="End Today's Queue?"
-        confirmLabel="Confirm End"
-        confirmTone="red"
-        onCancel={()=>{ setShowEndModal(false); setEndConfirmText(''); }}
-        onConfirm={()=>{
-          if(endConfirmText !== 'END') return;
-          if (!clinicId || !doctorId) {
-            console.error('End queue failed: missing clinic/doctor');
-            setError('Failed to end queue.');
-            setShowEndModal(false);
-            setEndConfirmText('');
-            return;
-          }
-          setMessage(null);
-          setError(null);
-          const queueDocRef = doc(db, 'clinics', clinicId!, 'doctors', doctorId!, 'queues', queueId);
-          updateDoc(queueDocRef, { status: 'ended', updatedAt: serverTimestamp() })
-            .then(()=>{ setMessage('Queue ended. You can restart it below if needed.'); setError(null); })
-            .catch(e=>{ console.error('End queue failed', e); setError('Failed to end queue.'); })
-            .finally(()=>{ setShowEndModal(false); setEndConfirmText(''); });
-        }}
-        disableConfirm={endConfirmText !== 'END'}
-        panelClassName="w-full max-w-md rounded-lg bg-white shadow-lg border border-gray-200 p-6 space-y-5"
-      >
-        <p>You are about to end today&apos;s queue. This will:</p>
-        <ul className="list-disc list-inside mt-1 space-y-1">
-          <li>Prevent calling or advancing any more patients.</li>
-          <li>Allow new patients to still join (they remain Waiting).</li>
-          <li>Require a manual restart to resume operations.</li>
-        </ul>
-        <p className="font-medium text-gray-700">Currently waiting: <span className="text-blue-700">{waitingCount}</span></p>
-        <div className="space-y-2 pt-2">
-          <label className="block text-xs font-semibold uppercase tracking-wide text-gray-600">Type END to confirm</label>
-          <input
-            autoFocus
-            value={endConfirmText}
-            onChange={e=>setEndConfirmText(e.target.value)}
-            placeholder="END"
-            className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-red-500"
-          />
-        </div>
-      </ConfirmModal>
+      <AlertDialog open={showEndModal && !endedFlag} onOpenChange={(open) => { if (!open) { setShowEndModal(false); setEndConfirmText(''); } else { setShowEndModal(true); } }}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>End Today&apos;s Queue?</AlertDialogTitle>
+          </AlertDialogHeader>
 
-      <ConfirmModal
-        open={showCancelModal}
-        title="Cancel Patient?"
-        confirmLabel="Yes, Cancel"
-        confirmTone="red"
-        onCancel={()=>{ if (isCancellingPatient) return; setShowCancelModal(false); setCancelPatientId(null); }}
-        onConfirm={confirmCancelPatient}
-        busy={isCancellingPatient}
-      >
-        <p>This will permanently mark the patient as cancelled. This cannot be undone.</p>
-        {(cancelPatientName || cancelPatientId) && (
-          <p className="text-xs text-gray-500">Patient: <span className="font-mono">{cancelPatientName || cancelPatientId}</span></p>
-        )}
-      </ConfirmModal>
+          <p>You are about to end today&apos;s queue. This will:</p>
+          <ul className="list-disc list-inside mt-1 space-y-1">
+            <li>Prevent calling or advancing any more patients.</li>
+            <li>Allow new patients to still join (they remain Waiting).</li>
+            <li>Require a manual restart to resume operations.</li>
+          </ul>
+          <p className="font-medium text-gray-700">Currently waiting: <span className="text-blue-700">{waitingCount}</span></p>
+          <div className="space-y-2 pt-2">
+            <label className="block text-xs font-semibold uppercase tracking-wide text-gray-600">Type END to confirm</label>
+            <input
+              autoFocus
+              value={endConfirmText}
+              onChange={e=>setEndConfirmText(e.target.value)}
+              placeholder="END"
+              className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-red-500"
+            />
+          </div>
+          <AlertDialogFooter>
+            <AlertDialogCancel onClick={() => { setShowEndModal(false); setEndConfirmText(''); }}>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={() => {
+                if(endConfirmText !== 'END') return;
+                if (!clinicId || !doctorId) {
+                  console.error('End queue failed: missing clinic/doctor');
+                  setError('Failed to end queue.');
+                  setShowEndModal(false);
+                  setEndConfirmText('');
+                  return;
+                }
+                setMessage(null);
+                setError(null);
+                const queueDocRef = doc(db, 'clinics', clinicId!, 'doctors', doctorId!, 'queues', queueId);
+                updateDoc(queueDocRef, { status: 'ended', updatedAt: serverTimestamp() })
+                  .then(()=>{ setMessage('Queue ended. You can restart it below if needed.'); setError(null); })
+                  .catch(e=>{ console.error('End queue failed', e); setError('Failed to end queue.'); })
+                  .finally(()=>{ setShowEndModal(false); setEndConfirmText(''); });
+              }}
+              disabled={endConfirmText !== 'END'}
+            >
+              Confirm End
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
 
-      <ConfirmModal
-        open={showUncallModal}
-        title="Uncall Patient?"
-        confirmLabel="Yes, Uncall"
-        confirmTone="orange"
-        onCancel={()=>{ if (isUncallingPatient) return; setShowUncallModal(false); setUncallPatientId(null); }}
-        onConfirm={confirmUncallPatient}
-        busy={isUncallingPatient}
-      >
-        <p>Moves the patient back to Waiting and frees the active slot. Auto-advance is unaffected.</p>
-        {(uncallPatientName || uncallPatientId) && (
-          <p className="text-xs text-gray-500">Patient: <span className="font-mono">{uncallPatientName || uncallPatientId}</span></p>
-        )}
-      </ConfirmModal>
+      <AlertDialog open={showCancelModal} onOpenChange={(open) => { if (!open) { setShowCancelModal(false); setCancelPatientId(null); } else { setShowCancelModal(true); } }}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Cancel Patient?</AlertDialogTitle>
+            <AlertDialogDescription>
+              This will permanently mark the patient as cancelled. This cannot be undone.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          {(cancelPatientName || cancelPatientId) && (
+            <p className="text-xs text-gray-500">Patient: <span className="font-mono">{cancelPatientName || cancelPatientId}</span></p>
+          )}
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction onClick={confirmCancelPatient}>Yes, Cancel</AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
 
-      <ConfirmModal
-        open={showCompleteModal}
-        title="Complete Patient?"
-        confirmLabel="Yes, Complete"
-        confirmTone="green"
-        onCancel={()=>{ if (isCompletingPatient) return; setShowCompleteModal(false); setCompletePatientId(null); setCompletePatientName(null); }}
-        onConfirm={confirmCompletePatient}
-        busy={isCompletingPatient}
-      >
-        <p>Marks this patient as completed. This increments metrics and (if auto-advance) may call the next patient automatically.</p>
-        {(completePatientName || completePatientId) && (
-          <p className="text-xs text-gray-500">Patient: <span className="font-mono">{completePatientName || completePatientId}</span></p>
-        )}
-      </ConfirmModal>
+      <AlertDialog open={showUncallModal} onOpenChange={(open) => { if (!open) { setShowUncallModal(false); setUncallPatientId(null); } else { setShowUncallModal(true); } }}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Uncall Patient?</AlertDialogTitle>
+            <AlertDialogDescription>
+              Moves the patient back to Waiting and frees the active slot. Auto-advance is unaffected.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          {(uncallPatientName || uncallPatientId) && (
+            <p className="text-xs text-gray-500">Patient: <span className="font-mono">{uncallPatientName || uncallPatientId}</span></p>
+          )}
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction onClick={confirmUncallPatient}>Yes, Uncall</AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
 
-      <ConfirmModal
-        open={showAdvanceModal}
-        title="Advance Queue?"
-        confirmLabel="Advance"
-        confirmTone="blue"
-        allowSkipToday
-        defaultSkipToday={false}
-        onCancel={()=>{ if (isNextPatientLoading) return; setShowAdvanceModal(false); }}
-        onConfirm={async (skip)=>{ await handleNextPatient(); if (skip) { try { localStorage.setItem(`wf_skip_adv_${new Date().toISOString().split('T')[0]}`, '1'); setSkipAdvanceToday(true);} catch(e){ console.warn('Persist skip adv failed', e);} } setShowAdvanceModal(false); }}
-        busy={isNextPatientLoading}
-      >
-        {(() => {
-          const current = patients.find(p=>p.status==='in-progress');
-          const next = patients.find(p=>p.status==='waiting');
-          return (
-            <div className="space-y-2 text-xs">
-              <p>This will:</p>
-              <ul className="list-disc list-inside space-y-1">
-                <li>{current ? 'Complete current in-progress patient' : 'No in-progress patient to complete'}</li>
-                <li>{next ? 'Call next waiting patient' : 'No waiting patient to call'}</li>
-              </ul>
-              <div className="pt-1 space-y-1">
-                <p className="text-gray-500">Current: {current ? <span className="font-mono">{current.name} (#{current.tokenNumber})</span> : '—'}</p>
-                <p className="text-gray-500">Next: {next ? <span className="font-mono">{next.name} (#{next.tokenNumber})</span> : '—'}</p>
+      <AlertDialog open={showCompleteModal} onOpenChange={(open) => { if (!open) { setShowCompleteModal(false); setCompletePatientId(null); setCompletePatientName(null); } else { setShowCompleteModal(true); } }}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Complete Patient?</AlertDialogTitle>
+            <AlertDialogDescription>
+              Marks this patient as completed. This increments metrics and (if auto-advance) may call the next patient automatically.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          {(completePatientName || completePatientId) && (
+            <p className="text-xs text-gray-500">Patient: <span className="font-mono">{completePatientName || completePatientId}</span></p>
+          )}
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction onClick={confirmCompletePatient}>Yes, Complete</AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      <AlertDialog open={showAdvanceModal} onOpenChange={(open) => { if (!open) { setShowAdvanceModal(false); } else { setShowAdvanceModal(true); } }}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Advance Queue?</AlertDialogTitle>
+          </AlertDialogHeader>
+          {(() => {
+            const current = patients.find(p=>p.status==='in-progress');
+            const next = patients.find(p=>p.status==='waiting');
+            return (
+              <div className="space-y-2 text-xs">
+                <p>This will:</p>
+                <ul className="list-disc list-inside space-y-1">
+                  <li>{current ? 'Complete current in-progress patient' : 'No in-progress patient to complete'}</li>
+                  <li>{next ? 'Call next waiting patient' : 'No waiting patient to call'}</li>
+                </ul>
+                <div className="pt-1 space-y-1">
+                  <p className="text-gray-500">Current: {current ? <span className="font-mono">{current.name} (#{current.tokenNumber})</span> : '—'}</p>
+                  <p className="text-gray-500">Next: {next ? <span className="font-mono">{next.name} (#{next.tokenNumber})</span> : '—'}</p>
+                </div>
               </div>
-            </div>
-          );
-        })()}
-      </ConfirmModal>
+            );
+          })()}
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction onClick={async ()=>{ await handleNextPatient(); setShowAdvanceModal(false); }}>Advance</AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
 
-      <ConfirmModal
-        open={showPauseModal}
-        title="Pause Queue?"
-        confirmLabel="Yes, Pause"
-        confirmTone="yellow"
-        allowSkipToday
-        onCancel={()=>{ if (isPauseQueueLoading) return; setShowPauseModal(false); }}
-        onConfirm={async (skip)=>{ await handleTogglePauseQueue(); if (skip) { try { localStorage.setItem(`wf_skip_pause_${new Date().toISOString().split('T')[0]}`, '1'); setSkipPauseToday(true);} catch(e){ console.warn('Persist skip pause failed', e);} } setShowPauseModal(false); }}
-        busy={isPauseQueueLoading}
-      >
-        <p>Pausing prevents calling or advancing patients until you resume. Current in-progress patient (if any) is unaffected.</p>
-      </ConfirmModal>
+      <AlertDialog open={showPauseModal} onOpenChange={(open) => { if (!open) { setShowPauseModal(false); } else { setShowPauseModal(true); } }}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Pause Queue?</AlertDialogTitle>
+            <AlertDialogDescription>
+              Pausing prevents calling or advancing patients until you resume. Current in-progress patient (if any) is unaffected.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction onClick={async ()=>{ await handleTogglePauseQueue(); setShowPauseModal(false); }}>Yes, Pause</AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
 
       {activeActionMessage && (
         <div className="mb-3 flex items-center gap-2 text-sm text-slate-600" role="status">
@@ -785,7 +801,7 @@ export default function QueueList({ clinicId: clinicIdProp, doctorId: doctorIdPr
                         {canCall && <Button onClick={() => handleCallPatient(patient.id)} variant="accent" size="sm" className="px-3 py-1.5 h-auto">Call</Button>}
                         {canComplete && <Button onClick={() => requestCompletePatient(patient.id)} variant="secondary" size="sm" className="px-3 py-1.5 h-auto">Done</Button>}
                         {canUncall && <Button onClick={() => requestUncallPatient(patient.id)} variant="outline" size="sm" className="px-3 py-1.5 h-auto">Uncall</Button>}
-                        {canCancel && <Button onClick={() => requestCancelPatient(patient.id)} variant="danger" size="sm" className="px-3 py-1.5 h-auto">Cancel</Button>}
+                        {canCancel && <Button onClick={() => requestCancelPatient(patient.id)} variant="destructive" size="sm" className="px-3 py-1.5 h-auto">Cancel</Button>}
                       </div>
                     </div>
                   );

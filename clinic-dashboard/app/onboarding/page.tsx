@@ -2,8 +2,9 @@
 import { doc, getDoc, setDoc } from 'firebase/firestore';
 import { useRouter } from 'next/navigation';
 import React, { useEffect, useState } from 'react';
-import Button from '../../components/ui/Button';
-import Card from '../../components/ui/Card';
+import { Input } from '../../components/ui/Input';
+import { Button } from '../../components/ui/Button';
+import { Card } from '../../components/ui/Card';
 import { auth, db } from '../../lib/firebase';
 
 interface Mapping { clinicId?: string; doctorId?: string; }
@@ -74,19 +75,19 @@ export default function OnboardingPage() {
           <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
             <div className="space-y-1.5 md:col-span-2">
               <label className="block text-xs font-semibold text-gray-600 uppercase tracking-wide">Clinic Name</label>
-              <input value={clinicName} onChange={e=>setClinicName(e.target.value)} className="w-full rounded-md border border-sem-border px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-500" placeholder="e.g. Sunrise Health Center" />
+              <Input value={clinicName} onChange={e=>setClinicName(e.target.value)} placeholder="e.g. Sunrise Health Center" />
             </div>
             <div className="space-y-1.5 md:col-span-2">
               <label className="block text-xs font-semibold text-gray-600 uppercase tracking-wide">Clinic Phone (optional)</label>
-              <input value={clinicPhone} onChange={e=>setClinicPhone(e.target.value)} className="w-full rounded-md border border-sem-border px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-500" placeholder="Contact number for patients" />
+              <Input value={clinicPhone} onChange={e=>setClinicPhone(e.target.value)} placeholder="Contact number for patients" />
             </div>
             <div className="space-y-1.5">
               <label className="block text-xs font-semibold text-gray-600 uppercase tracking-wide">Doctor Name</label>
-              <input value={doctorName} onChange={e=>setDoctorName(e.target.value)} className="w-full rounded-md border border-sem-border px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-500" placeholder="e.g. Dr. Anita Rao" />
+              <Input value={doctorName} onChange={e=>setDoctorName(e.target.value)} placeholder="e.g. Dr. Anita Rao" />
             </div>
             <div className="space-y-1.5">
               <label className="block text-xs font-semibold text-gray-600 uppercase tracking-wide">Specialty</label>
-              <input value={specialty} onChange={e=>setSpecialty(e.target.value)} className="w-full rounded-md border border-sem-border px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-500" placeholder="e.g. Pediatrics" />
+              <Input value={specialty} onChange={e=>setSpecialty(e.target.value)} placeholder="e.g. Pediatrics" />
             </div>
           </div>
           {error && <div className="text-sm text-sem-danger bg-red-50 border border-red-200 rounded px-3 py-2">{error}</div>}
