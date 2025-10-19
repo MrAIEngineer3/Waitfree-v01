@@ -50,14 +50,14 @@ export async function recomputeQueueNotifications(params: { clinicId: string; do
 
   // Get active patients (waiting + in-progress) ordered by token
   const patientsSnap = await queueRef.collection('patients')
-    .where('status', 'in', ['waiting', 'in-progress']) as FirebaseFirestore.Query<FirebaseFirestore.DocumentData>;
+    .where('status', 'in', ['waiting', 'in-progress']) as admin.firestore.Query<admin.firestore.DocumentData>;
   // Firestore "in" query cannot orderBy unless index supports it; fallback fetch all then sort client-side
   const activeDocs = (await patientsSnap.get()).docs
     .map(d => ({ id: d.id, ...d.data() as any }))
     .sort((a, b) => (a.tokenNumber || 0) - (b.tokenNumber || 0));
 
   // Build list for position calculation
-  const inProgressIds = new Set(activeDocs.filter(p => p.status === 'in-progress').map(p => p.id));
+  // const inProgressIds = new Set(activeDocs.filter(p => p.status === 'in-progress').map(p => p.id));
 
   let notificationsSent = 0;
   for (const patient of activeDocs) {

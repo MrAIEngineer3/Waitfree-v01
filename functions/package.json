@@ -12,7 +12,7 @@
     "build:watch": "npm run clean && tsc --watch",
     "serve": "npm run build && firebase emulators:start --only functions",
     "deploy": "npm run build && firebase deploy --only functions",
-    "lint": "eslint src --ext .ts",
+    "lint": "eslint",
     "phase1:test": "npm run build && node lib/scripts/phase1Test.js",
     "phase2:test": "npm run build && node lib/scripts/phase2Test.js"
   },
@@ -20,16 +20,20 @@
     "@google-cloud/firestore": "^7",
     "@types/cors": "^2.8.19",
     "cors": "^2.8.5",
-    "firebase-admin": "^12",
-    "firebase-functions": "^5",
     "dotenv": "^16.4.5",
+    "firebase-admin": "^12",
+  "firebase-functions": "^6",
     "node-fetch": "^2.7.0",
     "twilio": "^5.10.2"
   },
   "devDependencies": {
+    "@eslint/js": "^9.36.0",
     "@types/node": "^20",
     "@types/node-fetch": "^2.6.13",
+    "@typescript-eslint/eslint-plugin": "^8.46.1",
+    "@typescript-eslint/parser": "^8.46.1",
     "eslint": "^9",
+    "globals": "^14.0.0",
     "rimraf": "^5.0.10",
     "typescript": "^5.9.2"
   }

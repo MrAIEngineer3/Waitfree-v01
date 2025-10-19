@@ -1,4 +1,3 @@
-import { FieldValue } from '@google-cloud/firestore';
 // Load local env for emulator
 import * as admin from 'firebase-admin';
 import * as functions from 'firebase-functions/v1';
@@ -49,16 +48,11 @@ function formatWhatsAppNumber(phone: string): string {
   return cleaned;
 }
 
-// Resolve Patient PWA base URL from env or runtime config
+// Resolve Patient PWA base URL from environment variables
 function getPatientPwaBaseUrl(): string {
-  // Priority: process.env (dotenv/emulator or CI) -> functions config (prod) -> ''
+  // Priority: process.env (dotenv/emulator or CI). If missing, fall back to '' and omit link.
   const envVal = process.env.PATIENT_PWA_BASE_URL;
-  if (envVal) return envVal;
-  try {
-    const cfg: any = (functions as any)?.config?.();
-    const fromCfg = cfg?.app?.patient_pwa_base_url;
-    if (fromCfg && typeof fromCfg === 'string') return fromCfg;
-  } catch {}
+  if (envVal && envVal.trim().length > 0) return envVal.trim();
   return '';
 }
 
@@ -67,7 +61,7 @@ function createWhatsAppMessage(type: NotifyType, payload: any): string {
   const name = payload?.name || 'Patient';
   const token = payload?.tokenNumber || 'N/A';
   const eta = payload?.etaMinutes;
-  const position = payload?.patientsAhead;
+  // const position = payload?.patientsAhead;
   const baseUrl = getPatientPwaBaseUrl();
   const patientLink = (() => {
     try {
@@ -111,25 +105,13 @@ function createWhatsAppMessage(type: NotifyType, payload: any): string {
 
 // Initialize Twilio client (only if credentials are available)
 function getTwilioClient() {
-  // Try environment variables first (for local development)
-  let accountSid = process.env.TWILIO_ACCOUNT_SID;
-  let authToken = process.env.TWILIO_AUTH_TOKEN;
-  
-  // Fallback to Firebase functions config (for production)
+  const accountSid = process.env.TWILIO_ACCOUNT_SID;
+  const authToken = process.env.TWILIO_AUTH_TOKEN;
   if (!accountSid || !authToken) {
-    try {
-      const cfg: any = (functions as any)?.config?.();
-      accountSid = accountSid || cfg?.twilio?.account_sid;
-      authToken = authToken || cfg?.twilio?.auth_token;
-    } catch (e) {
-      functions.logger.warn('Failed to load Twilio config from functions.config()', e);
-    }
-  }
-  
-  if (!accountSid || !authToken) {
+    functions.logger.info('Twilio client not configured (missing credentials)');
     return null; // Return null if credentials not available (for testing)
   }
-  
+
   const factory = resolveTwilioFactory();
   if (!factory) {
     return null;
@@ -161,7 +143,7 @@ export async function sendNotification(opts: NotifyOpts) {
         type: opts.type,
         message: messageContent,
         payload: opts.payload || null,
-        createdAt: FieldValue.serverTimestamp(),
+        createdAt: admin.firestore.Timestamp.now(),
         twilioAttempted: !!getTwilioClient()
       });
     } catch (e) {
@@ -170,18 +152,8 @@ export async function sendNotification(opts: NotifyOpts) {
 
     // Try to send via Twilio WhatsApp if credentials are available
     const client = getTwilioClient();
-    
-    // Get WhatsApp from number from env or functions config
-    let twilioFromNumber = process.env.TWILIO_WHATSAPP_FROM;
-    if (!twilioFromNumber) {
-      try {
-        const cfg: any = (functions as any)?.config?.();
-        twilioFromNumber = cfg?.twilio?.whatsapp_from;
-      } catch (e) {
-        functions.logger.warn('Failed to load Twilio WhatsApp from number from functions.config()', e);
-      }
-    }
-    
+    const twilioFromNumber = process.env.TWILIO_WHATSAPP_FROM;
+
     if (client && twilioFromNumber) {
       try {
         const result = await client.messages.create({
@@ -189,13 +161,13 @@ export async function sendNotification(opts: NotifyOpts) {
           from: twilioFromNumber,
           to: `whatsapp:${formattedPhone}`
         });
-        
-        functions.logger.info('Twilio WhatsApp sent successfully', { 
-          sid: result.sid, 
+
+        functions.logger.info('Twilio WhatsApp sent successfully', {
+          sid: result.sid,
           to: formattedPhone,
-          type: opts.type 
+          type: opts.type
         });
-        
+
         return { ok: true, provider: 'twilio', sid: result.sid };
       } catch (twilioErr: any) {
         functions.logger.error('Twilio WhatsApp failed', {
@@ -204,7 +176,7 @@ export async function sendNotification(opts: NotifyOpts) {
           to: formattedPhone,
           type: opts.type
         });
-        
+
         // Don't throw error - notification was logged to debug collection
         return { ok: false, provider: 'twilio', error: twilioErr.message };
       }
@@ -214,7 +186,7 @@ export async function sendNotification(opts: NotifyOpts) {
         hasFromNumber: !!twilioFromNumber,
         to: formattedPhone
       });
-      
+
       return { ok: true, provider: 'debug-only' };
     }
   } catch (err) {

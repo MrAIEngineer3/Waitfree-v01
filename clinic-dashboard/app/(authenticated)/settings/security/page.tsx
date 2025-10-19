@@ -1,6 +1,6 @@
 "use client";
-import Button from '@/components/ui/Button';
-import Card from '@/components/ui/Card';
+import { Button } from '@/components/ui/Button';
+import { Card } from '@/components/ui/Card';
 import { auth } from '@/lib/firebase';
 import { EmailAuthProvider, reauthenticateWithCredential, updatePassword } from 'firebase/auth';
 import React, { useState } from 'react';
@@ -201,7 +201,7 @@ export default function SecuritySettingsPage() {
 
           {/* Action Buttons */}
           <div className="flex items-center gap-3 pt-4 border-t border-gray-200">
-            <Button type="submit" loading={saving} variant="primary">
+            <Button type="submit" loading={saving} variant="default">
               Update Password
             </Button>
             <Button

@@ -1,58 +1,90 @@
-import * as React from 'react';
+import * as React from "react"
+import { Slot } from "@radix-ui/react-slot"
+import { cva, type VariantProps } from "class-variance-authority"
 
-export interface ButtonProps extends React.ButtonHTMLAttributes<HTMLButtonElement> {
-  variant?: 'primary' | 'secondary' | 'accent' | 'outline' | 'subtle' | 'ghost' | 'danger' | 'soft-danger';
-  size?: 'sm' | 'md' | 'lg';
-  loading?: boolean;
-  leftIcon?: React.ReactNode;
-  rightIcon?: React.ReactNode;
+import { cn } from "@/lib/utils"
+
+const buttonVariants = cva(
+  "inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-md text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:pointer-events-none disabled:opacity-50 [&_svg]:pointer-events-none [&_svg]:size-4 [&_svg]:shrink-0",
+  {
+    variants: {
+      variant: {
+        default:
+          "bg-primary text-primary-foreground shadow hover:bg-primary/90",
+        destructive:
+          "bg-destructive text-destructive-foreground shadow-sm hover:bg-destructive/90",
+        outline:
+          "border border-input bg-background shadow-sm hover:bg-accent hover:text-accent-foreground",
+        secondary:
+          "bg-secondary text-secondary-foreground shadow-sm hover:bg-secondary/80",
+        ghost: "hover:bg-accent hover:text-accent-foreground",
+        link: "text-primary underline-offset-4 hover:underline",
+        accent:
+          "bg-blue-500 text-white shadow hover:bg-blue-500/90",
+        "soft-destructive":
+          "bg-destructive/20 text-destructive-foreground hover:bg-destructive/30",
+      },
+      size: {
+        default: "h-9 px-4 py-2",
+        sm: "h-8 rounded-md px-3 text-xs",
+        lg: "h-10 rounded-md px-8",
+        icon: "h-9 w-9",
+      },
+    },
+    defaultVariants: {
+      variant: "default",
+      size: "default",
+    },
+  }
+)
+
+export interface ButtonProps
+  extends React.ButtonHTMLAttributes<HTMLButtonElement>,
+    VariantProps<typeof buttonVariants> {
+  asChild?: boolean
+  leftIcon?: React.ReactNode
+  loading?: boolean
 }
 
-// Variant philosophy:
-// primary: high emphasis brand
-// secondary: neutral elevated (good on white backgrounds)
-// accent: alternative action (e.g. create, new) with teal accent
-// outline: quiet action with border
-// subtle: minimal surface tint
-// ghost: text-only hover effect
-// danger / soft-danger: destructive primary vs. low emphasis destructive
-const variantClasses: Record<string, string> = {
-  primary: 'bg-[var(--color-brand-600)] hover:bg-[var(--color-brand-500)] active:bg-[var(--color-brand-700)] text-white shadow-md shadow-black/5',
-  secondary: 'bg-gray-800 hover:bg-gray-700 active:bg-gray-900 text-white shadow-md shadow-black/5',
-  accent: 'bg-[var(--color-sem-accent)] hover:bg-cyan-600 active:bg-cyan-700 text-white shadow-md shadow-black/5',
-  outline: 'bg-white text-gray-800 border border-gray-300 hover:bg-gray-50 active:bg-gray-100 shadow-sm',
-  subtle: 'bg-[var(--color-sem-surfaceAlt)] text-gray-700 hover:bg-white active:bg-gray-50 border border-sem-border shadow-xs',
-  ghost: 'bg-transparent text-gray-700 hover:bg-gray-100 active:bg-gray-200',
-  danger: 'bg-[var(--color-sem-danger)] hover:bg-[var(--color-sem-danger-hover)] active:bg-red-800 text-white shadow-md shadow-black/5',
-  'soft-danger': 'bg-red-50 text-sem-danger hover:bg-red-100 active:bg-red-200 border border-red-200'
-};
+const Button = React.forwardRef<HTMLButtonElement, ButtonProps>(
+  ({ className, variant, size, asChild = false, leftIcon, loading, children, ...props }, ref) => {
+    const Comp = asChild ? Slot : "button"
+    return (
+      <Comp
+        className={cn(buttonVariants({ variant, size, className }))}
+        ref={ref}
+        disabled={loading || props.disabled}
+        {...props}
+      >
+        {loading ? (
+          <svg
+            className="animate-spin h-5 w-5"
+            xmlns="http://www.w3.org/2000/svg"
+            fill="none"
+            viewBox="0 0 24 24"
+          >
+            <circle
+              className="opacity-25"
+              cx="12"
+              cy="12"
+              r="10"
+              stroke="currentColor"
+              strokeWidth="4"
+            ></circle>
+            <path
+              className="opacity-75"
+              fill="currentColor"
+              d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
+            ></path>
+          </svg>
+        ) : (
+          leftIcon
+        )}
+        {children}
+      </Comp>
+    )
+  }
+)
+Button.displayName = "Button"
 
-const sizeClasses: Record<string, string> = {
-  sm: 'h-11 px-4 text-sm rounded-md', // ~44px
-  md: 'h-12 px-5 text-sm rounded-md', // ~48px
-  lg: 'h-12 px-6 text-base rounded-lg' // keep 48, more padding
-};
-
-export const Button = React.forwardRef<HTMLButtonElement, ButtonProps>(function Button(
-  { variant = 'primary', size = 'md', loading = false, disabled, className = '', leftIcon, rightIcon, children, ...rest }, ref
-) {
-  const v = variantClasses[variant] || variantClasses.primary;
-  const s = sizeClasses[size] || sizeClasses.md;
-  return (
-    <button
-      ref={ref}
-      className={`inline-flex items-center justify-center gap-2 font-medium rounded-md tracking-wide transition-[background,box-shadow,color,transform] duration-150 ease-[var(--ease-brand)] focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-500 focus-visible:ring-offset-2 disabled:opacity-50 disabled:cursor-not-allowed active:scale-[.99] ${v} ${s} ${className}`}
-      disabled={disabled || loading}
-      {...rest}
-    >
-      {loading && (
-        <span className="w-4 h-4 border-2 border-current border-t-transparent rounded-full animate-spin" />
-      )}
-      {!loading && leftIcon}
-      <span className="truncate">{children}</span>
-      {!loading && rightIcon}
-    </button>
-  );
-});
-
-export default Button;
+export { Button, buttonVariants }

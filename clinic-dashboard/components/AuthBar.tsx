@@ -5,7 +5,8 @@ import type { DocumentReference } from 'firebase/firestore';
 import { doc, getDoc, setDoc } from 'firebase/firestore';
 import { useEffect, useState } from 'react';
 import { auth, db } from '../lib/firebase';
-import Button from './ui/Button';
+import { Input } from './ui/Input';
+import { Button } from './ui/Button';
 
 // Helper to ensure demo entities exist
 async function ensureDemoClinicStructure() {
@@ -107,7 +108,7 @@ export default function AuthBar() {
         <div className="flex items-center justify-between">
           <div className="text-sm text-gray-700">Signed in as <strong className="text-gray-900">{user.email}</strong></div>
           <div className="flex items-center gap-3">
-            <Button onClick={doSignOut} size="sm" variant="danger" className="px-3 h-8">Sign out</Button>
+            <Button onClick={doSignOut} size="sm" variant="destructive" className="px-3 h-8">Sign out</Button>
           </div>
         </div>
       ) : (
@@ -117,13 +118,13 @@ export default function AuthBar() {
             <div className="text-xs text-gray-600">Mode: <strong>{mode}</strong></div>
           </div>
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 mb-2">
-            <input value={email} onChange={e=>setEmail(e.target.value)} placeholder="Email" className="col-span-2 p-2 rounded bg-white border border-gray-300" />
-            <input value={password} onChange={e=>setPassword(e.target.value)} placeholder="Password" type="password" className="p-2 rounded bg-white border border-gray-300" />
+            <Input value={email} onChange={e=>setEmail(e.target.value)} placeholder="Email" className="col-span-2" />
+            <Input value={password} onChange={e=>setPassword(e.target.value)} placeholder="Password" type="password" />
           </div>
           {mode === 'signup' && (
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 mb-2">
-              <input value={clinicId} onChange={e=>setClinicId(e.target.value)} placeholder="Clinic ID (optional)" className="col-span-2 p-2 rounded bg-white border border-gray-300" />
-              <input value={doctorId} onChange={e=>setDoctorId(e.target.value)} placeholder="Doctor ID (optional)" className="p-2 rounded bg-white border border-gray-300" />
+              <Input value={clinicId} onChange={e=>setClinicId(e.target.value)} placeholder="Clinic ID (optional)" className="col-span-2" />
+              <Input value={doctorId} onChange={e=>setDoctorId(e.target.value)} placeholder="Doctor ID (optional)" />
             </div>
           )}
           <div className="flex items-center gap-3">

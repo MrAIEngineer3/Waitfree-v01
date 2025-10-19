@@ -1,11 +1,11 @@
 "use client";
-import { useClinicContext } from '@/components/ClinicContext';
-import ConfirmModal from '@/components/ConfirmModal';
-import Button from '@/components/ui/Button';
-import Card from '@/components/ui/Card';
+import { Button } from '@/components/ui/Button';
+import { Card, CardContent } from '@/components/ui/Card';
 import { db } from '@/lib/firebase';
 import { addDoc, collection, deleteDoc, doc, onSnapshot, orderBy, query, updateDoc } from 'firebase/firestore';
 import React, { useEffect, useMemo, useState } from 'react';
+import { useClinicContext } from '@/components/ClinicContext';
+import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from '@/components/ui/alert-dialog';
 
 interface Doctor {
   id: string;
@@ -28,7 +28,7 @@ export default function DoctorsSettingsPage() {
   const [adding, setAdding] = useState(false);
   const [form, setForm] = useState({ name: '', specialty: '', email: '', phone: '' });
   const [saving, setSaving] = useState(false);
-  const [confirm, setConfirm] = useState<{ open: boolean; id?: string; name?: string }>({ open: false });
+  // const [confirm, setConfirm] = useState<{ open: boolean; id?: string; name?: string }>({ open: false });
 
   const doctorsCol = useMemo(() => (clinicId ? collection(db, 'clinics', clinicId, 'doctors') : null), [clinicId]);
 
@@ -146,16 +146,18 @@ export default function DoctorsSettingsPage() {
       </div>
 
       {!clinicId && (
-        <Card padding="lg" variant="outline">
-          <div className="text-center py-8">
-            <div className="w-16 h-16 bg-gray-100 rounded-2xl flex items-center justify-center mx-auto mb-4">
-              <svg className="w-8 h-8 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-5 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4" />
-              </svg>
+        <Card variant="outline">
+          <CardContent className="p-6">
+            <div className="text-center py-8">
+              <div className="w-16 h-16 bg-gray-100 rounded-2xl flex items-center justify-center mx-auto mb-4">
+                <svg className="w-8 h-8 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-5 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4" />
+                </svg>
+              </div>
+              <h3 className="text-lg font-semibold text-gray-900 mb-2">No Clinic Selected</h3>
+              <p className="text-sm text-gray-600">Attach your account to a clinic to manage doctors.</p>
             </div>
-            <h3 className="text-lg font-semibold text-gray-900 mb-2">No Clinic Selected</h3>
-            <p className="text-sm text-gray-600">Attach your account to a clinic to manage doctors.</p>
-          </div>
+          </CardContent>
         </Card>
       )}
 
@@ -168,25 +170,27 @@ export default function DoctorsSettingsPage() {
           </div>
         </div>
       ) : doctors.length === 0 && clinicId ? (
-        <Card padding="lg" variant="outline">
-          <div className="text-center py-12">
-            <div className="w-16 h-16 bg-gradient-to-br from-violet-100 to-purple-100 rounded-2xl flex items-center justify-center mx-auto mb-4">
-              <svg className="w-8 h-8 text-violet-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z" />
-              </svg>
+        <Card variant="outline">
+          <CardContent className="p-6">
+            <div className="text-center py-12">
+              <div className="w-16 h-16 bg-gradient-to-br from-violet-100 to-purple-100 rounded-2xl flex items-center justify-center mx-auto mb-4">
+                <svg className="w-8 h-8 text-violet-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z" />
+                </svg>
+              </div>
+              <h3 className="text-lg font-semibold text-gray-900 mb-2">No Doctors Added</h3>
+              <p className="text-sm text-gray-600 mb-6">Get started by adding your first medical professional</p>
+              <Button onClick={startAdd} variant="default">
+                Add Your First Doctor
+              </Button>
             </div>
-            <h3 className="text-lg font-semibold text-gray-900 mb-2">No Doctors Added</h3>
-            <p className="text-sm text-gray-600 mb-6">Get started by adding your first medical professional</p>
-            <Button onClick={startAdd} variant="primary">
-              Add Your First Doctor
-            </Button>
-          </div>
+          </CardContent>
         </Card>
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
           {doctors.map((d) => (
-            <Card key={d.id} padding="none" variant="outline" className="group hover:shadow-lg transition-all duration-300">
-              <div className="p-6 space-y-4">
+            <Card key={d.id} className="group hover:shadow-lg transition-all duration-300">
+              <CardContent className="p-6 space-y-4">
                 {/* Doctor Avatar */}
                 <div className="flex items-start justify-between">
                   <div className="flex items-center gap-4">
@@ -233,16 +237,31 @@ export default function DoctorsSettingsPage() {
                     </svg>
                     Edit
                   </button>
-                  <button
-                    onClick={() => setConfirm({ open: true, id: d.id, name: d.name })}
-                    className="px-3 py-2 bg-red-50 hover:bg-red-100 text-red-600 rounded-lg text-sm font-medium transition-colors"
-                  >
-                    <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
-                    </svg>
-                  </button>
+                  <AlertDialog>
+                    <AlertDialogTrigger asChild>
+                      <button
+                        className="px-3 py-2 bg-red-50 hover:bg-red-100 text-red-600 rounded-lg text-sm font-medium transition-colors"
+                      >
+                        <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                        </svg>
+                      </button>
+                    </AlertDialogTrigger>
+                    <AlertDialogContent>
+                      <AlertDialogHeader>
+                        <AlertDialogTitle>Remove doctor?</AlertDialogTitle>
+                        <AlertDialogDescription>
+                          Are you sure you want to remove <b>{d.name}</b>? This cannot be undone.
+                        </AlertDialogDescription>
+                      </AlertDialogHeader>
+                      <AlertDialogFooter>
+                        <AlertDialogCancel>Cancel</AlertDialogCancel>
+                        <AlertDialogAction onClick={() => removeDoctor(d.id)}>Remove</AlertDialogAction>
+                      </AlertDialogFooter>
+                    </AlertDialogContent>
+                  </AlertDialog>
                 </div>
-              </div>
+              </CardContent>
             </Card>
           ))}
         </div>
@@ -251,7 +270,7 @@ export default function DoctorsSettingsPage() {
       {/* Add/Edit Form Modal */}
       {(adding || !!editing) && (
         <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-          <Card padding="none" variant="solid" className="max-w-2xl w-full max-h-[90vh] overflow-y-auto">
+          <Card className="max-w-2xl w-full max-h-[90vh] overflow-y-auto">
             <div className="bg-gradient-to-r from-violet-500 to-purple-600 px-8 py-6">
               <h2 className="text-2xl font-semibold text-white">
                 {editing ? 'Edit Doctor' : 'Add New Doctor'}
@@ -327,7 +346,7 @@ export default function DoctorsSettingsPage() {
               )}
 
               <div className="flex items-center gap-3 pt-4 border-t border-gray-200">
-                <Button type="submit" loading={saving} variant="primary">
+                <Button type="submit" loading={saving} variant="default">
                   {editing ? 'Save Changes' : 'Add Doctor'}
                 </Button>
                 <Button
@@ -348,19 +367,7 @@ export default function DoctorsSettingsPage() {
         </div>
       )}
 
-      <ConfirmModal
-        open={confirm.open}
-        title="Remove doctor?"
-        confirmLabel="Remove"
-        confirmTone="red"
-        onCancel={() => setConfirm({ open: false })}
-        onConfirm={() => {
-          if (confirm.id) removeDoctor(confirm.id);
-          setConfirm({ open: false });
-        }}
-      >
-        Are you sure you want to remove {confirm.name ? <b>{confirm.name}</b> : 'this doctor'}? This cannot be undone.
-      </ConfirmModal>
+
     </div>
   );
 }

@@ -5,8 +5,9 @@ import { addDoc, collection } from 'firebase/firestore';
 import { httpsCallable } from 'firebase/functions';
 import { useRouter } from 'next/navigation';
 import { useState } from 'react';
-import Button from '../../../components/ui/Button';
-import Card from '../../../components/ui/Card';
+import { Input } from '../../../components/ui/Input';
+import { Button } from '../../../components/ui/Button';
+import { Card } from '../../../components/ui/Card';
 import { auth, db, functions } from '../../../lib/firebase';
 
 interface BootstrapResult { success: boolean; clinicId: string; doctorId: string; queueId: string; }
@@ -91,19 +92,19 @@ export default function SignupPage() {
             <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
               <div className="space-y-1.5 md:col-span-2">
                 <label className="block text-xs font-semibold text-gray-600 uppercase tracking-wide">Clinic Name</label>
-                <input value={clinicName} onChange={e=>setClinicName(e.target.value)} className="w-full rounded-md border border-sem-border px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-500" placeholder="e.g. Sunrise Health Center" required />
+                <Input value={clinicName} onChange={e=>setClinicName(e.target.value)} placeholder="e.g. Sunrise Health Center" required />
               </div>
               <div className="space-y-1.5 md:col-span-2">
                 <label className="block text-xs font-semibold text-gray-600 uppercase tracking-wide">Clinic Phone (optional)</label>
-                <input value={clinicPhone} onChange={e=>setClinicPhone(e.target.value)} className="w-full rounded-md border border-sem-border px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-500" placeholder="Contact number for patients" />
+                <Input value={clinicPhone} onChange={e=>setClinicPhone(e.target.value)} placeholder="Contact number for patients" />
               </div>
               <div className="space-y-1.5">
                 <label className="block text-xs font-semibold text-gray-600 uppercase tracking-wide">Email</label>
-                <input type="email" value={email} onChange={e=>setEmail(e.target.value)} className="w-full rounded-md border border-sem-border px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-500" placeholder="you@clinic.com" required />
+                <Input type="email" value={email} onChange={e=>setEmail(e.target.value)} placeholder="you@clinic.com" required />
               </div>
               <div className="space-y-1.5">
                 <label className="block text-xs font-semibold text-gray-600 uppercase tracking-wide">Password (min 6 chars)</label>
-                <input type="password" value={password} onChange={e=>setPassword(e.target.value)} className="w-full rounded-md border border-sem-border px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-500" placeholder="••••••••" required minLength={6} />
+                <Input type="password" value={password} onChange={e=>setPassword(e.target.value)} placeholder="••••••••" required minLength={6} />
               </div>
             </div>
             {error && <div className="text-sm text-sem-danger bg-red-50 border border-red-200 rounded px-3 py-2">{error}</div>}
@@ -116,11 +117,11 @@ export default function SignupPage() {
             <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
               <div className="space-y-1.5">
                 <label className="block text-xs font-semibold text-gray-600 uppercase tracking-wide">Doctor Name</label>
-                <input value={doctorName} onChange={e=>setDoctorName(e.target.value)} className="w-full rounded-md border border-sem-border px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-500" placeholder="e.g. Dr. Anita Rao" required />
+                <Input value={doctorName} onChange={e=>setDoctorName(e.target.value)} placeholder="e.g. Dr. Anita Rao" required />
               </div>
               <div className="space-y-1.5">
                 <label className="block text-xs font-semibold text-gray-600 uppercase tracking-wide">Specialty</label>
-                <input value={specialty} onChange={e=>setSpecialty(e.target.value)} className="w-full rounded-md border border-sem-border px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-500" placeholder="e.g. Pediatrics" required />
+                <Input value={specialty} onChange={e=>setSpecialty(e.target.value)} placeholder="e.g. Pediatrics" required />
               </div>
             </div>
             <div className="space-y-3">
@@ -132,15 +133,15 @@ export default function SignupPage() {
                 <div key={idx} className="grid grid-cols-1 md:grid-cols-5 gap-3 items-end">
                   <div className="md:col-span-2">
                     <label className="block text-xs font-semibold text-gray-600 uppercase tracking-wide">Name</label>
-                    <input value={d.name} onChange={e=>{
+                    <Input value={d.name} onChange={e=>{
                       const v = e.target.value; setAdditionalDoctors(list=> list.map((x,i)=> i===idx? { ...x, name: v }: x));
-                    }} className="w-full rounded-md border border-sem-border px-3 py-2 text-sm" placeholder="e.g. Dr. Lee" />
+                    }} placeholder="e.g. Dr. Lee" />
                   </div>
                   <div className="md:col-span-2">
                     <label className="block text-xs font-semibold text-gray-600 uppercase tracking-wide">Specialty</label>
-                    <input value={d.specialty} onChange={e=>{
+                    <Input value={d.specialty} onChange={e=>{
                       const v = e.target.value; setAdditionalDoctors(list=> list.map((x,i)=> i===idx? { ...x, specialty: v }: x));
-                    }} className="w-full rounded-md border border-sem-border px-3 py-2 text-sm" placeholder="e.g. Dermatology" />
+                    }} placeholder="e.g. Dermatology" />
                   </div>
                   <div className="flex gap-2">
                     <Button type="button" variant="outline" size="sm" onClick={()=> setAdditionalDoctors(list=> list.toSpliced(idx, 1))}>Remove</Button>

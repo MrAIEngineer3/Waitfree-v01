@@ -35,7 +35,6 @@ var __importStar = (this && this.__importStar) || (function () {
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.sendNotification = sendNotification;
 exports.setStaffClaim = setStaffClaim;
-const firestore_1 = require("@google-cloud/firestore");
 // Load local env for emulator
 const admin = __importStar(require("firebase-admin"));
 const functions = __importStar(require("firebase-functions/v1"));
@@ -68,19 +67,12 @@ function formatWhatsAppNumber(phone) {
     }
     return cleaned;
 }
-// Resolve Patient PWA base URL from env or runtime config
+// Resolve Patient PWA base URL from environment variables
 function getPatientPwaBaseUrl() {
-    // Priority: process.env (dotenv/emulator or CI) -> functions config (prod) -> ''
+    // Priority: process.env (dotenv/emulator or CI). If missing, fall back to '' and omit link.
     const envVal = process.env.PATIENT_PWA_BASE_URL;
-    if (envVal)
-        return envVal;
-    try {
-        const cfg = functions?.config?.();
-        const fromCfg = cfg?.app?.patient_pwa_base_url;
-        if (fromCfg && typeof fromCfg === 'string')
-            return fromCfg;
-    }
-    catch { }
+    if (envVal && envVal.trim().length > 0)
+        return envVal.trim();
     return '';
 }
 // Create WhatsApp message content based on notification type
@@ -88,7 +80,7 @@ function createWhatsAppMessage(type, payload) {
     const name = payload?.name || 'Patient';
     const token = payload?.tokenNumber || 'N/A';
     const eta = payload?.etaMinutes;
-    const position = payload?.patientsAhead;
+    // const position = payload?.patientsAhead;
     const baseUrl = getPatientPwaBaseUrl();
     const patientLink = (() => {
         try {
@@ -126,20 +118,8 @@ function createWhatsAppMessage(type, payload) {
 }
 // Initialize Twilio client (only if credentials are available)
 function getTwilioClient() {
-    // Try environment variables first (for local development)
-    let accountSid = process.env.TWILIO_ACCOUNT_SID;
-    let authToken = process.env.TWILIO_AUTH_TOKEN;
-    // Fallback to Firebase functions config (for production)
-    if (!accountSid || !authToken) {
-        try {
-            const cfg = functions?.config?.();
-            accountSid = accountSid || cfg?.twilio?.account_sid;
-            authToken = authToken || cfg?.twilio?.auth_token;
-        }
-        catch (e) {
-            functions.logger.warn('Failed to load Twilio config from functions.config()', e);
-        }
-    }
+    const accountSid = process.env.TWILIO_ACCOUNT_SID;
+    const authToken = process.env.TWILIO_AUTH_TOKEN;
     if (!accountSid || !authToken) {
         return null; // Return null if credentials not available (for testing)
     }
@@ -171,7 +151,7 @@ async function sendNotification(opts) {
                 type: opts.type,
                 message: messageContent,
                 payload: opts.payload || null,
-                createdAt: firestore_1.FieldValue.serverTimestamp(),
+                createdAt: admin.firestore.Timestamp.now(),
                 twilioAttempted: !!getTwilioClient()
             });
         }
@@ -180,17 +160,7 @@ async function sendNotification(opts) {
         }
         // Try to send via Twilio WhatsApp if credentials are available
         const client = getTwilioClient();
-        // Get WhatsApp from number from env or functions config
-        let twilioFromNumber = process.env.TWILIO_WHATSAPP_FROM;
-        if (!twilioFromNumber) {
-            try {
-                const cfg = functions?.config?.();
-                twilioFromNumber = cfg?.twilio?.whatsapp_from;
-            }
-            catch (e) {
-                functions.logger.warn('Failed to load Twilio WhatsApp from number from functions.config()', e);
-            }
-        }
+        const twilioFromNumber = process.env.TWILIO_WHATSAPP_FROM;
         if (client && twilioFromNumber) {
             try {
                 const result = await client.messages.create({

@@ -1,7 +1,7 @@
 "use client";
 import { signOut } from 'firebase/auth';
 import { auth } from '../lib/firebase';
-import Button from './ui/Button';
+import { Button } from './ui/Button';
 import { useUserMapping } from './useUserMapping';
 
 export default function AccountBadge() {

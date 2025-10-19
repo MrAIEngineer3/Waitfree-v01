@@ -1,4 +1,5 @@
 "use client";
+import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 
@@ -81,53 +82,17 @@ export default function SettingsTabs() {
   const pathname = usePathname();
   
   return (
-    <div className="bg-white border border-gray-200 rounded-xl shadow-sm overflow-hidden">
-      {/* Desktop Tabs */}
-      <div className="hidden lg:flex items-center gap-1 p-1.5">
-        {tabs.map(t => {
-          const active = pathname.startsWith(t.href);
-          return (
-            <Link 
-              key={t.href} 
-              href={t.href} 
-              className={`
-                flex items-center gap-2 px-4 py-2.5 rounded-lg text-sm font-medium transition-all duration-200
-                ${active 
-                  ? 'bg-gradient-to-br from-violet-500 to-purple-600 text-white shadow-md shadow-violet-500/25' 
-                  : 'text-gray-600 hover:text-gray-900 hover:bg-gray-50'
-                }
-              `}
-            >
-              <span className={active ? 'text-white' : 'text-gray-400'}>
-                {t.icon}
-              </span>
+    <Tabs defaultValue={pathname} className="w-full">
+      <TabsList className="grid w-full grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-8">
+        {tabs.map(t => (
+          <TabsTrigger key={t.href} value={t.href} asChild>
+            <Link href={t.href}>
+              {t.icon}
               {t.label}
             </Link>
-          );
-        })}
-      </div>
-
-      {/* Mobile Dropdown */}
-      <div className="lg:hidden p-3">
-        <div className="relative">
-          <select 
-            value={pathname}
-            onChange={(e) => window.location.href = e.target.value}
-            className="w-full appearance-none bg-white border border-gray-200 rounded-lg px-4 py-3 pr-10 text-sm font-medium text-gray-900 focus:outline-none focus:ring-2 focus:ring-violet-500 focus:border-transparent"
-          >
-            {tabs.map(t => (
-              <option key={t.href} value={t.href}>
-                {t.label}
-              </option>
-            ))}
-          </select>
-          <div className="absolute inset-y-0 right-0 flex items-center pr-3 pointer-events-none">
-            <svg className="w-5 h-5 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
-            </svg>
-          </div>
-        </div>
-      </div>
-    </div>
+          </TabsTrigger>
+        ))}
+      </TabsList>
+    </Tabs>
   );
 }
