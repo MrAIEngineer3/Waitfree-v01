@@ -1,6 +1,8 @@
 "use client";
 import { Button } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
+import { Label } from '@/components/ui/label';
+import { Separator } from '@/components/ui/separator';
 import { auth, db, storage } from '@/lib/firebase';
 import { EmailAuthProvider, reauthenticateWithCredential, updateEmail, updateProfile } from 'firebase/auth';
 import { doc, getDoc, setDoc } from 'firebase/firestore';
@@ -114,7 +116,7 @@ export default function ProfileSettingsPage() {
 
         <form onSubmit={handleSave} className="p-8 space-y-8">
           {/* Photo Upload Section */}
-          <div className="flex items-start gap-6 pb-6 border-b border-gray-200">
+          <div className="flex items-start gap-6">
             <div className="relative group">
               {photoURL ? (
                 <div className="relative">
@@ -142,8 +144,8 @@ export default function ProfileSettingsPage() {
             </div>
             <div className="flex-1 space-y-3">
               <div>
-                <label className="block text-sm font-semibold text-gray-700 mb-2">Profile Photo</label>
-                <p className="text-xs text-gray-500 mb-3">Upload a professional photo. JPG, PNG or GIF. Max 5MB.</p>
+                <Label className="text-sm font-semibold text-gray-700">Profile Photo</Label>
+                <p className="text-xs text-gray-500 mt-1">Upload a professional photo. JPG, PNG or GIF. Max 5MB.</p>
               </div>
               <div className="flex items-center gap-3">
                 <label className="relative cursor-pointer">
@@ -178,13 +180,15 @@ export default function ProfileSettingsPage() {
             </div>
           </div>
 
+          <Separator className="my-6" />
+
           {/* Form Fields */}
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
             <div className="space-y-2">
-              <label className="block text-sm font-semibold text-gray-700">
+              <Label htmlFor="display-name" className="text-sm font-semibold text-gray-700">
                 Display Name
                 <span className="text-red-500 ml-1">*</span>
-              </label>
+              </Label>
               <div className="relative">
                 <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
                   <svg className="w-5 h-5 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -192,6 +196,7 @@ export default function ProfileSettingsPage() {
                   </svg>
                 </div>
                 <input
+                  id="display-name"
                   value={displayName}
                   onChange={(e) => setDisplayName(e.target.value)}
                   className="w-full pl-10 pr-4 py-3 rounded-lg border border-gray-300 text-sm focus:outline-none focus:ring-2 focus:ring-violet-500 focus:border-transparent transition-all"
@@ -202,10 +207,10 @@ export default function ProfileSettingsPage() {
             </div>
 
             <div className="space-y-2">
-              <label className="block text-sm font-semibold text-gray-700">
+              <Label htmlFor="email" className="text-sm font-semibold text-gray-700">
                 Email Address
                 <span className="text-red-500 ml-1">*</span>
-              </label>
+              </Label>
               <div className="relative">
                 <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
                   <svg className="w-5 h-5 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -213,6 +218,7 @@ export default function ProfileSettingsPage() {
                   </svg>
                 </div>
                 <input
+                  id="email"
                   type="email"
                   value={email}
                   onChange={(e) => setEmail(e.target.value)}
@@ -224,9 +230,9 @@ export default function ProfileSettingsPage() {
             </div>
 
             <div className="space-y-2 md:col-span-2">
-              <label className="block text-sm font-semibold text-gray-700">
+              <Label htmlFor="phone" className="text-sm font-semibold text-gray-700">
                 Phone Number
-              </label>
+              </Label>
               <div className="relative">
                 <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
                   <svg className="w-5 h-5 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -234,6 +240,7 @@ export default function ProfileSettingsPage() {
                   </svg>
                 </div>
                 <input
+                  id="phone"
                   value={phone}
                   onChange={(e) => setPhone(e.target.value)}
                   className="w-full pl-10 pr-4 py-3 rounded-lg border border-gray-300 text-sm focus:outline-none focus:ring-2 focus:ring-violet-500 focus:border-transparent transition-all"
@@ -262,8 +269,10 @@ export default function ProfileSettingsPage() {
             </div>
           )}
 
+          <Separator className="my-6" />
+
           {/* Action Buttons */}
-          <div className="flex items-center gap-3 pt-4 border-t border-gray-200">
+          <div className="flex items-center gap-3">
             <Button type="submit" loading={saving} variant="default">
               Save Changes
             </Button>

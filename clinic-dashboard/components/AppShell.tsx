@@ -29,6 +29,12 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
   const router = useRouter();
   const { clinicId, clinicName, doctorId, queueStatus } = useClinicContext();
   const [showJoinQr, setShowJoinQr] = useState(false);
+  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+
+  // Close mobile menu when pathname changes
+  useEffect(() => {
+    setMobileMenuOpen(false);
+  }, [pathname]);
 
   useEffect(() => {
     if (!clinicId || typeof window === 'undefined') {
@@ -104,7 +110,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
           <div className="max-w-7xl mx-auto px-4 py-3 flex items-center justify-between gap-4">
             <div className="flex items-center gap-4 min-w-0 flex-1">
               <div className="md:hidden block">
-                <Sheet>
+                <Sheet open={mobileMenuOpen} onOpenChange={setMobileMenuOpen}>
                   <SheetTrigger asChild>
                     <button
                       aria-label="Open menu"
@@ -155,7 +161,10 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
                     <div className="p-2 flex flex-col gap-2">
                       {clinicId && (
                         <button
-                          onClick={() => { setShowJoinQr(true); }}
+                          onClick={() => { 
+                            setShowJoinQr(true);
+                            setMobileMenuOpen(false);
+                          }}
                           className="h-10 w-full inline-flex items-center justify-center gap-2 rounded-md border border-gray-300 bg-white text-gray-700 hover:bg-gray-50 active:bg-gray-100 shadow-sm"
                         >
                           <svg className="w-4 h-4 text-gray-600" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
@@ -165,7 +174,10 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
                         </button>
                       )}
                       <button
-                        onClick={() => { signOut(auth); }}
+                        onClick={() => { 
+                          signOut(auth);
+                          setMobileMenuOpen(false);
+                        }}
                         className="h-10 w-full inline-flex items-center justify-center gap-2 rounded-md border border-gray-300 bg-white text-gray-700 hover:bg-gray-50 active:bg-gray-100 shadow-sm"
                       >
                         Sign out

@@ -1,7 +1,8 @@
 "use client";
-import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
+import { useLayoutEffect, useRef } from 'react';
+import { cn } from '@/lib/utils';
 
 const tabs = [
   { 
@@ -80,19 +81,65 @@ const tabs = [
 
 export default function SettingsTabs() {
   const pathname = usePathname();
-  
+  const tabsListRef = useRef<HTMLDivElement>(null);
+
+  const activeValue =
+    tabs.find((tab) => pathname.startsWith(tab.href))?.href ?? tabs[0].href;
+
+  // Auto-scroll to active tab when pathname changes
+  useLayoutEffect(() => {
+    const tabsList = tabsListRef.current;
+    if (!tabsList) return;
+
+    const activeIndex = tabs.findIndex((tab) => activeValue === tab.href);
+    const safeIndex = activeIndex === -1 ? 0 : activeIndex;
+    const activeTab = tabsList.children[safeIndex] as HTMLElement | undefined;
+
+    if (!activeTab) return;
+
+    const left = safeIndex === 0
+      ? 0
+      : Math.max(0, activeTab.offsetLeft - 16);
+    const clampedLeft = Math.max(
+      0,
+      Math.min(left, tabsList.scrollWidth - tabsList.clientWidth)
+    );
+
+    tabsList.scrollTo({ left: clampedLeft, behavior: 'auto' });
+  }, [activeValue, pathname]);
+
   return (
-    <Tabs defaultValue={pathname} className="w-full">
-      <TabsList className="grid w-full grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-8">
-        {tabs.map(t => (
-          <TabsTrigger key={t.href} value={t.href} asChild>
-            <Link href={t.href}>
-              {t.icon}
-              {t.label}
+    <nav aria-label="Settings sections" className="w-full">
+      <div
+        ref={tabsListRef}
+        className="flex h-auto w-full flex-nowrap gap-2 overflow-x-auto rounded-lg bg-muted/70 p-1 text-muted-foreground sm:grid sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-8 sm:overflow-visible scrollbar-hide"
+        role="tablist"
+      >
+        {tabs.map((t) => {
+          const isActive = activeValue === t.href;
+          return (
+            <Link
+              key={t.href}
+              href={t.href}
+              role="tab"
+              aria-selected={isActive}
+              tabIndex={isActive ? 0 : -1}
+              aria-current={isActive ? 'page' : undefined}
+              className={cn(
+                'flex min-w-[10rem] shrink-0 items-center gap-2 whitespace-nowrap rounded-md px-4 py-2.5 text-xs font-medium transition-colors duration-200 sm:min-w-0 sm:px-2 sm:py-3 sm:text-sm sm:justify-center',
+                isActive
+                  ? 'bg-background text-foreground shadow'
+                  : 'bg-transparent text-muted-foreground hover:bg-background/60'
+              )}
+            >
+              <span className="flex h-8 w-8 items-center justify-center rounded-md bg-background/60 text-current sm:h-7 sm:w-7">
+                {t.icon}
+              </span>
+              <span className="truncate">{t.label}</span>
             </Link>
-          </TabsTrigger>
-        ))}
-      </TabsList>
-    </Tabs>
+          );
+        })}
+      </div>
+    </nav>
   );
 }
