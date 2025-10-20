@@ -1,6 +1,7 @@
 "use client";
 import { Button } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
+import { Separator } from '@/components/ui/separator';
 import { useState } from 'react';
 
 type LanguageOption = 'en' | 'hi';
@@ -145,7 +146,9 @@ export default function PreferencesSettingsPage() {
           </section>
 
           {/* Theme Section */}
-          <section className="space-y-4 pt-6 border-t border-gray-200">
+          <Separator className="my-6" />
+          
+          <section className="space-y-4">
             <div className="flex items-center gap-3">
               <div className="w-8 h-8 rounded-lg bg-blue-100 flex items-center justify-center">
                 <svg className="w-5 h-5 text-blue-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -195,7 +198,9 @@ export default function PreferencesSettingsPage() {
           </section>
 
           {/* Additional Preferences Preview */}
-          <section className="space-y-4 pt-6 border-t border-gray-200">
+          <Separator className="my-6" />
+          
+          <section className="space-y-4">
             <div className="flex items-center gap-3">
               <div className="w-8 h-8 rounded-lg bg-purple-100 flex items-center justify-center">
                 <svg className="w-5 h-5 text-purple-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -240,7 +245,9 @@ export default function PreferencesSettingsPage() {
           )}
 
           {/* Action Buttons */}
-          <div className="flex items-center gap-3 pt-6 border-t border-gray-200">
+          <Separator className="my-6" />
+          
+          <div className="flex items-center gap-3">
             <Button variant="default" onClick={handleSave} loading={saving}>
               Save Preferences
             </Button>

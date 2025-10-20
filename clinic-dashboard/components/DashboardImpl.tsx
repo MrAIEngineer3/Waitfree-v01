@@ -7,6 +7,9 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { useClinicContext } from '../components/ClinicContext';
 import DateNavigator from '../components/DateNavigator';
 import QueueList from '../components/QueueList';
+import { Separator } from '../components/ui/separator';
+import { Button } from '../components/ui/Button';
+import { Badge } from '../components/ui/Badge';
 import { auth, db } from '../lib/firebase';
 import { markPhase, queueProfilingEnabled, recordRender, recordSnapshot } from '../lib/profiling';
 
@@ -161,76 +164,116 @@ export default function DashboardImpl() {
   }, [renderLabel]);
 
   return (
-    <div className="space-y-3">
-      {/* Clinic header condensed into AppShell to save vertical space */}
-
-      {/* Active/Select Doctor section removed; doctor details shown in header */}
-
-      {/* QR moved into modal, removed from main screen */}
-
+    <div className="space-y-4">
       {/* Main Queue Management - Full width */}
       <div className="w-full">
-        <div className="rounded-lg md:rounded-xl border border-gray-200 bg-white/60 backdrop-blur-sm shadow-sm overflow-hidden">
+        <div className="rounded-lg md:rounded-xl border border-gray-200 bg-white shadow-sm overflow-hidden">
           {/* Queue header with integrated metrics */}
-          <div className="border-b border-gray-200 px-3 md:px-6 py-4">
+          <div className="border-b border-gray-200 bg-gradient-to-r from-gray-50 to-white px-4 md:px-6 py-5">
             <div className="flex flex-col gap-4">
               <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
                 <div className="flex flex-col sm:flex-row sm:items-center gap-3">
-                  <h2 className="text-lg md:text-xl font-semibold text-gray-900">Today&apos;s Queue</h2>
+                  <div className="flex items-center gap-3">
+                    <div className="h-10 w-10 rounded-lg bg-gradient-to-br from-blue-500 to-cyan-400 flex items-center justify-center shadow-sm">
+                      <svg className="w-5 h-5 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-3 7h3m-3 4h3m-6-4h.01M9 16h.01" />
+                      </svg>
+                    </div>
+                    <h2 className="text-lg md:text-xl font-bold text-gray-900">Today&apos;s Queue</h2>
+                  </div>
                   <DateNavigator value={selectedDate} onChange={setSelectedDate} max={todayKey} disableFuture showTodayButton />
                 </div>
 
                 {/* Modern Queue Control Buttons */}
                 {queue && (
                   <div className="flex items-center gap-2 flex-wrap">
-                    <button
-                      className="h-8 px-3 text-xs font-medium text-slate-600 bg-white hover:bg-slate-50 border border-slate-200 hover:border-slate-300 rounded-lg transition-all duration-200 shadow-sm hover:shadow"
+                    <Button
+                      size="sm"
+                      variant="outline"
                       onClick={() => {
                         window.dispatchEvent(new CustomEvent('togglePauseQueue'));
                       }}
+                      className="h-9 shadow-sm hover:shadow"
                     >
-                      {queue.status === 'paused' ? 'Resume' : 'Pause'}
-                    </button>
-                    <button
-                      className="h-8 px-3 text-xs font-medium text-rose-600 bg-white hover:bg-rose-50 border border-rose-200 hover:border-rose-300 rounded-lg transition-all duration-200 shadow-sm hover:shadow"
+                      {queue.status === 'paused' ? (
+                        <>
+                          <svg className="w-4 h-4 mr-2" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z" />
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                          </svg>
+                          Resume
+                        </>
+                      ) : (
+                        <>
+                          <svg className="w-4 h-4 mr-2" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 9v6m4-6v6m7-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+                          </svg>
+                          Pause
+                        </>
+                      )}
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant="outline"
                       onClick={() => {
                         window.dispatchEvent(new CustomEvent('endQueue'));
                       }}
+                      className="h-9 text-rose-600 border-rose-200 hover:bg-rose-50 hover:border-rose-300 shadow-sm hover:shadow"
                     >
+                      <svg className="w-4 h-4 mr-2" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 10a1 1 0 011-1h4a1 1 0 011 1v4a1 1 0 01-1 1h-4a1 1 0 01-1-1v-4z" />
+                      </svg>
                       End Today
-                    </button>
-                    <button
-                      className="h-8 px-3 text-xs font-medium text-emerald-600 bg-white hover:bg-emerald-50 border border-emerald-200 hover:border-emerald-300 rounded-lg transition-all duration-200 shadow-sm hover:shadow"
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant="outline"
                       onClick={() => {
                         window.dispatchEvent(new CustomEvent('restartQueue'));
                       }}
+                      className="h-9 text-emerald-600 border-emerald-200 hover:bg-emerald-50 hover:border-emerald-300 shadow-sm hover:shadow"
                     >
+                      <svg className="w-4 h-4 mr-2" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                      </svg>
                       Restart
-                    </button>
+                    </Button>
                   </div>
                 )}
               </div>
 
               {/* Compact metrics integrated into header */}
               {queue && (
-                <div className="grid grid-cols-2 sm:flex sm:items-center gap-3 sm:gap-4 text-sm">
-                  <div className="flex items-center gap-2">
-                    <span className="text-gray-600">Current:</span>
-                    <span className="font-semibold text-blue-600">#{queue.currentToken}</span>
+                <>
+                  <Separator className="my-2" />
+                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
+                    <div className="flex flex-col gap-1.5 p-3 rounded-lg bg-blue-50/50 border border-blue-100">
+                      <span className="text-xs font-medium text-blue-700 uppercase tracking-wide">Current Token</span>
+                      <div className="flex items-baseline gap-1">
+                        <span className="text-2xl font-bold text-blue-600">#{queue.currentToken}</span>
+                      </div>
+                    </div>
+                    <div className="flex flex-col gap-1.5 p-3 rounded-lg bg-green-50/50 border border-green-100">
+                      <span className="text-xs font-medium text-green-700 uppercase tracking-wide">Completed</span>
+                      <div className="flex items-baseline gap-1">
+                        <span className="text-2xl font-bold text-green-600">{queue.completedPatients}</span>
+                      </div>
+                    </div>
+                    <div className="flex flex-col gap-1.5 p-3 rounded-lg bg-indigo-50/50 border border-indigo-100">
+                      <span className="text-xs font-medium text-indigo-700 uppercase tracking-wide">Total Patients</span>
+                      <div className="flex items-baseline gap-1">
+                        <span className="text-2xl font-bold text-indigo-600">{queue.totalPatients}</span>
+                      </div>
+                    </div>
+                    <div className="flex flex-col gap-1.5 p-3 rounded-lg bg-orange-50/50 border border-orange-100">
+                      <span className="text-xs font-medium text-orange-700 uppercase tracking-wide">Remaining</span>
+                      <div className="flex items-baseline gap-1">
+                        <span className="text-2xl font-bold text-orange-600">{queue.totalPatients - queue.completedPatients}</span>
+                      </div>
+                    </div>
                   </div>
-                  <div className="flex items-center gap-2">
-                    <span className="text-gray-600">Completed:</span>
-                    <span className="font-semibold text-green-600">{queue.completedPatients}</span>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <span className="text-gray-600">Total:</span>
-                    <span className="font-semibold text-indigo-600">{queue.totalPatients}</span>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <span className="text-gray-600">Remaining:</span>
-                    <span className="font-semibold text-orange-600">{queue.totalPatients - queue.completedPatients}</span>
-                  </div>
-                </div>
+                </>
               )}
             </div>
           </div>
@@ -247,15 +290,25 @@ export default function DashboardImpl() {
               />
             )}
             {(!clinicId || !doctorId) && authReady && (
-              <div className="p-8 text-center text-gray-600 bg-gray-50 rounded-lg border border-dashed border-gray-300 m-6">
-                <p className="mb-2 font-medium text-gray-700">Get started</p>
-                <p className="leading-relaxed">Create or attach a clinic and doctor mapping to begin managing today&apos;s queue.</p>
+              <div className="p-8 text-center m-6">
+                <div className="max-w-sm mx-auto space-y-4">
+                  <div className="h-16 w-16 mx-auto rounded-full bg-gradient-to-br from-blue-100 to-cyan-100 flex items-center justify-center">
+                    <svg className="w-8 h-8 text-blue-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" />
+                    </svg>
+                  </div>
+                  <div className="space-y-2">
+                    <h3 className="text-lg font-semibold text-gray-900">Get Started</h3>
+                    <p className="text-sm text-gray-600 leading-relaxed">
+                      Create or attach a clinic and doctor mapping to begin managing today&apos;s queue.
+                    </p>
+                  </div>
+                </div>
               </div>
             )}
           </div>
         </div>
       </div>
-      {/* QR modal managed globally in AppShell */}
     </div>
   );
 }

@@ -3,10 +3,13 @@
 import { collection, doc, onSnapshot, query, serverTimestamp, setDoc, updateDoc } from 'firebase/firestore';
 import { httpsCallable } from 'firebase/functions';
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { toast } from 'sonner';
 import { db, functions } from '../lib/firebase';
 import { markPhase, queueProfilingEnabled, recordRender, recordSnapshot } from '../lib/profiling';
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "./ui/alert-dialog";
 import { Button } from './ui/Button';
+import { Badge } from './ui/Badge';
+import { Separator } from './ui/separator';
 
 interface Patient {
   id: string;
@@ -44,8 +47,6 @@ export default function QueueList({ clinicId: clinicIdProp, doctorId: doctorIdPr
   }, [renderLabel, renderStart]);
   const [patients, setPatients] = useState<Patient[]>([]);
   const [loadingPatients, setLoadingPatients] = useState<boolean>(true);
-  const [error, setError] = useState<string | null>(null);
-  const [message, setMessage] = useState<string | null>(null);
   const [isNextPatientLoading, setIsNextPatientLoading] = useState(false);
   const [isPauseQueueLoading, setIsPauseQueueLoading] = useState(false);
   const [autoAdvance, setAutoAdvance] = useState<boolean>(autoAdvanceProp);
@@ -68,6 +69,8 @@ export default function QueueList({ clinicId: clinicIdProp, doctorId: doctorIdPr
   // Track names for existing modals
   const [cancelPatientName, setCancelPatientName] = useState<string | null>(null);
   const [uncallPatientName, setUncallPatientName] = useState<string | null>(null);
+  // Track individual button loading states
+  const [loadingPatientIds, setLoadingPatientIds] = useState<Set<string>>(new Set());
   // Advance & Pause confirmation modals
   const [showAdvanceModal, setShowAdvanceModal] = useState(false);
   const [showPauseModal, setShowPauseModal] = useState(false);
@@ -175,7 +178,7 @@ export default function QueueList({ clinicId: clinicIdProp, doctorId: doctorIdPr
       },
       (error) => {
         console.error('[QueueList] Failed to subscribe to patients', error);
-        setError('Failed to load patients. Try refreshing the page.');
+        toast.error('Failed to load patients. Please try refreshing the page.');
         setLoadingPatients(false);
       }
     );
@@ -194,7 +197,7 @@ export default function QueueList({ clinicId: clinicIdProp, doctorId: doctorIdPr
   const guarded = <Args extends unknown[], Return>(fn: (...args: Args) => Return) => {
     return (...args: Args): Return | undefined => {
       if (isReadOnly) {
-        setError('This queue is read-only for the selected date.');
+        toast.error('This queue is read-only for the selected date.');
         return undefined;
       }
       return fn(...args);
@@ -204,14 +207,13 @@ export default function QueueList({ clinicId: clinicIdProp, doctorId: doctorIdPr
   // Wrap existing handlers (only those modifying data)
   const handleNextPatient = guarded(async () => {
     if (queueStatus === 'paused') {
-      setError('Queue is paused. Resume it before advancing.');
+      toast.error('Queue is paused. Resume it before advancing.');
       return;
     }
     setIsNextPatientLoading(true);
     const phaseLabel = `${renderLabel}:advance`;
     if (queueProfilingEnabled) markPhase(phaseLabel, 'start');
     try {
-      setError(null); setMessage(null);
       // Get callable reference to updatePatientStatus function
       const updatePatientStatus = httpsCallable(functions, 'updatePatientStatus');
 
@@ -245,18 +247,19 @@ export default function QueueList({ clinicId: clinicIdProp, doctorId: doctorIdPr
         });
 
         console.log('Next patient called successfully');
+        toast.success(`${nextPatient.name} (Token #${nextPatient.tokenNumber}) has been called`);
       } else {
         console.log('No waiting patients found');
       }
 
       if (!currentPatient && !nextPatient) {
         console.log('No patients available to process');
-        setMessage('No patients to advance.');
+        toast.info('No patients to advance.');
       }
 
     } catch (error) {
       console.error('Error updating patient status:', error);
-      setError('Failed to advance patient.');
+      toast.error('Failed to advance patient. Please try again.');
     } finally {
       setIsNextPatientLoading(false);
       if (queueProfilingEnabled) markPhase(phaseLabel, 'end');
@@ -275,9 +278,6 @@ export default function QueueList({ clinicId: clinicIdProp, doctorId: doctorIdPr
         throw new Error('Missing clinic or doctor identifier');
       }
 
-      setMessage(null);
-      setError(null);
-
       const target = queueStatus === 'paused' ? 'active' : 'paused';
       const queueDocRef = doc(
         db,
@@ -295,11 +295,10 @@ export default function QueueList({ clinicId: clinicIdProp, doctorId: doctorIdPr
       });
 
       console.log('Queue status updated successfully via direct write', { queueId, newStatus: target });
-      setMessage(`Queue ${target === 'paused' ? 'paused' : 'resumed'}.`);
-      setError(null);
+      toast.success(`Queue ${target === 'paused' ? 'paused' : 'resumed'}`);
     } catch (error) {
       console.error('Error updating queue status:', error);
-      setError('Failed to update queue status.');
+      toast.error('Failed to update queue status. Please try again.');
     } finally {
       setIsPauseQueueLoading(false);
       if (queueProfilingEnabled) markPhase(phaseLabel, 'end');
@@ -316,21 +315,27 @@ export default function QueueList({ clinicId: clinicIdProp, doctorId: doctorIdPr
   const confirmCompletePatient = async () => {
     if (!completePatientId) return;
     setIsCompletingPatient(true);
+    setLoadingPatientIds(prev => new Set(prev).add(completePatientId));
+    
     const phaseLabel = `${renderLabel}:complete`;
     if (queueProfilingEnabled) markPhase(phaseLabel, 'start');
     try {
-      setError(null); setMessage(null);
       const updatePatientStatus = httpsCallable(functions, 'updatePatientStatus');
       await updatePatientStatus({ clinicId, doctorId, queueId, patientId: completePatientId, newStatus: 'completed' });
-      setMessage(autoAdvance ? 'Patient completed. (Server auto-advance will call next if any.)' : 'Patient marked completed.');
+      toast.success(autoAdvance ? 'Patient completed. Next patient will be called automatically.' : 'Patient marked as completed');
       setShowCompleteModal(false);
       setCompletePatientId(null);
       setCompletePatientName(null);
     } catch (e) {
       console.error('Complete patient failed', e);
-      setError('Failed to complete patient.');
+      toast.error('Failed to complete patient. Please try again.');
     } finally {
       setIsCompletingPatient(false);
+      setLoadingPatientIds(prev => {
+        const next = new Set(prev);
+        next.delete(completePatientId);
+        return next;
+      });
       if (queueProfilingEnabled) markPhase(phaseLabel, 'end');
     }
   };
@@ -344,8 +349,6 @@ export default function QueueList({ clinicId: clinicIdProp, doctorId: doctorIdPr
       if (!clinicId || !doctorId) {
         throw new Error('Missing clinic or doctor identifier');
       }
-      setMessage(null);
-      setError(null);
       const queueDocRef = doc(
         db,
         'clinics',
@@ -360,7 +363,7 @@ export default function QueueList({ clinicId: clinicIdProp, doctorId: doctorIdPr
       setAutoAdvance(checked);
     } catch (e) {
       console.error('Failed to set autoAdvance', e);
-      setError('Failed to update auto-advance flag.');
+      toast.error('Failed to update auto-advance setting. Please try again.');
     } finally {
       setIsAutoAdvUpdating(false);
       if (queueProfilingEnabled) markPhase(phaseLabel, 'end');
@@ -369,18 +372,31 @@ export default function QueueList({ clinicId: clinicIdProp, doctorId: doctorIdPr
 
   const handleCallPatient = guarded(async (patientId: string) => {
     if (!patientId) return;
-    if (queueStatus === 'paused') { setError('Queue is paused. Resume first.'); return; }
+    if (queueStatus === 'paused') { 
+      toast.error('Queue is paused. Resume it first.'); 
+      return; 
+    }
     const phaseLabel = `${renderLabel}:call`;
     if (queueProfilingEnabled) markPhase(phaseLabel, 'start');
+    
+    // Add to loading set
+    setLoadingPatientIds(prev => new Set(prev).add(patientId));
+    
     try {
-      setError(null); setMessage(null);
       const updatePatientStatus = httpsCallable(functions, 'updatePatientStatus');
       await updatePatientStatus({ clinicId, doctorId, queueId, patientId, newStatus: 'in-progress' });
-      setMessage('Patient called.');
+      const patient = patients.find(p => p.id === patientId);
+      toast.success(`${patient?.name || 'Patient'} has been called`);
     } catch (e) {
       console.error('Call patient failed', e);
-      setError('Failed to call patient.');
+      toast.error('Failed to call patient. Please try again.');
     } finally {
+      // Remove from loading set
+      setLoadingPatientIds(prev => {
+        const next = new Set(prev);
+        next.delete(patientId);
+        return next;
+      });
       if (queueProfilingEnabled) markPhase(phaseLabel, 'end');
     }
   });
@@ -396,20 +412,27 @@ export default function QueueList({ clinicId: clinicIdProp, doctorId: doctorIdPr
   const confirmCancelPatient = async () => {
     if (!cancelPatientId) return;
     setIsCancellingPatient(true);
+    setLoadingPatientIds(prev => new Set(prev).add(cancelPatientId));
+    
     const phaseLabel = `${renderLabel}:cancel`;
     if (queueProfilingEnabled) markPhase(phaseLabel, 'start');
     try {
-      setError(null); setMessage(null);
       const updatePatientStatus = httpsCallable(functions, 'updatePatientStatus');
       await updatePatientStatus({ clinicId, doctorId, queueId, patientId: cancelPatientId, newStatus: 'cancelled' });
-      setMessage('Patient cancelled.');
+      const patient = patients.find(p => p.id === cancelPatientId);
+      toast.success(`${patient?.name || 'Patient'} has been cancelled`);
       setShowCancelModal(false);
       setCancelPatientId(null);
     } catch (e) {
       console.error('Cancel patient failed', e);
-      setError('Failed to cancel patient.');
+      toast.error('Failed to cancel patient. Please try again.');
     } finally {
       setIsCancellingPatient(false);
+      setLoadingPatientIds(prev => {
+        const next = new Set(prev);
+        next.delete(cancelPatientId);
+        return next;
+      });
       if (queueProfilingEnabled) markPhase(phaseLabel, 'end');
     }
   };
@@ -424,36 +447,28 @@ export default function QueueList({ clinicId: clinicIdProp, doctorId: doctorIdPr
   const confirmUncallPatient = async () => {
     if (!uncallPatientId) return;
     setIsUncallingPatient(true);
+    setLoadingPatientIds(prev => new Set(prev).add(uncallPatientId));
+    
     const phaseLabel = `${renderLabel}:uncall`;
     if (queueProfilingEnabled) markPhase(phaseLabel, 'start');
     try {
-      setError(null); setMessage(null);
       const updatePatientStatus = httpsCallable(functions, 'updatePatientStatus');
       await updatePatientStatus({ clinicId, doctorId, queueId, patientId: uncallPatientId, newStatus: 'waiting' });
-      setMessage('Patient returned to waiting.');
+      const patient = patients.find(p => p.id === uncallPatientId);
+      toast.success(`${patient?.name || 'Patient'} returned to waiting`);
       setShowUncallModal(false);
       setUncallPatientId(null);
     } catch (e) {
       console.error('Uncall patient failed', e);
-      setError('Failed to uncall patient.');
+      toast.error('Failed to return patient to waiting. Please try again.');
     } finally {
       setIsUncallingPatient(false);
+      setLoadingPatientIds(prev => {
+        const next = new Set(prev);
+        next.delete(uncallPatientId);
+        return next;
+      });
       if (queueProfilingEnabled) markPhase(phaseLabel, 'end');
-    }
-  };
-
-  const getStatusBadgeClasses = (status: Patient['status']) => {
-    switch (status) {
-      case 'waiting':
-        return 'bg-blue-600 text-blue-100';
-      case 'in-progress':
-        return 'bg-green-600 text-green-100';
-      case 'completed':
-        return 'bg-gray-600 text-gray-300 line-through';
-      case 'cancelled':
-        return 'bg-red-600 text-red-100';
-      default:
-        return 'bg-gray-600 text-gray-300';
     }
   };
 
@@ -498,15 +513,18 @@ export default function QueueList({ clinicId: clinicIdProp, doctorId: doctorIdPr
     const handleRestart = () => {
       if (!clinicId || !doctorId) {
         console.error('Restart queue failed: missing clinic/doctor');
-        setError('Failed to restart queue.');
+        toast.error('Failed to restart queue. Missing clinic or doctor information.');
         return;
       }
-      setMessage(null);
-      setError(null);
-  const queueDocRef = doc(db, 'clinics', clinicId!, 'doctors', doctorId!, 'queues', queueId);
+      const queueDocRef = doc(db, 'clinics', clinicId!, 'doctors', doctorId!, 'queues', queueId);
       updateDoc(queueDocRef, { status: 'active', updatedAt: serverTimestamp() })
-        .then(() => { setMessage('Queue restarted and set to Active.'); setError(null); })
-        .catch(e => { console.error('Restart queue failed', e); setError('Failed to restart queue.'); });
+        .then(() => { 
+          toast.success('Queue restarted and set to Active'); 
+        })
+        .catch(e => { 
+          console.error('Restart queue failed', e); 
+          toast.error('Failed to restart queue. Please try again.'); 
+        });
     };
 
     window.addEventListener('togglePauseQueue', handleTogglePause);
@@ -521,7 +539,7 @@ export default function QueueList({ clinicId: clinicIdProp, doctorId: doctorIdPr
   }, [pausedFlag, skipPauseToday, clinicId, doctorId, queueId, handleTogglePauseQueue]);
 
   return (
-  <div className={`space-y-3 w-full px-3 md:px-4 lg:px-6 pt-3 md:pt-4 lg:pt-6 pb-32 md:pb-8 ${compact ? 'queue-compact' : ''}`} aria-live="polite">
+  <div className={`space-y-6 w-full px-4 md:px-6 pt-4 md:pt-6 pb-24 md:pb-8 ${compact ? 'queue-compact' : ''}`} aria-live="polite">
       {/* Desktop / tablet toolbar */}
       <div className="hidden sm:flex gap-3 mb-4 flex-wrap">
         {/* Toolbar now minimal since controls moved to section headers */}
@@ -567,17 +585,20 @@ export default function QueueList({ clinicId: clinicIdProp, doctorId: doctorIdPr
                 if(endConfirmText !== 'END') return;
                 if (!clinicId || !doctorId) {
                   console.error('End queue failed: missing clinic/doctor');
-                  setError('Failed to end queue.');
+                  toast.error('Failed to end queue. Missing clinic or doctor information.');
                   setShowEndModal(false);
                   setEndConfirmText('');
                   return;
                 }
-                setMessage(null);
-                setError(null);
                 const queueDocRef = doc(db, 'clinics', clinicId!, 'doctors', doctorId!, 'queues', queueId);
                 updateDoc(queueDocRef, { status: 'ended', updatedAt: serverTimestamp() })
-                  .then(()=>{ setMessage('Queue ended. You can restart it below if needed.'); setError(null); })
-                  .catch(e=>{ console.error('End queue failed', e); setError('Failed to end queue.'); })
+                  .then(()=>{ 
+                    toast.success('Queue ended. You can restart it if needed.'); 
+                  })
+                  .catch(e=>{ 
+                    console.error('End queue failed', e); 
+                    toast.error('Failed to end queue. Please try again.'); 
+                  })
                   .finally(()=>{ setShowEndModal(false); setEndConfirmText(''); });
               }}
               disabled={endConfirmText !== 'END'}
@@ -687,21 +708,25 @@ export default function QueueList({ clinicId: clinicIdProp, doctorId: doctorIdPr
       </AlertDialog>
 
       {activeActionMessage && (
-        <div className="mb-3 flex items-center gap-2 text-sm text-slate-600" role="status">
-          <span className="h-2 w-2 animate-pulse rounded-full bg-blue-500" aria-hidden />
-          <span>{activeActionMessage}</span>
+        <div className="flex items-center gap-3 text-sm text-blue-700 bg-blue-50 border border-blue-200 rounded-lg px-4 py-3 shadow-sm" role="status">
+          <svg className="w-5 h-5 animate-spin flex-shrink-0" fill="none" viewBox="0 0 24 24">
+            <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+            <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+          </svg>
+          <span className="font-medium">{activeActionMessage}</span>
         </div>
       )}
 
-      {(message || error) && (
-        <div className="mb-4 text-sm" role="status">
-          {message && <div className="text-green-600">{message}</div>}
-          {error && <div className="text-red-600" role="alert">{error}</div>}
-        </div>
-      )}
       {isReadOnly && (
-        <div className="mb-4 text-xs rounded-md border border-gray-300 bg-gray-100/70 px-3 py-2 text-gray-600">
-          Viewing historical queue data for <span className="font-mono">{queueId}</span>. Actions are disabled.
+        <div className="flex items-start gap-3 text-sm text-gray-700 bg-gray-50 border border-gray-300 rounded-lg px-4 py-3 shadow-sm">
+          <svg className="w-5 h-5 flex-shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+          </svg>
+          <div>
+            <span className="font-medium">Viewing historical queue data for </span>
+            <span className="font-mono text-gray-900">{queueId}</span>
+            <span>. Actions are disabled.</span>
+          </div>
         </div>
       )}
 
@@ -709,15 +734,16 @@ export default function QueueList({ clinicId: clinicIdProp, doctorId: doctorIdPr
       {(() => {
         if (loadingPatients) {
           return (
-            <div className="space-y-2" aria-hidden>
+            <div className="space-y-3" aria-hidden>
               {Array.from({ length: 4 }).map((_, i) => (
-                <div key={i} className="bg-gray-100 rounded-lg p-4">
+                <div key={i} className="bg-white border border-gray-200 rounded-lg p-4 animate-pulse">
                   <div className="flex items-center gap-4">
-                    <div className="wf-skeleton w-10 h-10 rounded-full" />
-                    <div className="flex-1">
-                      <div className="wf-skeleton h-4 w-1/3 rounded" />
-                      <div className="wf-skeleton h-3 w-1/4 rounded mt-2" />
+                    <div className="w-12 h-12 rounded-full bg-gray-200" />
+                    <div className="flex-1 space-y-2">
+                      <div className="h-5 w-1/3 rounded bg-gray-200" />
+                      <div className="h-4 w-1/4 rounded bg-gray-200" />
                     </div>
+                    <div className="h-9 w-20 rounded bg-gray-200" />
                   </div>
                 </div>
               ))}
@@ -725,7 +751,21 @@ export default function QueueList({ clinicId: clinicIdProp, doctorId: doctorIdPr
           );
         }
         if (patients.length === 0) {
-          return <div className="text-gray-600 text-center py-8">No patients in queue</div>;
+          return (
+            <div className="text-center py-16 px-4">
+              <div className="max-w-sm mx-auto space-y-4">
+                <div className="h-16 w-16 mx-auto rounded-full bg-gray-100 flex items-center justify-center">
+                  <svg className="w-8 h-8 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z" />
+                  </svg>
+                </div>
+                <div>
+                  <h3 className="text-lg font-semibold text-gray-900 mb-1">No Patients Yet</h3>
+                  <p className="text-sm text-gray-600">Patients who join the queue will appear here</p>
+                </div>
+              </div>
+            </div>
+          );
         }
         const sorted = [...patients].sort((a, b) => a.tokenNumber - b.tokenNumber);
         const groups: Record<string, Patient[]> = { 'in-progress': [], waiting: [], completed: [], cancelled: [] };
@@ -736,37 +776,91 @@ export default function QueueList({ clinicId: clinicIdProp, doctorId: doctorIdPr
           const list = groups[groupKey];
           if (!list.length) return null;
           return (
-            <div key={groupKey} className="mb-6">
-              <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 mb-3">
-                <div className="flex items-center">
-                  <h4 className="text-sm font-semibold uppercase tracking-wide text-gray-600">{titles[groupKey]}</h4>
-                  <span className="ml-2 text-xs text-gray-500">{list.length}</span>
+            <div key={groupKey} className="space-y-3">
+              {/* Section Header */}
+              <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 px-1">
+                <div className="flex items-center gap-3">
+                  <div className={`h-10 w-10 rounded-lg flex items-center justify-center ${
+                    groupKey === 'in-progress' ? 'bg-green-100' :
+                    groupKey === 'waiting' ? 'bg-blue-100' :
+                    groupKey === 'completed' ? 'bg-gray-100' :
+                    'bg-red-100'
+                  }`}>
+                    {groupKey === 'in-progress' && (
+                      <svg className="w-5 h-5 text-green-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+                      </svg>
+                    )}
+                    {groupKey === 'waiting' && (
+                      <svg className="w-5 h-5 text-blue-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+                      </svg>
+                    )}
+                    {groupKey === 'completed' && (
+                      <svg className="w-5 h-5 text-gray-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+                      </svg>
+                    )}
+                    {groupKey === 'cancelled' && (
+                      <svg className="w-5 h-5 text-red-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 14l2-2m0 0l2-2m-2 2l-2-2m2 2l2 2m7-2a9 9 0 11-18 0 9 9 0 0118 0z" />
+                      </svg>
+                    )}
+                  </div>
+                  <div>
+                    <h4 className="text-base font-bold text-gray-900">{titles[groupKey]}</h4>
+                    <p className="text-xs text-gray-500">{list.length} patient{list.length !== 1 ? 's' : ''}</p>
+                  </div>
                 </div>
                 
                 {/* Add controls for waiting section */}
-                {groupKey === 'waiting' && (
+                {groupKey === 'waiting' && !isReadOnly && (
                   <div className="flex items-center gap-2 flex-wrap">
-                    <button
+                    <Button
                       onClick={()=>{ if (skipAdvanceToday) { handleNextPatient(); } else { setShowAdvanceModal(true); } }}
                       disabled={isNextPatientLoading || !patients.length || endedFlag || autoAdvance}
-                      className="h-7 px-3 text-xs font-medium text-white bg-blue-500 hover:bg-blue-600 disabled:bg-gray-300 disabled:cursor-not-allowed border-0 rounded-lg transition-all duration-200 shadow-sm hover:shadow"
+                      size="sm"
+                      className="bg-blue-600 hover:bg-blue-700 text-white shadow-sm h-9 disabled:opacity-50 disabled:cursor-not-allowed"
                       title={autoAdvance ? "Next Patient is automatic when auto-advance is enabled" : "Call the next waiting patient"}
                     >
-                      {isNextPatientLoading ? 'Processing…' : 'Next Patient'}
-                    </button>
-                    <label className="flex items-center gap-1.5 text-xs text-slate-600 bg-white hover:bg-slate-50 border border-slate-200 hover:border-slate-300 rounded-lg px-2 py-1 transition-all duration-200 shadow-sm hover:shadow cursor-pointer">
+                      {isNextPatientLoading ? (
+                        <>
+                          <svg className="w-4 h-4 mr-2 animate-spin" fill="none" viewBox="0 0 24 24">
+                            <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                            <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                          </svg>
+                          Processing…
+                        </>
+                      ) : (
+                        <>
+                          <svg className="w-4 h-4 mr-2" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 9l3 3m0 0l-3 3m3-3H8m13 0a9 9 0 11-18 0 9 9 0 0118 0z" />
+                          </svg>
+                          Next Patient
+                        </>
+                      )}
+                    </Button>
+                    <label className="flex items-center gap-2 px-3 py-2 text-sm text-gray-700 bg-white border border-gray-300 rounded-lg hover:bg-gray-50 cursor-pointer transition-colors shadow-sm h-9">
                       <input
                         type="checkbox"
                         checked={autoAdvance}
                         disabled={isAutoAdvUpdating}
                         onChange={(e) => handleToggleAutoAdvance(e.target.checked)}
-                        className="h-3 w-3 rounded border-gray-300 bg-white text-blue-600 focus:ring-blue-500 disabled:opacity-50"
+                        className="h-4 w-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500 disabled:opacity-50 cursor-pointer"
                       />
-                      <span className="whitespace-nowrap">Auto-advance</span> {isAutoAdvUpdating && <span className="text-[10px] text-gray-400">(saving)</span>}
+                      <span className="font-medium whitespace-nowrap">Auto-advance</span>
+                      {isAutoAdvUpdating && (
+                        <svg className="w-3 h-3 animate-spin text-gray-400" fill="none" viewBox="0 0 24 24">
+                          <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                          <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                        </svg>
+                      )}
                     </label>
                   </div>
                 )}
               </div>
+              
+              <Separator className="my-2" />
               <div className="space-y-2">
                 {list.map(patient => {
                   const isInProgress = patient.status === 'in-progress';
@@ -776,32 +870,183 @@ export default function QueueList({ clinicId: clinicIdProp, doctorId: doctorIdPr
                   const canComplete = isInProgress && !isCompleted;
                   const canCancel = !isCompleted && !isCancelled;
                   const canUncall = isInProgress && !isCompleted && !isCancelled;
+                  const isLoading = loadingPatientIds.has(patient.id);
+                  
                   return (
                     <div
                       key={patient.id}
-                      className="queue-row flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 bg-white border border-gray-200 rounded-xl p-3 hover:border-gray-300 hover:shadow-md transition-all duration-200 active:scale-[.995]"
+                      className={`flex flex-col sm:flex-row sm:items-center gap-4 bg-white border rounded-lg p-4 transition-all duration-200 ${
+                        isInProgress 
+                          ? 'border-blue-300 bg-blue-50/30 shadow-sm' 
+                          : isCompleted 
+                          ? 'border-gray-200 bg-gray-50/50' 
+                          : isCancelled
+                          ? 'border-red-200 bg-red-50/30'
+                          : 'border-gray-200 hover:border-gray-300 hover:shadow-sm'
+                      }`}
                     >
-                      <div className="flex items-center space-x-3 min-w-0 flex-1">
-                        <div className="queue-token bg-indigo-50 text-indigo-700 border border-indigo-200 w-10 h-10 rounded-full flex items-center justify-center font-semibold text-sm flex-shrink-0">
+                      {/* Patient Info Section */}
+                      <div className="flex items-center gap-4 min-w-0 flex-1">
+                        {/* Token Number */}
+                        <div className={`flex-shrink-0 w-12 h-12 rounded-full flex items-center justify-center font-bold text-base border-2 ${
+                          isInProgress 
+                            ? 'bg-blue-100 border-blue-400 text-blue-700' 
+                            : isCompleted
+                            ? 'bg-gray-100 border-gray-300 text-gray-500'
+                            : isCancelled
+                            ? 'bg-red-100 border-red-300 text-red-600'
+                            : 'bg-indigo-50 border-indigo-300 text-indigo-700'
+                        }`}>
                           {patient.tokenNumber}
                         </div>
-                        <div className="space-y-0.5 min-w-0 flex-1">
-                          <p className={`font-medium truncate ${isCompleted ? 'text-gray-500 line-through' : 'text-gray-800'}`}>{patient.name}</p>
-                          <div className="flex flex-wrap gap-2 text-xs text-gray-600">
-                            {patient.age !== undefined && <span className="inline-flex items-center gap-1"><span className="text-gray-400">Age:</span>{patient.age}</span>}
-                            {patient.phone && <span className="inline-flex items-center gap-1 truncate"><span className="text-gray-400">Phone:</span>{patient.phone}</span>}
+
+                        {/* Patient Details */}
+                        <div className="flex-1 min-w-0 space-y-1">
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <p className={`font-semibold text-base ${
+                              isCompleted ? 'text-gray-500 line-through' : 'text-gray-900'
+                            }`}>
+                              {patient.name}
+                            </p>
+                            {isInProgress && (
+                              <Badge className="bg-blue-100 text-blue-700 border border-blue-300 text-[10px] px-2 py-0.5 font-semibold">
+                                NOW
+                              </Badge>
+                            )}
+                          </div>
+                          <div className="flex items-center gap-3 text-sm text-gray-600">
+                            {patient.age !== undefined && (
+                              <span className="flex items-center gap-1.5">
+                                <svg className="w-4 h-4 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
+                                </svg>
+                                {patient.age} yrs
+                              </span>
+                            )}
+                            {patient.phone && (
+                              <span className="flex items-center gap-1.5 truncate">
+                                <svg className="w-4 h-4 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 5a2 2 0 012-2h3.28a1 1 0 01.948.684l1.498 4.493a1 1 0 01-.502 1.21l-2.257 1.13a11.042 11.042 0 005.516 5.516l1.13-2.257a1 1 0 011.21-.502l4.493 1.498a1 1 0 01.684.949V19a2 2 0 01-2 2h-1C9.716 21 3 14.284 3 6V5z" />
+                                </svg>
+                                {patient.phone}
+                              </span>
+                            )}
                           </div>
                         </div>
-                        <div className="flex items-center gap-2 text-xs flex-shrink-0">
-                          <span className={`px-2 py-0.5 rounded-full ${getStatusBadgeClasses(patient.status)}`}>{getStatusText(patient.status)}</span>
-                          {isInProgress && <span className="px-2 py-0.5 rounded-full bg-indigo-600 text-indigo-100">Now</span>}
+
+                        {/* Status Badge - Desktop */}
+                        <div className="hidden sm:block flex-shrink-0">
+                          <Badge 
+                            variant="outline"
+                            className={`text-xs font-medium border ${
+                              isInProgress ? 'bg-green-50 text-green-700 border-green-300' :
+                              isCompleted ? 'bg-gray-50 text-gray-600 border-gray-300' :
+                              isCancelled ? 'bg-red-50 text-red-700 border-red-300' :
+                              'bg-blue-50 text-blue-700 border-blue-300'
+                            }`}
+                          >
+                            {getStatusText(patient.status)}
+                          </Badge>
                         </div>
                       </div>
-                      <div className="queue-actions flex flex-wrap gap-2 text-xs sm:text-sm flex-shrink-0">
-                        {canCall && <Button onClick={() => handleCallPatient(patient.id)} variant="accent" size="sm" className="px-3 py-1.5 h-auto">Call</Button>}
-                        {canComplete && <Button onClick={() => requestCompletePatient(patient.id)} variant="secondary" size="sm" className="px-3 py-1.5 h-auto">Done</Button>}
-                        {canUncall && <Button onClick={() => requestUncallPatient(patient.id)} variant="outline" size="sm" className="px-3 py-1.5 h-auto">Uncall</Button>}
-                        {canCancel && <Button onClick={() => requestCancelPatient(patient.id)} variant="destructive" size="sm" className="px-3 py-1.5 h-auto">Cancel</Button>}
+
+                      {/* Action Buttons Section */}
+                      <div className="flex items-center gap-2 flex-shrink-0 sm:ml-4">
+                        {canCall && (
+                          <Button 
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              handleCallPatient(patient.id);
+                            }}
+                            disabled={isLoading}
+                            size="sm" 
+                            className="bg-blue-600 hover:bg-blue-700 text-white shadow-sm h-9 px-4 disabled:opacity-50 disabled:cursor-not-allowed"
+                          >
+                            {isLoading ? (
+                              <svg className="w-4 h-4 mr-1.5 animate-spin" fill="none" viewBox="0 0 24 24">
+                                <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                                <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                              </svg>
+                            ) : (
+                              <svg className="w-4 h-4 mr-1.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 5a2 2 0 012-2h3.28a1 1 0 01.948.684l1.498 4.493a1 1 0 01-.502 1.21l-2.257 1.13a11.042 11.042 0 005.516 5.516l1.13-2.257a1 1 0 011.21-.502l4.493 1.498a1 1 0 01.684.949V19a2 2 0 01-2 2h-1C9.716 21 3 14.284 3 6V5z" />
+                              </svg>
+                            )}
+                            {isLoading ? 'Calling...' : 'Call'}
+                          </Button>
+                        )}
+                        {canComplete && (
+                          <Button 
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              requestCompletePatient(patient.id);
+                            }}
+                            disabled={isLoading}
+                            variant="default"
+                            size="sm" 
+                            className="bg-green-600 hover:bg-green-700 text-white shadow-sm h-9 px-4 disabled:opacity-50 disabled:cursor-not-allowed"
+                          >
+                            {isLoading ? (
+                              <svg className="w-4 h-4 mr-1.5 animate-spin" fill="none" viewBox="0 0 24 24">
+                                <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                                <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                              </svg>
+                            ) : (
+                              <svg className="w-4 h-4 mr-1.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                              </svg>
+                            )}
+                            Done
+                          </Button>
+                        )}
+                        {canUncall && (
+                          <Button 
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              requestUncallPatient(patient.id);
+                            }}
+                            disabled={isLoading}
+                            variant="outline" 
+                            size="sm" 
+                            className="border-gray-300 hover:bg-gray-50 h-9 px-4 disabled:opacity-50 disabled:cursor-not-allowed"
+                          >
+                            {isLoading ? (
+                              <svg className="w-4 h-4 mr-1.5 animate-spin" fill="none" viewBox="0 0 24 24">
+                                <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                                <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                              </svg>
+                            ) : (
+                              <svg className="w-4 h-4 mr-1.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 10h10a8 8 0 018 8v2M3 10l6 6m-6-6l6-6" />
+                              </svg>
+                            )}
+                            Uncall
+                          </Button>
+                        )}
+                        {canCancel && (
+                          <Button 
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              requestCancelPatient(patient.id);
+                            }}
+                            disabled={isLoading}
+                            variant="outline" 
+                            size="sm" 
+                            className="border-red-300 text-red-600 hover:bg-red-50 hover:border-red-400 h-9 px-4 disabled:opacity-50 disabled:cursor-not-allowed"
+                          >
+                            {isLoading ? (
+                              <svg className="w-4 h-4 mr-1.5 animate-spin" fill="none" viewBox="0 0 24 24">
+                                <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                                <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                              </svg>
+                            ) : (
+                              <svg className="w-4 h-4 mr-1.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                              </svg>
+                            )}
+                            Cancel
+                          </Button>
+                        )}
                       </div>
                     </div>
                   );
