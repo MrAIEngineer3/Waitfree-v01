@@ -9,7 +9,6 @@ import DateNavigator from '../components/DateNavigator';
 import QueueList from '../components/QueueList';
 import { Separator } from '../components/ui/separator';
 import { Button } from '../components/ui/Button';
-import { Badge } from '../components/ui/Badge';
 import { auth, db } from '../lib/firebase';
 import { markPhase, queueProfilingEnabled, recordRender, recordSnapshot } from '../lib/profiling';
 

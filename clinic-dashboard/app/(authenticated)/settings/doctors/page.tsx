@@ -5,7 +5,7 @@ import { Separator } from '@/components/ui/separator';
 import { Label } from '@/components/ui/label';
 import { Switch } from '@/components/ui/switch';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { db } from '@/lib/firebase';
 import { addDoc, collection, deleteDoc, doc, getDoc, onSnapshot, orderBy, query, updateDoc } from 'firebase/firestore';
 import React, { useEffect, useMemo, useState } from 'react';
@@ -122,19 +122,6 @@ const DAY_LABELS: Record<DayKey, string> = {
 };
 
 const DEFAULT_TIME_ZONE = 'Asia/Kolkata';
-const TIMEZONE_OPTIONS: string[] = [
-  'Asia/Kolkata',
-  'Asia/Dubai',
-  'Asia/Singapore',
-  'Asia/Bangkok',
-  'Asia/Kathmandu',
-  'Asia/Kuala_Lumpur',
-  'Asia/Tokyo',
-  'Europe/London',
-  'Europe/Berlin',
-  'America/New_York'
-];
-
 // Generate time component options
 const HOUR_OPTIONS = ['1', '2', '3', '4', '5', '6', '7', '8', '9', '10', '11', '12'];
 const MINUTE_OPTIONS = ['00', '30'];
