@@ -1,7 +1,8 @@
 // Load local env for emulator
-import * as admin from 'firebase-admin';
 import * as functions from 'firebase-functions/v1';
 import './loadEnv';
+import { admin } from './firebaseAdmin';
+import { Timestamp } from 'firebase-admin/firestore';
 
 // Import Twilio for WhatsApp integration
 type TwilioModule = typeof import('twilio');
@@ -23,7 +24,7 @@ function resolveTwilioFactory(): TwilioModule | null {
 
 // Notification types used by functions. Add granular stages so server can record which
 // per-patient stage notifications were already emitted.
-type NotifyType = 'joined' | 'three-away' | 'two-away' | 'one-away' | 'now' | 'cancelled' | 'completed' | 'pos1' | 'pos2' | 'pos3';
+type NotifyType = 'joined' | 'three-away' | 'two-away' | 'one-away' | 'now' | 'cancelled' | 'completed' | 'pos1' | 'pos2' | 'pos3' | 'doctor-online';
 
 interface NotifyOpts {
   to: string; // phone number or identifier
@@ -97,6 +98,11 @@ function createWhatsAppMessage(type: NotifyType, payload: any): string {
     
     case 'cancelled':
       return `${name}, your queue entry (Token #${token}) has been cancelled. If this was a mistake, please contact the clinic.`;
+
+    case 'doctor-online': {
+      const doctorName = payload?.doctorName || 'Doctor';
+      return `Great news! ${doctorName} is now available. Open the app to join the queue.${patientLink}`;
+    }
     
     default:
       return `${name}, queue update for token #${token}.`;
@@ -143,7 +149,7 @@ export async function sendNotification(opts: NotifyOpts) {
         type: opts.type,
         message: messageContent,
         payload: opts.payload || null,
-        createdAt: admin.firestore.Timestamp.now(),
+  createdAt: Timestamp.now(),
         twilioAttempted: !!getTwilioClient()
       });
     } catch (e) {

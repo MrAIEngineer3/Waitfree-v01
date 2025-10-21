@@ -1,6 +1,6 @@
-import * as admin from 'firebase-admin';
 import * as functions from 'firebase-functions/v1';
 import { sendNotification } from './notifier';
+import { admin } from './firebaseAdmin';
 
 /**
  * Notification Engine (Phase 2)

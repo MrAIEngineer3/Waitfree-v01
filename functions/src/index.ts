@@ -1,24 +1,36 @@
 import { FieldValue } from '@google-cloud/firestore';
 // Ensure local .env variables are loaded when running in emulator / local scripts
 import crypto from 'crypto';
-import * as admin from 'firebase-admin';
 import * as functions from 'firebase-functions/v1';
 import { setGlobalOptions } from 'firebase-functions/v2';
 import { onCall } from 'firebase-functions/v2/https';
 import type { CallableRequest } from 'firebase-functions/v2/https';
 import type { GlobalOptions } from 'firebase-functions/v2';
 import './loadEnv';
+import { admin } from './firebaseAdmin';
 
 // Import functions for local use
 import { recomputeQueueNotifications } from './notificationEngine';
 import { sendNotification } from './notifier';
+import {
+  createDoctorScheduleOverride as applyCreateScheduleOverride,
+  deleteDoctorScheduleOverride as applyDeleteScheduleOverride,
+  NotFoundError as SchedulingNotFoundError,
+  setDoctorRealTimeStatus as applySetDoctorRealTimeStatus,
+  updateDoctorDefaultRota as applyUpdateDoctorDefaultRota,
+  updateDoctorScheduleOverride as applyUpdateScheduleOverride,
+  ValidationError as SchedulingValidationError
+} from './scheduling/mutations';
+import { dispatchDoctorOnlineNotifications } from './scheduling/notificationQueue';
+import { resolveDoctorAvailability, resolveManyDoctorAvailability } from './scheduling/availability';
+import { loadClinicSchedulingSettings, saveClinicSchedulingSettings } from './scheduling/settings';
+import type { DoctorAvailabilityResult, ScheduleOverride } from './scheduling/types';
 import { startTiming } from './utils/timing';
-
-// Initialize the Admin SDK. This is required for all backend functions.
-admin.initializeApp();
+import { createRequestDoctorOnlineNotificationHandler } from './scheduling/requestDoctorOnlineNotification';
 
 // Export functions from other files to make them deployable
 export * from './notifier';
+export * from './scheduling';
 
 
 // Simplified CORS configuration:
@@ -135,6 +147,79 @@ const adaptCallableContext = <T>(request: CallableRequest<T>): CallableCtx => {
 const createV2Callable = <T>(handler: (data: T, context: CallableCtx) => Promise<any> | any) =>
   onCall<T>((request: CallableRequest<T>) => handler(request.data, adaptCallableContext(request)));
 
+const mapSchedulingError = (error: unknown, action: string): never => {
+  if (error instanceof SchedulingValidationError) {
+    throw new functions.https.HttpsError('invalid-argument', error.message);
+  }
+  if (error instanceof SchedulingNotFoundError) {
+    throw new functions.https.HttpsError('not-found', error.message);
+  }
+  functions.logger.error(`Scheduling action ${action} failed`, {
+    error: error instanceof Error ? { message: error.message, stack: error.stack } : error,
+    action
+  });
+  throw new functions.https.HttpsError('internal', `Failed to ${action}`);
+};
+
+const sanitizeFirestoreId = (value: unknown): string | null => {
+  if (typeof value !== 'string') {
+    return null;
+  }
+  const trimmed = value.trim();
+  if (!trimmed) {
+    return null;
+  }
+  return /^[A-Za-z0-9-_.~]+$/.test(trimmed) ? trimmed : null;
+};
+
+const serializeOverride = (override: ScheduleOverride | null | undefined) => {
+  if (!override) {
+    return null;
+  }
+  const base = {
+    id: override.id,
+    type: override.type,
+    start: override.start.toDate().toISOString(),
+    end: override.end.toDate().toISOString(),
+    note: override.note ?? null,
+    createdAt: override.createdAt ? override.createdAt.toDate().toISOString() : null,
+    updatedAt: override.updatedAt ? override.updatedAt.toDate().toISOString() : null
+  };
+  if (override.type === 'blocker') {
+    return {
+      ...base,
+      reasonCode: override.reasonCode ?? null
+    };
+  }
+  return {
+    ...base,
+    label: override.label ?? null
+  };
+};
+
+const serializeAvailability = (result: DoctorAvailabilityResult) => {
+  return {
+    status: result.status,
+    layer: result.layer,
+    reasonCode: result.reasonCode,
+    message: result.message ?? null,
+    computedAt: result.computedAt.toISOString(),
+    nextAvailableAt: result.nextAvailableAt ? result.nextAvailableAt.toISOString() : null,
+    activeOverride: serializeOverride(result.activeOverride ?? null),
+    realTimeStatus: result.realTimeStatus
+      ? {
+          online: result.realTimeStatus.online,
+          note: result.realTimeStatus.note ?? null,
+          source: result.realTimeStatus.source ?? null,
+          updatedAt: result.realTimeStatus.updatedAt
+            ? result.realTimeStatus.updatedAt.toDate().toISOString()
+            : null
+        }
+      : null,
+    debug: result.debug ?? null
+  };
+};
+
 type JoinQueueRequest = {
   clinicId?: string;
   doctorId?: string;
@@ -182,6 +267,57 @@ type BootstrapClinicAccountRequest = {
   clinicId?: string;
   doctorId?: string;
   clinicPhone?: string;
+};
+
+type SetRealTimeStatusRequest = {
+  clinicId?: string;
+  doctorId?: string;
+  online?: boolean;
+  note?: string;
+  source?: 'staff' | 'system' | 'automation';
+};
+
+type UpdateDefaultRotaRequest = {
+  clinicId?: string;
+  doctorId?: string;
+  timeZone?: string;
+  week?: Record<string, { start: string; end: string; label?: string | null }[]>;
+};
+
+type BaseOverrideRequest = {
+  clinicId?: string;
+  doctorId?: string;
+  overrideId?: string;
+  type?: 'blocker' | 'exception';
+  start?: string;
+  end?: string;
+  note?: string;
+};
+
+type CreateOverrideRequest =
+  | (BaseOverrideRequest & { type: 'blocker'; reasonCode?: string | null })
+  | (BaseOverrideRequest & { type: 'exception'; label?: string | null });
+
+type RequestDoctorOnlineNotification = {
+  clinicId?: string;
+  doctorId?: string;
+  patientName?: string;
+  phone?: string;
+};
+
+type GetClinicDoctorAvailabilityRequest = {
+  clinicId?: string;
+  doctorIds?: string[];
+};
+
+type GetClinicSchedulingSettingsRequest = {
+  clinicId?: string;
+};
+
+type UpdateClinicSchedulingSettingsRequest = {
+  clinicId?: string;
+  manualCheckInRequired?: boolean;
+  allowOfflineSignups?: boolean;
 };
 
 /** DEBUG: Returns runtime flag visibility and Node version */
@@ -391,6 +527,25 @@ const joinQueueHandler = async (data: JoinQueueRequest, _context: CallableCtx) =
       throw new functions.https.HttpsError(
         'invalid-argument',
         'Patient data must include name, age, and phone.'
+      );
+    }
+
+    const availability = await resolveDoctorAvailability({
+      clinicId,
+      doctorId
+    });
+
+    if (availability.status !== 'AVAILABLE') {
+      const serialized = serializeAvailability(availability);
+      functions.logger.info('joinQueue blocked: doctor unavailable', {
+        clinicId,
+        doctorId,
+        availability: serialized
+      });
+      throw new functions.https.HttpsError(
+        'failed-precondition',
+        availability.message ?? 'Doctor is currently unavailable.',
+        { availability: serialized }
       );
     }
 
@@ -1121,6 +1276,337 @@ const setQueueAutoAdvanceHandler = async (data: SetQueueAutoAdvanceRequest, _con
 };
 
 export const setQueueAutoAdvance = createV2Callable(setQueueAutoAdvanceHandler);
+
+const setRealTimeStatusHandler = async (data: SetRealTimeStatusRequest, context: CallableCtx) => {
+  if (!context.auth) {
+    throw new functions.https.HttpsError('unauthenticated', 'Authentication required');
+  }
+
+  if (typeof data?.online !== 'boolean') {
+    throw new functions.https.HttpsError('invalid-argument', 'online must be a boolean');
+  }
+
+  const clinicId = typeof data?.clinicId === 'string' ? data.clinicId.trim() : '';
+  const doctorId = typeof data?.doctorId === 'string' ? data.doctorId.trim() : '';
+
+  try {
+    const result = await applySetDoctorRealTimeStatus({
+      clinicId,
+      doctorId,
+      online: data.online,
+      note: data?.note,
+      source: data?.source
+    });
+
+    const transitionedToOnline =
+      result.changed &&
+      result.previousStatus?.online === false &&
+      result.updatedStatus.online === true;
+
+    if (transitionedToOnline) {
+      runInBackground('doctorOnlineNotificationDispatch', async () => {
+        await dispatchDoctorOnlineNotifications({ clinicId, doctorId });
+      });
+    }
+
+    return {
+      success: true,
+      changed: result.changed,
+      previousStatus: result.previousStatus,
+      updatedStatus: result.updatedStatus,
+      effectiveAt: new Date().toISOString()
+    };
+  } catch (error) {
+    mapSchedulingError(error, 'set real-time status');
+  }
+};
+
+export const setDoctorRealTimeStatus = createV2Callable(setRealTimeStatusHandler);
+
+const getClinicDoctorAvailabilityHandler = async (data: GetClinicDoctorAvailabilityRequest, _context: CallableCtx) => {
+  if (!data || typeof data !== 'object') {
+    throw new functions.https.HttpsError('invalid-argument', 'Request payload must be an object');
+  }
+
+  const clinicId = sanitizeFirestoreId(data.clinicId);
+  if (!clinicId) {
+    throw new functions.https.HttpsError('invalid-argument', 'clinicId is required');
+  }
+
+  const providedDoctorIds = Array.isArray(data.doctorIds) ? data.doctorIds : undefined;
+  const sanitizedDoctorIds = providedDoctorIds
+    ? providedDoctorIds
+        .map((value) => sanitizeFirestoreId(value))
+        .filter((value): value is string => typeof value === 'string')
+    : [];
+
+  if (providedDoctorIds && sanitizedDoctorIds.length === 0) {
+    throw new functions.https.HttpsError('invalid-argument', 'doctorIds must contain valid Firestore identifiers');
+  }
+
+  const uniqueDoctorIds = Array.from(new Set(sanitizedDoctorIds));
+
+  const db = admin.firestore();
+  const clinicRef = db.collection('clinics').doc(clinicId);
+
+  const clinicSnap = await clinicRef.get();
+  if (!clinicSnap.exists) {
+    throw new functions.https.HttpsError('not-found', 'Clinic not found');
+  }
+
+  const doctorsCollection = clinicRef.collection('doctors');
+  const doctorMetadata = new Map<string, Record<string, unknown> | null>();
+
+  const extractDoctorProfile = (raw: Record<string, unknown> | null) => {
+    if (!raw) {
+      return null;
+    }
+    const name = typeof raw['name'] === 'string' ? (raw['name'] as string) : null;
+    const specialty = typeof raw['specialty'] === 'string' ? (raw['specialty'] as string) : null;
+    const avatarUrl = typeof raw['photoUrl'] === 'string' ? (raw['photoUrl'] as string) : null;
+
+    if (!name && !specialty && !avatarUrl) {
+      return null;
+    }
+
+    return {
+      name,
+      specialty,
+      avatarUrl
+    };
+  };
+
+  let targetDoctorIds = uniqueDoctorIds;
+
+  if (targetDoctorIds.length > 0) {
+    await Promise.all(
+      targetDoctorIds.map(async (doctorId) => {
+        const snap = await doctorsCollection.doc(doctorId).get();
+        if (snap.exists) {
+          doctorMetadata.set(doctorId, snap.data() ?? {});
+        } else {
+          doctorMetadata.set(doctorId, null);
+        }
+      })
+    );
+  } else {
+    const snapshot = await doctorsCollection.get();
+    targetDoctorIds = snapshot.docs.map((doc) => {
+      doctorMetadata.set(doc.id, doc.data() ?? {});
+      return doc.id;
+    });
+  }
+
+  if (targetDoctorIds.length === 0) {
+    return {
+      clinicId,
+      count: 0,
+      doctors: [],
+      requestedDoctorIds: providedDoctorIds ? [] : undefined
+    };
+  }
+
+  const availabilityResults = await resolveManyDoctorAvailability({
+    clinicId,
+    doctorIds: targetDoctorIds
+  });
+
+  const doctors = availabilityResults.map((result) => {
+    const metadata = doctorMetadata.get(result.doctorId) ?? null;
+    const profile = extractDoctorProfile(metadata);
+
+    return {
+      doctorId: result.doctorId,
+      profile,
+      availability: serializeAvailability(result)
+    };
+  });
+
+  return {
+    clinicId,
+    count: doctors.length,
+    doctors,
+    requestedDoctorIds: providedDoctorIds ? targetDoctorIds : undefined
+  };
+};
+
+export const getClinicDoctorAvailability = createV2Callable(getClinicDoctorAvailabilityHandler);
+
+const getClinicSchedulingSettingsHandler = async (
+  data: GetClinicSchedulingSettingsRequest,
+  _context: CallableCtx
+) => {
+  const clinicId = sanitizeFirestoreId(data?.clinicId);
+  if (!clinicId) {
+    throw new functions.https.HttpsError('invalid-argument', 'clinicId is required');
+  }
+
+  const settings = await loadClinicSchedulingSettings(clinicId);
+
+  return {
+    clinicId,
+    settings
+  };
+};
+
+export const getClinicSchedulingSettings = createV2Callable(getClinicSchedulingSettingsHandler);
+
+const updateClinicSchedulingSettingsHandler = async (
+  data: UpdateClinicSchedulingSettingsRequest,
+  context: CallableCtx
+) => {
+  if (!context.auth) {
+    throw new functions.https.HttpsError('unauthenticated', 'Authentication required');
+  }
+
+  const clinicId = sanitizeFirestoreId(data?.clinicId);
+  if (!clinicId) {
+    throw new functions.https.HttpsError('invalid-argument', 'clinicId is required');
+  }
+
+  const settings = await saveClinicSchedulingSettings(clinicId, {
+    manualCheckInRequired: data?.manualCheckInRequired,
+    allowOfflineSignups: data?.allowOfflineSignups
+  });
+
+  functions.logger.info('Clinic scheduling settings updated', {
+    clinicId,
+    manualCheckInRequired: settings.manualCheckInRequired,
+    allowOfflineSignups: settings.allowOfflineSignups,
+    uid: context.auth?.uid ?? null
+  });
+
+  return {
+    clinicId,
+    settings
+  };
+};
+
+export const updateClinicSchedulingSettings = createV2Callable(updateClinicSchedulingSettingsHandler);
+
+const requestDoctorOnlineNotificationHandler = createRequestDoctorOnlineNotificationHandler();
+
+export const requestDoctorOnlineNotification = createV2Callable(requestDoctorOnlineNotificationHandler);
+
+const updateDefaultRotaHandler = async (data: UpdateDefaultRotaRequest, context: CallableCtx) => {
+  if (!context.auth) {
+    throw new functions.https.HttpsError('unauthenticated', 'Authentication required');
+  }
+
+  const clinicId = typeof data?.clinicId === 'string' ? data.clinicId.trim() : '';
+  const doctorId = typeof data?.doctorId === 'string' ? data.doctorId.trim() : '';
+  const timeZone = typeof data?.timeZone === 'string' ? data.timeZone.trim() : '';
+  const week = (data?.week as Record<string, { start: string; end: string; label?: string | null }> | undefined) ?? {};
+
+  try {
+    const rota = await applyUpdateDoctorDefaultRota({
+      clinicId,
+      doctorId,
+      timeZone,
+      week
+    });
+
+    return {
+      success: true,
+      rota
+    };
+  } catch (error) {
+    mapSchedulingError(error, 'update default rota');
+  }
+};
+
+export const updateDoctorDefaultRota = createV2Callable(updateDefaultRotaHandler);
+
+const createOverrideHandler = async (data: CreateOverrideRequest, context: CallableCtx) => {
+  if (!context.auth) {
+    throw new functions.https.HttpsError('unauthenticated', 'Authentication required');
+  }
+
+  const payload: any = {
+    clinicId: typeof data?.clinicId === 'string' ? data.clinicId.trim() : '',
+    doctorId: typeof data?.doctorId === 'string' ? data.doctorId.trim() : '',
+    type: data?.type,
+    start: data?.start,
+    end: data?.end,
+    note: data?.note,
+    overrideId: typeof data?.overrideId === 'string' ? data.overrideId.trim() || undefined : undefined
+  };
+
+  if (data?.type === 'blocker') {
+    payload.reasonCode = data.reasonCode ?? null;
+  }
+  if (data?.type === 'exception') {
+    payload.label = data.label ?? null;
+  }
+
+  try {
+    const result = await applyCreateScheduleOverride(payload);
+    return {
+      success: true,
+      overrideId: result.id,
+      override: result.override
+    };
+  } catch (error) {
+    mapSchedulingError(error, 'create schedule override');
+  }
+};
+
+export const createDoctorScheduleOverride = createV2Callable(createOverrideHandler);
+
+const updateOverrideHandler = async (data: CreateOverrideRequest, context: CallableCtx) => {
+  if (!context.auth) {
+    throw new functions.https.HttpsError('unauthenticated', 'Authentication required');
+  }
+
+  const payload: any = {
+    clinicId: typeof data?.clinicId === 'string' ? data.clinicId.trim() : '',
+    doctorId: typeof data?.doctorId === 'string' ? data.doctorId.trim() : '',
+    overrideId: typeof data?.overrideId === 'string' ? data.overrideId.trim() : undefined,
+    type: data?.type,
+    start: data?.start,
+    end: data?.end,
+    note: data?.note
+  };
+
+  if (data?.type === 'blocker') {
+    payload.reasonCode = data.reasonCode ?? null;
+  }
+  if (data?.type === 'exception') {
+    payload.label = data.label ?? null;
+  }
+
+  try {
+    const result = await applyUpdateScheduleOverride(payload);
+    return {
+      success: true,
+      overrideId: result.id,
+      override: result.override
+    };
+  } catch (error) {
+    mapSchedulingError(error, 'update schedule override');
+  }
+};
+
+export const updateDoctorScheduleOverride = createV2Callable(updateOverrideHandler);
+
+const deleteOverrideHandler = async (data: { clinicId?: string; doctorId?: string; overrideId?: string }, context: CallableCtx) => {
+  if (!context.auth) {
+    throw new functions.https.HttpsError('unauthenticated', 'Authentication required');
+  }
+
+  const clinicId = typeof data?.clinicId === 'string' ? data.clinicId.trim() : '';
+  const doctorId = typeof data?.doctorId === 'string' ? data.doctorId.trim() : '';
+  const overrideId = typeof data?.overrideId === 'string' ? data.overrideId.trim() : '';
+
+  try {
+    const result = await applyDeleteScheduleOverride({ clinicId, doctorId, overrideId });
+    return { success: result.deleted };
+  } catch (error) {
+    mapSchedulingError(error, 'delete schedule override');
+  }
+};
+
+export const deleteDoctorScheduleOverride = createV2Callable(deleteOverrideHandler);
 
 /**
  * Server-Sent Events (SSE) patient stream for a given queue.

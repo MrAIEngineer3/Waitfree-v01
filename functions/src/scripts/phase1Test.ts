@@ -2,7 +2,7 @@
 /**
  * Phase 1 local test harness (built by tsc under lib/scripts/phase1Test.js)
  */
-import * as admin from 'firebase-admin';
+import { admin } from '../firebaseAdmin';
 import fetch from 'node-fetch';
 
 // Embed emulator defaults (no production impact: real deployment sets GOOGLE_APPLICATION_CREDENTIALS / no emulator vars)

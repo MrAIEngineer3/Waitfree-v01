@@ -34,9 +34,9 @@ var __importStar = (this && this.__importStar) || (function () {
 })();
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.recomputeQueueNotifications = recomputeQueueNotifications;
-const admin = __importStar(require("firebase-admin"));
 const functions = __importStar(require("firebase-functions/v1"));
 const notifier_1 = require("./notifier");
+const firebaseAdmin_1 = require("./firebaseAdmin");
 const FALLBACK_SERVICE_MIN_MS = 8 * 60 * 1000; // 8 minutes default
 function computeMilestone(status, patientsAhead) {
     if (status === 'in-progress')
@@ -62,7 +62,7 @@ function computeEta(patientsAhead, avgServiceMs) {
 async function recomputeQueueNotifications(params) {
     // Engine permanently enabled (feature flag removed)
     const { clinicId, doctorId, queueId } = params;
-    const db = admin.firestore();
+    const db = firebaseAdmin_1.admin.firestore();
     const queueRef = db.collection('clinics').doc(clinicId)
         .collection('doctors').doc(doctorId)
         .collection('queues').doc(queueId);

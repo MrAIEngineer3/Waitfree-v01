@@ -1,72 +1,278 @@
 'use client';
 
-import { doc, getDoc, type DocumentData, type QueryDocumentSnapshot } from 'firebase/firestore';
-import { httpsCallable } from 'firebase/functions';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { useEffect, useRef, useState } from 'react';
+import { doc, getDoc } from 'firebase/firestore';
+import { httpsCallable } from 'firebase/functions';
+import { toast } from 'sonner';
+
+import { Button } from '@/components/ui/button';
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
+import { Badge } from '@/components/ui/badge';
+import { ScrollArea } from '@/components/ui/scroll-area';
+import { Separator } from '@/components/ui/separator';
+import { Skeleton } from '@/components/ui/skeleton';
+import { cn } from '@/lib/utils';
+
 import { db, functions } from '../../lib/firebase';
+import {
+  getClinicDoctorAvailability,
+  type ClinicDoctorAvailabilityEntry,
+  type DoctorAvailabilityPayload,
+} from '../../lib/availability';
+import {
+  deserializeAvailabilityPayload,
+  evaluateJoinEligibility,
+  isCallableError,
+} from '../../lib/joinLogic';
+import {
+  fetchClinicSchedulingSettings,
+  getDefaultClinicSchedulingSettings,
+  type ClinicSchedulingSettings,
+} from '../../lib/scheduling';
+
+const OFFLINE_NOTIFICATION_PROMPT =
+  'You can request a notification when the doctor is back online.';
+
+type DoctorListEntry = {
+  id: string;
+  name?: string | null;
+  specialty?: string | null;
+  availability?: DoctorAvailabilityPayload | null;
+};
+
+type NotifyState = {
+  status: 'idle' | 'loading' | 'success' | 'error';
+  message?: string;
+};
+
+interface RequestDoctorOnlineNotificationPayload {
+  clinicId: string;
+  doctorId: string;
+  phone: string;
+  patientName?: string;
+}
+
+interface RequestDoctorOnlineNotificationResult {
+  success: boolean;
+  alreadyOnline?: boolean;
+  alreadyQueued?: boolean;
+  enqueueEligible?: boolean;
+  status?: 'pending' | 'sent';
+  availability?: {
+    status: DoctorAvailabilityPayload['status'];
+    layer: string;
+    reasonCode: string;
+    message: string | null;
+    nextAvailableAt: string | null;
+    realTimeStatus: DoctorAvailabilityPayload['realTimeStatus'];
+  };
+}
+
+const AVAILABILITY_TONE_BADGE: Record<
+  ReturnType<typeof describeAvailability>['tone'],
+  { badgeVariant: 'success' | 'warning' | 'secondary'; badgeClassName?: string }
+> = {
+  positive: { badgeVariant: 'success' },
+  warning: { badgeVariant: 'warning' },
+  neutral: { badgeVariant: 'secondary', badgeClassName: 'text-muted-foreground bg-muted/40' },
+};
+
+function formatNextAvailability(iso: string | null | undefined) {
+  if (!iso) return null;
+  try {
+    const date = new Date(iso);
+    if (Number.isNaN(date.getTime())) return null;
+    return new Intl.DateTimeFormat(undefined, {
+      weekday: 'short',
+      hour: 'numeric',
+      minute: '2-digit',
+    }).format(date);
+  } catch {
+    return null;
+  }
+}
+
+function describeAvailability(availability: DoctorAvailabilityPayload | null | undefined) {
+  if (!availability) {
+    return {
+      headline: 'Checking availability…',
+      statusLabel: 'Checking…',
+      detail: 'Fetching the latest status.',
+      indicatorClass: 'bg-muted animate-pulse',
+      tone: 'neutral' as const,
+      nextAvailable: null,
+    };
+  }
+
+  if (availability.status === 'AVAILABLE') {
+    return {
+      headline: 'Doctor is available now',
+      statusLabel: 'Available',
+      detail: availability.message ?? 'You can continue to join the queue.',
+      indicatorClass: 'bg-emerald-500',
+      tone: 'positive' as const,
+      nextAvailable: null,
+    };
+  }
+
+  const next = formatNextAvailability(availability.nextAvailableAt);
+  let baseMessage = availability.message ?? 'Doctor is currently offline';
+  
+  // Remove any existing "Expected back" text from the message to avoid duplication
+  baseMessage = baseMessage.replace(/Expected back:?\s*[^.]*\.?/i, '').trim();
+  
+  // Smart formatting: append our clean formatted time if available
+  let detail = baseMessage;
+  if (next) {
+    detail = `${baseMessage.replace(/\.$/, '')}. Expected back ${next}.`;
+  } else {
+    detail = baseMessage.endsWith('.') ? baseMessage : `${baseMessage}.`;
+  }
+
+  const indicatorClass =
+    availability.reasonCode === 'REALTIME_OFFLINE' || availability.layer === 'REALTIME_TOGGLE'
+      ? 'bg-red-500'
+      : 'bg-amber-500';
+
+  return {
+    headline: 'Doctor is currently unavailable',
+    statusLabel: 'Offline',
+    detail,
+    indicatorClass,
+    tone: 'warning' as const,
+    nextAvailable: availability.nextAvailableAt ?? null,
+  };
+}
 
 export default function JoinForm() {
-  // State management
+  const router = useRouter();
+
   const [name, setName] = useState('');
   const [age, setAge] = useState('');
-  // Phone: 10 digits (no international support)
   const [phone, setPhone] = useState('');
   const [phoneTouched, setPhoneTouched] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState('');
-  // Dynamic clinic/doctor ids and status
+
   const [clinicId, setClinicId] = useState<string | null>(null);
   const [doctorId, setDoctorId] = useState<string | null>(null);
-  interface DoctorListEntry { id: string; name?: string; specialty?: string }
-  const [doctors, setDoctors] = useState<DoctorListEntry[]>([]);
-  const [status, setStatus] = useState<'loading' | 'valid' | 'invalid'>('loading');
-  const [clinicName, setClinicName] = useState('');
-  const [clinicData, setClinicData] = useState<{ name?: string; address?: string; phone?: string } | null>(null);
-  const [doctorsLoading, setDoctorsLoading] = useState(false);
   const [doctorIdParamProvided, setDoctorIdParamProvided] = useState(false);
+  const [doctors, setDoctors] = useState<DoctorListEntry[]>([]);
+  const [doctorsLoading, setDoctorsLoading] = useState(false);
+  const [availabilityError, setAvailabilityError] = useState<string | null>(null);
+  const [availabilityByDoctor, setAvailabilityByDoctor] = useState<Record<string, DoctorAvailabilityPayload>>({});
+  const [notifyStates, setNotifyStates] = useState<Record<string, NotifyState>>({});
+  const [status, setStatus] = useState<'loading' | 'valid' | 'invalid'>('loading');
+  const [clinicData, setClinicData] = useState<{ name?: string; address?: string; phone?: string } | null>(null);
+  const [clinicSchedulingSettings, setClinicSchedulingSettings] = useState<ClinicSchedulingSettings>(() =>
+    getDefaultClinicSchedulingSettings()
+  );
 
-  // Router for navigation
-  const router = useRouter();
-  // No useSearchParams to avoid route re-fetch loops; read from window.location instead.
-
-  // One-time init guard for reading URL params and fetching initial data
-  // Must be declared at the top level to comply with React Hooks rules
   const initOnceRef = useRef(false);
 
-  // Form submission handler
-  const handleJoinQueue = async (e: React.FormEvent) => {
-    e.preventDefault();
+  const getCurrentAvailability = () => {
+    if (!doctorId) return null;
+    return availabilityByDoctor[doctorId] ?? doctors.find((doc) => doc.id === doctorId)?.availability ?? null;
+  };
+
+  const encourageNotification = (targetDoctorId: string) => {
+    setNotifyStates((prev) => {
+      const current = prev[targetDoctorId];
+      if (current?.status === 'success') return prev;
+      if (current?.status === 'idle' && current?.message === OFFLINE_NOTIFICATION_PROMPT) return prev;
+      return {
+        ...prev,
+        [targetDoctorId]: {
+          status: 'idle',
+          message: OFFLINE_NOTIFICATION_PROMPT,
+        },
+      };
+    });
+  };
+
+  const selectedDoctor = useMemo(
+    () => (doctorId ? doctors.find((doc) => doc.id === doctorId) ?? null : null),
+    [doctorId, doctors]
+  );
+
+  const selectedAvailability = useMemo(() => {
+    if (!doctorId) return null;
+    return availabilityByDoctor[doctorId] ?? selectedDoctor?.availability ?? null;
+  }, [availabilityByDoctor, doctorId, selectedDoctor]);
+
+  const availabilitySummary = useMemo(
+    () => describeAvailability(selectedAvailability),
+    [selectedAvailability]
+  );
+
+  const selectedEligibility = useMemo(
+    () => evaluateJoinEligibility(selectedAvailability, { clinicSettings: clinicSchedulingSettings }),
+    [selectedAvailability, clinicSchedulingSettings]
+  );
+
+  const doctorIsAvailable = selectedAvailability?.status === 'AVAILABLE';
+  const activeNotifyState: NotifyState = doctorId
+    ? notifyStates[doctorId] ?? { status: 'idle' }
+    : { status: 'idle' };
+  const manualCheckInRequired = clinicSchedulingSettings.manualCheckInRequired === true;
+  const allowOfflineSignups = clinicSchedulingSettings.allowOfflineSignups === true;
+  const manualCheckInActive =
+    manualCheckInRequired
+    && selectedAvailability?.reasonCode === 'REALTIME_OFFLINE'
+    && selectedAvailability?.layer === 'REALTIME_TOGGLE';
+  const manualGuidance = manualCheckInActive
+    ? allowOfflineSignups
+      ? 'Our self check-in kiosk is offline. Please share your details with the front desk so they can add you.'
+      : 'Please visit the front desk so a staff member can check you in.'
+    : null;
+  const defaultNotifyMessage = manualCheckInActive
+    ? 'We will message you once check-ins reopen.'
+    : 'We will send a WhatsApp message to your phone number once the doctor comes online.';
+
+  const handleJoinQueue = async (event: React.FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
     setError('');
 
-    // Basic validation
     if (!name.trim() || !age.trim()) {
       setError('Please fill in all fields');
       return;
     }
+
     const normalizedDigits = phone.replace(/\D+/g, '');
     if (normalizedDigits.length !== 10) {
       setPhoneTouched(true);
       return;
     }
 
-    const ageNumber = parseInt(age);
-    if (isNaN(ageNumber) || ageNumber <= 0 || ageNumber > 200) {
+    const ageNumber = Number.parseInt(age, 10);
+    if (!Number.isFinite(ageNumber) || ageNumber <= 0 || ageNumber > 200) {
       setError('Please enter a valid age');
+      return;
+    }
+
+    if (!clinicId || !doctorId) {
+      setError('Missing clinic or doctor information. Please scan the clinic QR code again.');
+      return;
+    }
+
+    const currentAvailability = getCurrentAvailability();
+    const decision = evaluateJoinEligibility(currentAvailability, {
+      clinicSettings: clinicSchedulingSettings,
+    });
+    if (!decision.allowJoin) {
+      const message = decision.reason ?? 'Doctor is currently unavailable.';
+      setError(message);
+      encourageNotification(doctorId);
+      toast.warning(message);
       return;
     }
 
     setIsLoading(true);
 
     try {
-      // Ensure clinicId/doctorId are present before submitting
-      if (!clinicId || !doctorId) {
-        setError('Missing clinic or doctor information. Please scan the clinic QR code again.');
-        setIsLoading(false);
-        return;
-      }
-
-      // Call the Cloud Function
       interface JoinQueuePayload {
         clinicId: string;
         doctorId: string;
@@ -76,6 +282,7 @@ export default function JoinForm() {
           phone: string;
         };
       }
+
       interface JoinQueueResult {
         patientId: string;
         queueId: string;
@@ -85,8 +292,7 @@ export default function JoinForm() {
       }
 
       const joinFn = httpsCallable<JoinQueuePayload, JoinQueueResult>(functions, 'joinQueue');
-
-      const { data: result } = await joinFn({
+      const { data } = await joinFn({
         clinicId,
         doctorId,
         patientData: {
@@ -95,427 +301,709 @@ export default function JoinForm() {
           phone: normalizedDigits,
         },
       });
-      if (result?.patientId) {
-        const { patientId, queueId, doctorId: dId, clinicId: cId, accessToken } = result;
-        try {
-          if (accessToken && patientId) {
-            sessionStorage.setItem(`patientToken:${patientId}`, accessToken);
-          }
-        } catch (storageError) {
-          console.warn('Failed to store access token in sessionStorage', storageError);
-        }
-        // Redirect with one-time token in URL so the status page can persist and scrub it
-        const joinUrl = `/queue/${cId}/${dId}/${queueId}/${patientId}${accessToken ? `?t=${encodeURIComponent(accessToken)}` : ''}`;
-        router.push(joinUrl);
-      } else {
-        setError('Failed to join queue. Please try again.');
+
+      if (!data?.patientId) {
+        const message = 'Failed to join queue. Please try again.';
+        setError(message);
+        toast.error(message);
+        return;
       }
-    } catch (err: unknown) {
+
+      const { patientId, queueId, doctorId: dId, clinicId: cId, accessToken } = data;
+
+      try {
+        if (accessToken && patientId) {
+          sessionStorage.setItem(`patientToken:${patientId}`, accessToken);
+        }
+      } catch (storageError) {
+        console.warn('Failed to store access token in sessionStorage', storageError);
+      }
+
+      const joinUrl = `/queue/${cId}/${dId}/${queueId}/${patientId}${
+        accessToken ? `?t=${encodeURIComponent(accessToken)}` : ''
+      }`;
+      router.push(joinUrl);
+      toast.success('You have been added to the queue.');
+    } catch (err) {
       console.error('Error calling joinQueue callable function:', err);
-      const message = err instanceof Error ? err.message : 'Failed to join queue. Please try again.';
-      setError(message);
+      const targetDoctorId = doctorId;
+
+      if (isCallableError(err) && err.code === 'failed-precondition') {
+        const details =
+          typeof err.details === 'object' && err.details !== null
+            ? (err.details as Record<string, unknown>)
+            : undefined;
+        const availabilityPayload = deserializeAvailabilityPayload(details?.availability);
+
+        if (availabilityPayload && targetDoctorId) {
+          setAvailabilityByDoctor((prev) => ({ ...prev, [targetDoctorId]: availabilityPayload }));
+        }
+
+        const message =
+          availabilityPayload?.message ??
+          (err instanceof Error ? err.message : 'Doctor is currently unavailable.');
+        setError(message);
+        toast.error(message);
+        if (targetDoctorId) encourageNotification(targetDoctorId);
+      } else {
+        const message = err instanceof Error ? err.message : 'Failed to join queue. Please try again.';
+        setError(message);
+        toast.error(message);
+      }
     } finally {
       setIsLoading(false);
     }
   };
 
-  // When still determining IDs from URL
-  useEffect(() => {
-    // Guard to ensure initialization runs only once on the client
-    if (initOnceRef.current) return;
-    initOnceRef.current = true;
+  const handleNotifyDoctorOnline = async () => {
+    if (!clinicId || !doctorId) {
+      setError('Missing clinic or doctor information. Please scan the clinic QR code again.');
+      toast.error('Unable to schedule a notification without clinic information.');
+      return;
+    }
+
+    const normalizedDigits = phone.replace(/\D+/g, '');
+    if (normalizedDigits.length !== 10) {
+      setPhoneTouched(true);
+      return;
+    }
+
+    setNotifyStates((prev) => ({ ...prev, [doctorId]: { status: 'loading' } }));
+
     try {
-      // Read query params once on mount to avoid dependency loops / repeated fetches
-      let rawC = '';
-      let rawD = '';
-      if (typeof window !== 'undefined') {
-        const qp = new URLSearchParams(window.location.search);
-        rawC = qp.get('clinicId') || qp.get('c') || '';
-        rawD = qp.get('doctorId') || qp.get('d') || '';
-      } else {
-        // SSR safety fallback: leave empty; client will populate on mount
-        rawC = '';
-        rawD = '';
+      const notifyFn = httpsCallable<
+        RequestDoctorOnlineNotificationPayload,
+        RequestDoctorOnlineNotificationResult
+      >(functions, 'requestDoctorOnlineNotification');
+
+      const { data } = await notifyFn({
+        clinicId,
+        doctorId,
+        phone: normalizedDigits,
+        patientName: name.trim() || undefined,
+      });
+
+      if (data.availability) {
+        const existing = availabilityByDoctor[doctorId];
+        const updatedAvailability: DoctorAvailabilityPayload = {
+          status: data.availability.status,
+          layer: data.availability.layer,
+          reasonCode: data.availability.reasonCode,
+          message: data.availability.message ?? null,
+          computedAt: new Date().toISOString(),
+          nextAvailableAt: data.availability.nextAvailableAt ?? null,
+          activeOverride: existing?.activeOverride ?? null,
+          realTimeStatus: data.availability.realTimeStatus ?? null,
+          debug: existing?.debug ?? null,
+        };
+        setAvailabilityByDoctor((prev) => ({ ...prev, [doctorId]: updatedAvailability }));
       }
 
-      // Helper to coerce clinic/doctor IDs into safe Firestore path segments
-          const coerceId = (value: string | null | undefined): string | null => {
+      if (data.success) {
+        const message = data.alreadyQueued
+          ? 'You are already on the notification list. We will message you when the doctor is online.'
+          : 'We will message you as soon as the doctor is back online.';
+        setNotifyStates((prev) => ({ ...prev, [doctorId]: { status: 'success', message } }));
+        toast.success(message);
+        return;
+      }
+
+      if (data.alreadyOnline) {
+        const message = 'Doctor is already online. You can join the queue now.';
+        setNotifyStates((prev) => ({
+          ...prev,
+          [doctorId]: { status: 'error', message },
+        }));
+        toast.info(message);
+        return;
+      }
+
+      if (data.enqueueEligible === false) {
+        const message = 'Notifications are not available right now. Please try again later.';
+        setNotifyStates((prev) => ({
+          ...prev,
+          [doctorId]: { status: 'error', message },
+        }));
+        toast.error(message);
+        return;
+      }
+
+      const fallbackMessage = 'Unable to schedule a notification. Please try again.';
+      setNotifyStates((prev) => ({
+        ...prev,
+        [doctorId]: { status: 'error', message: fallbackMessage },
+      }));
+      toast.error(fallbackMessage);
+    } catch (err) {
+      console.error('Failed to request doctor online notification', err);
+      const message = 'Could not schedule a notification. Please try again.';
+      setNotifyStates((prev) => ({
+        ...prev,
+        [doctorId]: { status: 'error', message },
+      }));
+      toast.error(message);
+    }
+  };
+
+  useEffect(() => {
+    if (initOnceRef.current) return;
+    initOnceRef.current = true;
+
+    try {
+      let rawClinicId = '';
+      let rawDoctorId = '';
+
+      if (typeof window !== 'undefined') {
+        const params = new URLSearchParams(window.location.search);
+        rawClinicId = params.get('clinicId') || params.get('c') || '';
+        rawDoctorId = params.get('doctorId') || params.get('d') || '';
+      }
+
+      const coerceId = (value: string | null | undefined): string | null => {
         if (!value) return null;
-        const str = String(value).trim();
+        const str = `${value}`.trim();
         if (!str) return null;
-        // If it's a full URL, attempt to read the param from it
+
         try {
-          const u = new URL(str);
-          const byQuery = u.searchParams.get('clinicId') || u.searchParams.get('doctorId') || u.searchParams.get('c') || u.searchParams.get('d');
+          const url = new URL(str);
+          const byQuery =
+            url.searchParams.get('clinicId') ||
+            url.searchParams.get('doctorId') ||
+            url.searchParams.get('c') ||
+            url.searchParams.get('d');
           if (byQuery && /^[A-Za-z0-9-_.~]+$/.test(byQuery)) return byQuery;
-        } catch { /* not a URL */ }
-        // Otherwise allow a conservative character set
+        } catch {
+          // not a URL
+        }
+
         const cleaned = str.match(/[A-Za-z0-9-_.~]+/g)?.join('') || '';
         return cleaned || null;
       };
 
-    const c = coerceId(rawC);
-    const d = coerceId(rawD);
-    setDoctorIdParamProvided(!!d);
+      const coercedClinicId = coerceId(rawClinicId);
+      const coercedDoctorId = coerceId(rawDoctorId);
 
-      if (c) {
-        setClinicId(c);
-        setStatus('valid');
+      setDoctorIdParamProvided(Boolean(coercedDoctorId));
 
-        const fetchClinic = async () => {
-          try {
-            const clinicRef = doc(db, 'clinics', c);
-            const docSnap = await getDoc(clinicRef);
-            if (docSnap.exists()) {
-              type ClinicDoc = { name?: string };
-              const data = docSnap.data() as ClinicDoc | undefined;
-              setClinicData(data ?? null);
-              if (data?.name) setClinicName(data.name);
-            }
-          } catch (err) {
-            console.error('Error fetching clinic:', err);
+      if (!coercedClinicId) {
+        setClinicId(null);
+        setDoctorId(coercedDoctorId ?? null);
+        setClinicSchedulingSettings(getDefaultClinicSchedulingSettings());
+        setStatus('invalid');
+        return;
+      }
+
+      setClinicId(coercedClinicId);
+      setDoctorId(coercedDoctorId ?? null);
+      setClinicSchedulingSettings(getDefaultClinicSchedulingSettings());
+      setStatus('valid');
+
+      const fetchClinic = async () => {
+        try {
+          const clinicRef = doc(db, 'clinics', coercedClinicId);
+          const clinicSnapshot = await getDoc(clinicRef);
+          if (clinicSnapshot.exists()) {
+            setClinicData(clinicSnapshot.data() as { name?: string; address?: string; phone?: string } | null);
           }
-        };
-        fetchClinic();
+        } catch (err) {
+          console.error('Error fetching clinic:', err);
+        }
+      };
 
-        if (d) {
-          setDoctorId(d);
-        } else {
-          setDoctorId(null);
-          const fetchDoctors = async () => {
+      const loadAvailability = async () => {
+        try {
+          setDoctorsLoading(true);
+          setAvailabilityError(null);
+
+          const response = await getClinicDoctorAvailability(
+            coercedClinicId,
+            coercedDoctorId ? [coercedDoctorId] : undefined
+          );
+
+          const entries = response.doctors;
+
+          if (entries.length === 0 && coercedDoctorId) {
+            setDoctors([
+              {
+                id: coercedDoctorId,
+                name: coercedDoctorId,
+                specialty: 'Doctor',
+                availability: null,
+              },
+            ]);
+          } else {
+            const mapped: DoctorListEntry[] = entries.map((entry: ClinicDoctorAvailabilityEntry) => ({
+              id: entry.doctorId,
+              name: entry.profile?.name ?? entry.doctorId,
+              specialty: entry.profile?.specialty ?? 'General Practice',
+              availability: entry.availability,
+            }));
+            setDoctors(mapped);
+
+            if (!coercedDoctorId && mapped.length === 1) {
+              setDoctorId(mapped[0].id);
+            }
+          }
+
+          if (entries.length > 0) {
+            const availabilityMap = entries.reduce<Record<string, DoctorAvailabilityPayload>>((acc, entry) => {
+              acc[entry.doctorId] = entry.availability;
+              return acc;
+            }, {});
+            setAvailabilityByDoctor((prev) => ({ ...prev, ...availabilityMap }));
+          }
+        } catch (err) {
+          console.error('Error fetching doctor availability:', err);
+          setAvailabilityError(
+            err instanceof Error ? err.message : 'Failed to load doctor availability.'
+          );
+
+          if (!coercedDoctorId) {
             try {
               setDoctorsLoading(true);
               const { collection, getDocs } = await import('firebase/firestore');
-              const doctorsCol = await getDocs(collection(db, 'clinics', c, 'doctors'));
-              const list: DoctorListEntry[] = [];
-              doctorsCol.forEach((docSnap: QueryDocumentSnapshot<DocumentData>) => {
-                type DoctorDoc = { name?: string; specialty?: string };
-                const data = docSnap.data() as DoctorDoc | undefined;
-                list.push({ 
-                  id: docSnap.id, 
-                  name: data?.name || docSnap.id,
-                  specialty: data?.specialty || 'General Practice'
+              const snapshot = await getDocs(collection(db, 'clinics', coercedClinicId, 'doctors'));
+              const fallback: DoctorListEntry[] = [];
+              snapshot.forEach((docSnap) => {
+                const data = docSnap.data() as { name?: string; specialty?: string } | undefined;
+                fallback.push({
+                  id: docSnap.id,
+                  name: data?.name ?? docSnap.id,
+                  specialty: data?.specialty ?? 'General Practice',
+                  availability: null,
                 });
               });
-              setDoctors(list);
-              if (list.length === 1) {
-                setDoctorId(list[0].id);
+              setDoctors(fallback);
+              if (fallback.length === 1) {
+                setDoctorId(fallback[0].id);
               }
-            } catch (err) {
-              console.error('Error fetching doctors:', err);
-            } finally {
-              setDoctorsLoading(false);
+            } catch (fallbackErr) {
+              console.error('Fallback doctor fetch failed:', fallbackErr);
             }
-          };
-          fetchDoctors();
+          }
+        } finally {
+          setDoctorsLoading(false);
         }
-      } else {
-        setClinicId(c ?? null);
-        setDoctorId(d ?? null);
-        setStatus('invalid');
-      }
+      };
+
+      const loadSchedulingSettings = async () => {
+        try {
+          const data = await fetchClinicSchedulingSettings(coercedClinicId);
+          setClinicSchedulingSettings(data);
+        } catch (err) {
+          console.error('Error loading clinic scheduling settings:', err);
+          setClinicSchedulingSettings(getDefaultClinicSchedulingSettings());
+        }
+      };
+
+      fetchClinic();
+      loadAvailability();
+      loadSchedulingSettings();
     } catch (err) {
       console.error('Error reading search params', err);
       setStatus('invalid');
     }
   }, []);
 
-  // Safety fallback: if initialization never runs (e.g., unexpected dev/HMR behavior),
-  // don't leave users stuck on skeleton indefinitely.
   useEffect(() => {
     if (status !== 'loading') return;
     const timer = setTimeout(() => {
-      // If still loading after 6s, mark invalid so user sees an action.
       setStatus((s) => (s === 'loading' ? 'invalid' : s));
     }, 6000);
     return () => clearTimeout(timer);
   }, [status]);
 
   if (status === 'loading') {
-    // Compact centered skeleton while resolving clinic/doctor
     return (
-      <div className="min-h-screen bg-gradient-to-br from-blue-50/30 via-white to-indigo-50/30 flex items-center justify-center px-4 py-6">
-        <div className="w-full max-w-sm flex justify-center">
-          <div className="bg-white/90 backdrop-blur-sm rounded-2xl border border-slate-200/80 shadow-xl overflow-hidden w-full">
-            <div className="p-4 space-y-3">
-              <div className="flex items-center gap-3">
-                <div className="w-10 h-10 rounded-lg bg-slate-200 animate-pulse" />
-                <div className="flex-1 space-y-1.5">
-                  <div className="h-3 w-2/3 bg-slate-200 rounded animate-pulse" />
-                  <div className="h-2.5 w-1/2 bg-slate-200 rounded animate-pulse" />
-                </div>
+      <div className="flex min-h-screen items-center justify-center bg-gradient-to-br from-blue-50/30 via-white to-indigo-50/30 px-4 py-6">
+        <Card className="w-full max-w-sm border border-border/60 bg-background/90 shadow-xl">
+          <CardContent className="grid gap-4 p-6">
+            <div className="flex items-center gap-3">
+              <Skeleton className="h-10 w-10 rounded-lg" />
+              <div className="flex-1 space-y-2">
+                <Skeleton className="h-3 w-2/3" />
+                <Skeleton className="h-3 w-1/2" />
               </div>
-              <div className="h-8 bg-slate-200 rounded animate-pulse" />
-              <div className="grid grid-cols-5 gap-3">
-                <div className="h-10 bg-slate-200 rounded col-span-2 animate-pulse" />
-                <div className="h-10 bg-slate-200 rounded col-span-3 animate-pulse" />
-              </div>
-              <div className="h-10 bg-slate-200 rounded animate-pulse" />
             </div>
-          </div>
-        </div>
+            <Skeleton className="h-9 w-full" />
+            <div className="grid grid-cols-5 gap-3">
+              <Skeleton className="col-span-2 h-10" />
+              <Skeleton className="col-span-3 h-10" />
+            </div>
+            <Skeleton className="h-10 w-full" />
+          </CardContent>
+        </Card>
       </div>
     );
   }
 
   if (status === 'invalid') {
     return (
-      <div className="min-h-screen bg-gradient-to-br from-blue-50/30 via-white to-indigo-50/30 flex flex-col justify-center px-4 py-6">
-        <div className="max-w-sm mx-auto w-full flex justify-center">
-          <div className="bg-white/90 backdrop-blur-sm rounded-xl border border-gray-200/60 shadow-xl overflow-hidden w-full">
-            <div className="px-6 py-6 text-center space-y-4">
-              <div className="inline-flex items-center justify-center w-12 h-12 rounded-xl bg-red-100">
-                <svg className="w-6 h-6 text-red-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-2.5L13.732 4c-.77-.833-1.964-.833-2.732 0L4.082 15.5c-.77.833.192 2.5 1.732 2.5z" />
-                </svg>
-              </div>
-              <div className="space-y-2">
-                <h2 className="text-base font-semibold text-gray-900">Invalid Clinic Link</h2>
-                <p className="text-gray-600 leading-relaxed text-sm max-w-xs mx-auto">
-                  The clinic link appears to be invalid. Please scan the QR code again or contact the clinic for assistance.
-                </p>
-              </div>
-              <button 
-                onClick={() => window.history.back()} 
-                className="inline-flex items-center px-4 py-2 rounded-lg text-sm font-medium text-white bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 transition-all duration-200 shadow-md shadow-blue-500/25"
-              >
-                <svg className="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
-                </svg>
-                Go Back
-              </button>
+      <div className="flex min-h-screen items-center justify-center bg-gradient-to-br from-blue-50/30 via-white to-indigo-50/30 px-4 py-6">
+        <Card className="w-full max-w-sm border border-destructive/20 bg-background/95 shadow-xl">
+          <CardHeader className="text-center">
+            <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-xl bg-destructive/10 text-destructive">
+              <svg className="h-6 w-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  strokeWidth="2"
+                  d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-2.5L13.732 4c-.77-.833-1.964-.833-2.732 0L4.082 15.5c-.77.833.192 2.5 1.732 2.5z"
+                />
+              </svg>
             </div>
-          </div>
-        </div>
+            <CardTitle>Invalid Clinic Link</CardTitle>
+            <CardDescription>
+              The clinic link appears to be invalid. Please scan the QR code again or contact the clinic for
+              assistance.
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="pb-6">
+            <Button className="w-full" onClick={() => window.history.back()}>
+              Go Back
+            </Button>
+          </CardContent>
+        </Card>
       </div>
     );
   }
 
   return (
-    <div aria-live="polite" className="min-h-screen text-slate-800 bg-gradient-to-br from-blue-50/30 via-white to-indigo-50/30">
-      <div className="sr-only" aria-live="polite" aria-atomic="true">
+    <div
+      aria-live="polite"
+      className="min-h-screen bg-gradient-to-br from-blue-50/50 via-white to-cyan-50/30 text-foreground"
+    >
+      <span className="sr-only" aria-live="polite" aria-atomic="true">
         {isLoading ? 'Submitting your details…' : ''}
         {error ? `Error: ${error}` : ''}
-      </div>
+      </span>
 
-      <main className="relative min-h-screen w-full flex items-center justify-center p-4">
-        <div className="w-full max-w-sm mx-auto flex justify-center">
-          <div className="bg-white/90 backdrop-blur-sm rounded-2xl border border-slate-200/80 shadow-xl overflow-hidden w-full">
-            
-            {/* Minimal Clinic Header */}
-            <div className="px-5 py-4 bg-gradient-to-r from-blue-50 to-indigo-50 border-b border-slate-100">
-              <div className="text-center">
-                <h1 className="text-lg font-bold text-slate-900">{clinicData?.name || clinicName || 'Clinic'}</h1>
-                <p className="text-xs text-slate-600 mt-0.5">Virtual Queue System</p>
-              </div>
-            </div>
+      <main className="flex min-h-screen w-full items-center justify-center p-4">
+        <Card className="w-full max-w-md border-border/50 bg-card/95 backdrop-blur-sm shadow-2xl shadow-blue-500/10">
+          <CardHeader className="space-y-1 pb-4 text-center">
+            <CardTitle className="text-xl font-bold bg-gradient-to-br from-gray-900 to-gray-700 bg-clip-text text-transparent">
+              {clinicData?.name?.trim() || 'Clinic'}
+            </CardTitle>
+            <CardDescription className="font-medium">Virtual Queue System</CardDescription>
+          </CardHeader>
 
-            {/* Inline Doctor Info (if single doctor) */}
-            {(!doctorIdParamProvided && doctors.length === 1) ? (
-              <div className="px-5 py-3 bg-green-50/50 border-b border-slate-100">
+          <Separator className="bg-border/60" />
+
+          <CardContent className="space-y-6 pt-6">
+            {!doctorIdParamProvided && doctors.length === 1 ? (
+              <div className="rounded-xl border-2 border-border/50 bg-gradient-to-br from-muted/30 via-background/90 to-muted/20 p-4 sm:p-6 shadow-md">
                 {doctorsLoading ? (
-                  <div className="h-6 rounded bg-slate-200 animate-pulse" />
-                ) : (
-                  <div className="flex items-center justify-center gap-2 text-center">
-                    <div className="w-6 h-6 rounded-full bg-green-100 flex items-center justify-center">
-                      <div className="w-2 h-2 rounded-full bg-green-500"></div>
-                    </div>
-                    <span className="text-sm font-medium text-slate-800">
-                      {doctors[0]?.name || doctors[0]?.id}
-                    </span>
-                    <span className="text-xs text-slate-500">
-                      ({doctors[0]?.specialty || 'Available'})
-                    </span>
+                  <div className="space-y-3">
+                    <Skeleton className="mx-auto h-14 w-14 sm:h-16 sm:w-16 rounded-full" />
+                    <Skeleton className="mx-auto h-5 sm:h-6 w-32 sm:w-40" />
+                    <Skeleton className="mx-auto h-4 w-24 sm:w-32" />
                   </div>
+                ) : (
+                  (() => {
+                    const solo = doctors[0];
+                    const availability = availabilityByDoctor[solo.id] ?? solo.availability ?? null;
+                    const summary = describeAvailability(availability);
+
+                    const badgeConfig = AVAILABILITY_TONE_BADGE[summary.tone];
+
+                    return (
+                      <div className="flex flex-col items-center space-y-3 sm:space-y-4">
+                        {/* Doctor Avatar */}
+                        <div className="flex h-14 w-14 sm:h-16 sm:w-16 items-center justify-center rounded-full bg-primary/10 text-xl sm:text-2xl font-bold text-primary shadow-sm ring-2 ring-primary/20">
+                          {(solo.name || solo.id).charAt(0).toUpperCase()}
+                        </div>
+                        
+                        {/* Doctor Info */}
+                        <div className="space-y-1.5 sm:space-y-2 text-center">
+                          <h3 className="text-base sm:text-lg font-bold text-foreground leading-tight">
+                            {solo.name || solo.id}
+                          </h3>
+                          <p className="text-xs sm:text-sm font-medium text-muted-foreground">
+                            {solo.specialty || 'General Practice'}
+                          </p>
+                        </div>
+
+                        {/* Availability Badge */}
+                        <Badge
+                          className={cn(
+                            'inline-flex items-center gap-1.5 sm:gap-2 rounded-full px-3 sm:px-4 py-1 sm:py-1.5 text-[11px] sm:text-xs font-semibold shadow-sm',
+                            badgeConfig.badgeClassName
+                          )}
+                          variant={badgeConfig.badgeVariant}
+                        >
+                          <span className={cn('h-2 w-2 sm:h-2.5 sm:w-2.5 rounded-full', summary.indicatorClass)} aria-hidden />
+                          {summary.statusLabel}
+                        </Badge>
+
+                        {/* Detail Message */}
+                        {summary.detail && (
+                          <p className="text-[11px] sm:text-xs leading-relaxed text-muted-foreground max-w-xs px-2">
+                            {summary.detail}
+                          </p>
+                        )}
+                      </div>
+                    );
+                  })()
                 )}
               </div>
             ) : null}
 
-            {/* Multiple Doctor Selection (compact) */}
-            {(!doctorIdParamProvided && doctors.length > 1) ? (
-              <div className="px-5 py-3 border-b border-slate-100">
-                <p className="text-xs font-medium text-slate-600 mb-2 text-center">Select Doctor</p>
+            {!doctorIdParamProvided && doctors.length > 1 ? (
+              <div className="space-y-3">
                 <div className="space-y-1">
-                  {doctorsLoading ? (
-                    <div className="h-8 rounded-lg bg-slate-200 animate-pulse" />
-                  ) : (
-                    doctors.map((d) => {
-                      const selected = doctorId === d.id;
-                      const initials = (d.name || d.id).split(' ').map(p => p[0]).join('').slice(0,2).toUpperCase();
-                      return (
-                        <button
-                          key={d.id}
-                          type="button"
-                          onClick={() => setDoctorId(d.id)}
-                          className={`w-full text-left rounded-lg border px-3 py-2 flex items-center gap-2.5 transition-all ${selected ? 'border-blue-400 bg-blue-50 shadow-sm' : 'border-slate-200 hover:border-slate-300 hover:bg-slate-50'}`}
-                          aria-pressed={selected}
-                        >
-                          <div className={`w-7 h-7 rounded-full flex items-center justify-center text-xs font-semibold ${selected ? 'bg-blue-100 text-blue-700' : 'bg-slate-100 text-slate-600'}`}>
-                            {initials}
-                          </div>
-                          <div className="flex-1 min-w-0">
-                            <p className="text-sm font-medium truncate text-slate-800">{d.name || d.id}</p>
-                            <p className="text-xs text-slate-500 truncate">{d.specialty || 'General Practice'}</p>
-                          </div>
-                          {selected && (
-                            <div className="w-4 h-4 rounded-full bg-blue-500 flex items-center justify-center">
-                              <svg className="w-2.5 h-2.5 text-white" fill="currentColor" viewBox="0 0 20 20">
-                                <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
-                              </svg>
-                            </div>
-                          )}
-                        </button>
-                      );
-                    })
-                  )}
+                  <Label className="text-sm font-semibold text-foreground">Select a doctor</Label>
+                  <p className="text-xs text-muted-foreground">Choose from the available doctors below</p>
                 </div>
+                <ScrollArea className="max-h-96 rounded-xl border border-border/60 bg-muted/10">
+                  <div className="space-y-2.5 p-3">
+                    {doctorsLoading ? (
+                      <div className="space-y-2.5">
+                        <Skeleton className="h-24 w-full rounded-lg" />
+                        <Skeleton className="h-24 w-full rounded-lg" />
+                      </div>
+                    ) : (
+                      doctors.map((docEntry) => {
+                        const selected = doctorId === docEntry.id;
+                        const availability = availabilityByDoctor[docEntry.id] ?? docEntry.availability ?? null;
+                        const summary = describeAvailability(availability);
+                        const badgeConfig = AVAILABILITY_TONE_BADGE[summary.tone];
+
+                        return (
+                          <Button
+                            key={docEntry.id}
+                            type="button"
+                            variant="ghost"
+                            className={cn(
+                              'h-auto w-full justify-start rounded-lg border-2 p-3 sm:p-4 text-left transition-all duration-200',
+                              selected
+                                ? 'border-primary bg-primary/5 shadow-md shadow-primary/10 hover:bg-primary/10'
+                                : 'border-border/50 bg-background/80 hover:border-primary/30 hover:bg-muted/40 hover:shadow-sm'
+                            )}
+                            onClick={() => setDoctorId(docEntry.id)}
+                          >
+                            <div className="flex w-full items-start gap-2.5 sm:gap-4">
+                              {/* Doctor Avatar/Icon */}
+                              <div className={cn(
+                                'flex h-10 w-10 sm:h-12 sm:w-12 shrink-0 items-center justify-center rounded-full text-base sm:text-lg font-bold transition-colors',
+                                selected 
+                                  ? 'bg-primary/15 text-primary' 
+                                  : 'bg-muted/60 text-muted-foreground'
+                              )}>
+                                {(docEntry.name || docEntry.id).charAt(0).toUpperCase()}
+                              </div>
+
+                              {/* Doctor Info */}
+                              <div className="flex min-w-0 flex-1 flex-col gap-1">
+                                <div className="flex items-start justify-between gap-2">
+                                  <div className="min-w-0 flex-1">
+                                    <h3 className="truncate text-sm sm:text-base font-semibold leading-tight text-foreground">
+                                      {docEntry.name || docEntry.id}
+                                    </h3>
+                                    <p className="mt-0.5 text-xs font-medium text-muted-foreground truncate">
+                                      {docEntry.specialty || 'General Practice'}
+                                    </p>
+                                  </div>
+                                  <Badge
+                                    variant={badgeConfig.badgeVariant}
+                                    className={cn(
+                                      'shrink-0 inline-flex items-center gap-1.5 px-2 sm:px-2.5 py-0.5 text-[10px] sm:text-xs font-medium',
+                                      badgeConfig.badgeClassName
+                                    )}
+                                  >
+                                    <span className={cn('h-1.5 w-1.5 sm:h-2 sm:w-2 rounded-full', summary.indicatorClass)} aria-hidden />
+                                    {summary.statusLabel}
+                                  </Badge>
+                                </div>
+                                {summary.detail ? (
+                                  <p className="text-[11px] sm:text-xs leading-relaxed text-muted-foreground/90 mt-0.5 line-clamp-2">
+                                    {summary.detail}
+                                  </p>
+                                ) : null}
+                              </div>
+
+                              {/* Selection Indicator */}
+                              {selected && (
+                                <div className="hidden sm:flex shrink-0 items-center justify-center ml-2">
+                                  <svg
+                                    className="h-5 w-5 text-primary"
+                                    fill="currentColor"
+                                    viewBox="0 0 20 20"
+                                  >
+                                    <path
+                                      fillRule="evenodd"
+                                      d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z"
+                                      clipRule="evenodd"
+                                    />
+                                  </svg>
+                                </div>
+                              )}
+                            </div>
+                          </Button>
+                        );
+                      })
+                    )}
+                  </div>
+                </ScrollArea>
               </div>
             ) : null}
 
-            {/* Streamlined Form */}
-            <div className="px-5 py-5">
-              {error && (
-                <div className="mb-4 rounded-lg bg-red-50 border border-red-200 px-3 py-2 text-xs text-red-700 text-center">
-                  {error}
-                </div>
-              )}
+            {availabilityError ? (
+              <div className="rounded-md border border-sem-warning/40 bg-sem-warning/10 px-3 py-2 text-xs text-sem-warning">
+                {availabilityError}
+              </div>
+            ) : null}
 
-              <form className="space-y-3" onSubmit={handleJoinQueue}>
-                {/* Full Name */}
-                <div className="relative">
-                  <svg className="absolute top-1/2 left-3 -translate-y-1/2 w-4 h-4 text-slate-400" viewBox="0 0 24 24" fill="none" stroke="currentColor">
-                    <path d="M16 7a4 4 0 11-8 0 4 4 0 018 0z" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
-                    <path d="M6 21v-2a4 4 0 014-4h4a4 4 0 014 4v2" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
-                  </svg>
-                  <input
-                    id="fullName"
-                    placeholder="Your full name"
-                    className="w-full pl-10 pr-4 py-3 rounded-xl border-2 border-slate-200 bg-white text-slate-900 placeholder-slate-400 focus:border-blue-400 focus:outline-none text-sm transition-all"
+            {/* Only show availability section when doctor is unavailable */}
+            {(doctorId || (!doctorIdParamProvided && doctors.length === 1)) && !doctorIsAvailable && (
+              <div className="space-y-2 rounded-lg border border-border/60 bg-muted/20 p-4">
+                <div className="flex items-center gap-2 text-sm font-semibold text-foreground">
+                  <span className={cn('h-2.5 w-2.5 rounded-full', availabilitySummary.indicatorClass)} aria-hidden />
+                  {availabilitySummary.headline}
+                </div>
+                {availabilitySummary.detail ? (
+                  <p className="text-xs text-muted-foreground">{availabilitySummary.detail}</p>
+                ) : null}
+
+                {manualGuidance ? (
+                  <p className="text-xs font-medium text-sem-warning">{manualGuidance}</p>
+                ) : (
+                  <p className="text-xs text-sem-warning">
+                    Enter your details below and tap &ldquo;Notify me when available&rdquo; to receive a WhatsApp alert as soon as
+                    the doctor returns.
+                  </p>
+                )}
+              </div>
+            )}
+
+            {error && (
+              <div className="rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm text-destructive">
+                {error}
+              </div>
+            )}
+
+            <form className="space-y-4" onSubmit={handleJoinQueue}>
+              <div className="space-y-2">
+                <Label htmlFor="fullName">Full name</Label>
+                <Input
+                  id="fullName"
+                  placeholder="Your full name"
+                  required
+                  autoComplete="name"
+                  autoCapitalize="words"
+                  value={name}
+                  onChange={(event) => setName(event.target.value)}
+                  disabled={isLoading}
+                />
+              </div>
+
+              <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                <div className="space-y-2">
+                  <Label htmlFor="age">Age</Label>
+                  <Input
+                    id="age"
+                    placeholder="Age"
+                    inputMode="numeric"
                     required
-                    autoComplete="name"
-                    autoCapitalize="words"
-                    type="text"
-                    name="fullName"
-                    aria-label="Full Name"
-                    value={name}
-                    onChange={(e) => setName(e.target.value)}
+                    value={age}
+                    onChange={(event) => {
+                      const digits = event.target.value.replace(/\D+/g, '');
+                      setAge(digits.slice(0, 3));
+                    }}
                     disabled={isLoading}
+                    maxLength={3}
                   />
                 </div>
 
-                {/* Age and Phone in row */}
-                <div className="grid grid-cols-5 gap-3">
-                  <div className="relative col-span-2">
-                    <svg className="absolute top-1/2 left-2.5 -translate-y-1/2 w-4 h-4 text-slate-400" viewBox="0 0 24 24" fill="none" stroke="currentColor">
-                      <path d="M7 8h10M7 12h4M7 16h4M7 4c0-1.1.9-2 2-2h6c1.1 0 2 .9 2 2v16c0 1.1-.9 2-2 2H9c-1.1 0-2-.9-2-2V4z" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
-                    </svg>
-                    <input
-                      id="age"
-                      placeholder="Age"
-                      min={1}
-                      max={150}
-                      className="w-full pl-9 pr-3 py-3 rounded-xl border-2 border-slate-200 bg-white text-slate-900 placeholder-slate-400 focus:border-blue-400 focus:outline-none text-sm transition-all"
-                      required
-                      inputMode="numeric"
-                      type="tel"
-                      name="age"
-                      aria-label="Age"
-                      value={age}
-                      onChange={(e) => {
-                        const digits = e.target.value.replace(/\D+/g, '');
-                        setAge(digits.slice(0, 3));
-                      }}
-                      maxLength={3}
-                      disabled={isLoading}
-                    />
-                  </div>
-                  <div className="relative col-span-3">
-                    <svg className="absolute top-1/2 left-2.5 -translate-y-1/2 w-4 h-4 text-slate-400" viewBox="0 0 24 24" fill="none" stroke="currentColor">
-                      <path d="M22 16.92V19a2 2 0 01-2.18 2A19.79 19.79 0 013 5.18 2 2 0 015 3h2.09a2 2 0 012 1.72 12.66 12.66 0 00.7 2.81 2 2 0 01-.45 2.11L8.09 10.91a16 16 0 006 6l1.27-1.27a2 2 0 012.11-.45 12.66 12.66 0 002.81.7A2 2 0 0122 16.92z" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
-                    </svg>
-                    <input
-                      id="phoneNumber"
-                      placeholder="Phone number"
-                      className={`w-full pl-9 pr-3 py-3 rounded-xl border-2 bg-white text-slate-900 placeholder-slate-400 focus:outline-none transition-all text-sm ${
-                        phoneTouched && phone.replace(/\D+/g,'').length !== 10 
-                          ? 'border-red-300 focus:border-red-400' 
-                          : 'border-slate-200 focus:border-blue-400'
-                      }`}
-                      required
-                      inputMode="tel"
-                      maxLength={10}
-                      autoComplete="tel"
-                      type="tel"
-                      name="phoneNumber"
-                      aria-label="Phone Number"
-                      value={phone}
-                      onChange={(e) => {
-                        const digits = e.target.value.replace(/\D+/g, '');
-                        setPhone(digits.slice(0, 10));
-                      }}
-                      onBlur={() => setPhoneTouched(true)}
-                      disabled={isLoading}
-                      aria-invalid={phoneTouched && phone.replace(/\D+/g,'').length !== 10}
-                    />
-                  </div>
+                <div className="space-y-2">
+                  <Label htmlFor="phoneNumber">Phone number</Label>
+                  <Input
+                    id="phoneNumber"
+                    placeholder="10-digit phone number"
+                    inputMode="tel"
+                    type="tel"
+                    required
+                    value={phone}
+                    onChange={(event) => {
+                      const digits = event.target.value.replace(/\D+/g, '');
+                      setPhone(digits.slice(0, 10));
+                    }}
+                    onBlur={() => setPhoneTouched(true)}
+                    disabled={isLoading}
+                    maxLength={10}
+                    aria-invalid={phoneTouched && phone.replace(/\D+/g, '').length !== 10}
+                    className={cn(
+                      phoneTouched && phone.replace(/\D+/g, '').length !== 10
+                        ? 'border-destructive/70 focus-visible:ring-destructive'
+                        : undefined
+                    )}
+                  />
+                  {phoneTouched && phone.replace(/\D+/g, '').length !== 10 ? (
+                    <p className="text-xs text-destructive">Please enter a valid 10-digit phone number.</p>
+                  ) : null}
                 </div>
-                {phoneTouched && phone.replace(/\D+/g,'').length !== 10 && (
-                  <p className="text-xs text-red-600 text-center">
-                    Please enter a valid 10-digit phone number
-                  </p>
-                )}
+              </div>
 
-                {/* Submit Button */}
-                <button
+              {doctorIsAvailable ? (
+                <Button
                   type="submit"
-                  className="w-full bg-gradient-to-r from-blue-600 to-indigo-600 text-white font-semibold py-3.5 px-4 rounded-xl shadow-lg shadow-blue-500/25 hover:shadow-blue-500/40 hover:from-blue-700 hover:to-indigo-700 focus:outline-none focus:ring-2 focus:ring-blue-500/50 disabled:from-slate-300 disabled:to-slate-400 disabled:shadow-none disabled:cursor-not-allowed transition-all duration-200 flex items-center justify-center gap-2 text-sm"
-                  disabled={isLoading || !doctorId}
+                  className="w-full shadow-lg hover:shadow-xl transition-all"
+                  loading={isLoading}
+                  disabled={isLoading || !doctorId || !selectedEligibility.allowJoin}
                 >
-                  {isLoading ? (
-                    <>
-                      <div className="w-4 h-4 border-2 border-white/80 border-t-transparent rounded-full animate-spin" />
-                      Joining...
-                    </>
-                  ) : (
-                    <>
-                      <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor">
-                        <path d="M5 12l5 5L20 7" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
-                      </svg>
-                      Join Queue
-                    </>
-                  )}
-                </button>
-              </form>
+                  Join Queue
+                </Button>
+              ) : (
+                <div className="space-y-2.5">
+                  <Button
+                    type="button"
+                    onClick={handleNotifyDoctorOnline}
+                    loading={activeNotifyState.status === 'loading'}
+                    disabled={isLoading || !doctorId}
+                    variant="outline"
+                    className="w-full border-sem-warning/60 text-sem-warning hover:bg-sem-warning/10 hover:border-sem-warning shadow-sm"
+                  >
+                    Notify me when available
+                  </Button>
+                  <p
+                    className={cn(
+                      'text-center text-xs leading-relaxed',
+                      activeNotifyState.message
+                        ? activeNotifyState.status === 'success'
+                          ? 'text-sem-success font-medium'
+                          : 'text-sem-warning font-medium'
+                        : 'text-muted-foreground'
+                    )}
+                  >
+                    {activeNotifyState.message ?? defaultNotifyMessage}
+                  </p>
+                </div>
+              )}
+            </form>
 
-              <p className="text-xs text-slate-500 text-center mt-4 flex items-center justify-center gap-1">
-                <svg className="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor">
-                  <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" strokeWidth="2"/>
-                </svg>
-                Your information is secure
-              </p>
-            </div>
-          </div>
-        </div>
+            <p className="flex items-center justify-center gap-2 text-xs text-muted-foreground">
+              <svg className="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
+              </svg>
+              Your information is secure.
+            </p>
+          </CardContent>
+        </Card>
       </main>
 
-      {/* Loading Overlay */}
-      {isLoading && (
-        <div className="fixed inset-0 bg-white/70 backdrop-blur-sm flex items-center justify-center z-50">
-          <div className="bg-white rounded-xl shadow-lg border border-gray-100 p-6 max-w-sm mx-4">
-            <div className="text-center space-y-3">
-              <div className="inline-flex items-center justify-center w-10 h-10 bg-blue-100 rounded-full">
-                <div className="w-5 h-5 border-2 border-blue-600 border-t-transparent rounded-full animate-spin" />
+      {isLoading ? (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-background/90 backdrop-blur-md">
+          <Card className="w-full max-w-xs border-primary/20 shadow-2xl">
+            <CardContent className="space-y-4 p-8 text-center">
+              <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-full bg-primary/10 ring-4 ring-primary/5">
+                <div className="h-6 w-6 animate-spin rounded-full border-3 border-primary border-t-transparent" />
               </div>
-              <div>
-                <h3 className="text-base font-semibold text-gray-900 mb-1">Joining Queue</h3>
-                <p className="text-sm text-gray-600">Please wait while we add you to the queue...</p>
-              </div>
-            </div>
-          </div>
+              <CardTitle className="text-base font-semibold">Joining queue</CardTitle>
+              <CardDescription className="text-sm">Please wait while we add you to the queue…</CardDescription>
+            </CardContent>
+          </Card>
         </div>
-      )}
+      ) : null}
     </div>
   );
 }
 
-// (no international phone formatting helper; enforcing 10 digits locally)
