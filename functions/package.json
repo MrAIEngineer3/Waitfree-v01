@@ -40,6 +40,6 @@
     "globals": "^14.0.0",
     "rimraf": "^5.0.10",
     "typescript": "^5.9.2",
-    "vitest": "^2.1.4"
+    "vitest": "^2.1.9"
   }
 }
