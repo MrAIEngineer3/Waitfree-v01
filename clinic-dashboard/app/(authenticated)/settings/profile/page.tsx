@@ -107,13 +107,22 @@ export default function ProfileSettingsPage() {
 
   return (
     <div className="max-w-4xl space-y-6">
-      <Card padding="none" variant="outline" className="overflow-hidden">
-        {/* Card Header with Gradient */}
-        <div className="bg-gradient-to-r from-violet-500 to-purple-600 px-8 py-6">
-          <h2 className="text-xl font-semibold text-white">Profile Information</h2>
-          <p className="text-sm text-violet-100 mt-1">Update your personal details and contact information</p>
+      {/* Page Header */}
+      <div className="flex items-start gap-4">
+        <div className="w-12 h-12 rounded-xl bg-gradient-to-br from-violet-500 to-purple-600 flex items-center justify-center shadow-lg shadow-violet-500/25">
+          <svg className="w-6 h-6 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
+          </svg>
         </div>
+        <div className="flex-1">
+          <h1 className="text-2xl font-bold tracking-tight text-gray-900">Profile Information</h1>
+          <p className="text-sm text-gray-600 mt-1">Update your personal details and contact information</p>
+        </div>
+      </div>
 
+      <Separator />
+
+      <Card padding="none" variant="outline" className="overflow-hidden">
         <form onSubmit={handleSave} className="p-8 space-y-8">
           {/* Photo Upload Section */}
           <div className="flex items-start gap-6">
@@ -147,7 +156,7 @@ export default function ProfileSettingsPage() {
                 <Label className="text-sm font-semibold text-gray-700">Profile Photo</Label>
                 <p className="text-xs text-gray-500 mt-1">Upload a professional photo. JPG, PNG or GIF. Max 5MB.</p>
               </div>
-              <div className="flex items-center gap-3">
+              <div className="flex flex-col sm:flex-row sm:items-center gap-3">
                 <label className="relative cursor-pointer">
                   <input 
                     type="file" 
@@ -155,7 +164,7 @@ export default function ProfileSettingsPage() {
                     onChange={(e) => setFile(e.target.files?.[0] || null)}
                     className="sr-only"
                   />
-                  <span className="inline-flex items-center gap-2 px-4 py-2 bg-white border border-gray-300 rounded-lg text-sm font-medium text-gray-700 hover:bg-gray-50 transition-colors">
+                  <span className="inline-flex items-center justify-center gap-2 px-4 py-2 bg-white border border-gray-300 rounded-lg text-sm font-medium text-gray-700 hover:bg-gray-50 transition-colors w-full sm:w-auto">
                     <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" />
                     </svg>
@@ -163,12 +172,12 @@ export default function ProfileSettingsPage() {
                   </span>
                 </label>
                 {file && (
-                  <div className="flex items-center gap-2">
-                    <span className="text-sm text-gray-600">{file.name}</span>
+                  <div className="flex items-center gap-2 min-w-0 flex-1">
+                    <span className="text-sm text-gray-600 truncate">{file.name}</span>
                     <button
                       type="button"
                       onClick={() => setFile(null)}
-                      className="text-gray-400 hover:text-gray-600"
+                      className="text-gray-400 hover:text-gray-600 flex-shrink-0"
                     >
                       <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
@@ -272,13 +281,14 @@ export default function ProfileSettingsPage() {
           <Separator className="my-6" />
 
           {/* Action Buttons */}
-          <div className="flex items-center gap-3">
-            <Button type="submit" loading={saving} variant="default">
+          <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-3">
+            <Button type="submit" loading={saving} variant="default" className="w-full sm:w-auto">
               Save Changes
             </Button>
             <Button 
               type="button" 
               variant="outline"
+              className="w-full sm:w-auto"
               onClick={() => {
                 setDisplayName(u?.displayName || '');
                 setEmail(u?.email || '');

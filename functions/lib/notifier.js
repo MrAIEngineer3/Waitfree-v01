@@ -36,9 +36,10 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.sendNotification = sendNotification;
 exports.setStaffClaim = setStaffClaim;
 // Load local env for emulator
-const admin = __importStar(require("firebase-admin"));
 const functions = __importStar(require("firebase-functions/v1"));
 require("./loadEnv");
+const firebaseAdmin_1 = require("./firebaseAdmin");
+const firestore_1 = require("firebase-admin/firestore");
 let twilioFactory = null;
 function resolveTwilioFactory() {
     if (twilioFactory) {
@@ -112,6 +113,10 @@ function createWhatsAppMessage(type, payload) {
             return `Thank you ${name}! Your visit has been completed. Hope you feel better soon! Token #${token}`;
         case 'cancelled':
             return `${name}, your queue entry (Token #${token}) has been cancelled. If this was a mistake, please contact the clinic.`;
+        case 'doctor-online': {
+            const doctorName = payload?.doctorName || 'Doctor';
+            return `Great news! ${doctorName} is now available. Open the app to join the queue.${patientLink}`;
+        }
         default:
             return `${name}, queue update for token #${token}.`;
     }
@@ -121,6 +126,7 @@ function getTwilioClient() {
     const accountSid = process.env.TWILIO_ACCOUNT_SID;
     const authToken = process.env.TWILIO_AUTH_TOKEN;
     if (!accountSid || !authToken) {
+        functions.logger.info('Twilio client not configured (missing credentials)');
         return null; // Return null if credentials not available (for testing)
     }
     const factory = resolveTwilioFactory();
@@ -144,14 +150,14 @@ async function sendNotification(opts) {
         });
         // For local development/emulator: always record in debug collection
         try {
-            const db = admin.firestore();
+            const db = firebaseAdmin_1.admin.firestore();
             await db.collection('debugNotifications').add({
                 to: opts.to,
                 formattedPhone: formattedPhone,
                 type: opts.type,
                 message: messageContent,
                 payload: opts.payload || null,
-                createdAt: admin.firestore.Timestamp.now(),
+                createdAt: firestore_1.Timestamp.now(),
                 twilioAttempted: !!getTwilioClient()
             });
         }
@@ -203,7 +209,7 @@ async function sendNotification(opts) {
 // Optional admin helper for programmatic staff claim setting. Keep here so functions can reuse it if needed.
 async function setStaffClaim(uid, isStaff) {
     try {
-        await admin.auth().setCustomUserClaims(uid, { staff: isStaff });
+        await firebaseAdmin_1.admin.auth().setCustomUserClaims(uid, { staff: isStaff });
         return { success: true };
     }
     catch (err) {

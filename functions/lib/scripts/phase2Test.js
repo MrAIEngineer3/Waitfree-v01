@@ -1,42 +1,9 @@
 "use strict";
-var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
-    if (k2 === undefined) k2 = k;
-    var desc = Object.getOwnPropertyDescriptor(m, k);
-    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
-      desc = { enumerable: true, get: function() { return m[k]; } };
-    }
-    Object.defineProperty(o, k2, desc);
-}) : (function(o, m, k, k2) {
-    if (k2 === undefined) k2 = k;
-    o[k2] = m[k];
-}));
-var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
-    Object.defineProperty(o, "default", { enumerable: true, value: v });
-}) : function(o, v) {
-    o["default"] = v;
-});
-var __importStar = (this && this.__importStar) || (function () {
-    var ownKeys = function(o) {
-        ownKeys = Object.getOwnPropertyNames || function (o) {
-            var ar = [];
-            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
-            return ar;
-        };
-        return ownKeys(o);
-    };
-    return function (mod) {
-        if (mod && mod.__esModule) return mod;
-        var result = {};
-        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
-        __setModuleDefault(result, mod);
-        return result;
-    };
-})();
 var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
 };
 Object.defineProperty(exports, "__esModule", { value: true });
-const admin = __importStar(require("firebase-admin"));
+const firebaseAdmin_1 = require("../firebaseAdmin");
 const node_fetch_1 = __importDefault(require("node-fetch"));
 if (!process.env.FIRESTORE_EMULATOR_HOST)
     process.env.FIRESTORE_EMULATOR_HOST = 'localhost:8081';
@@ -44,8 +11,8 @@ if (!process.env.FIREBASE_AUTH_EMULATOR_HOST)
     process.env.FIREBASE_AUTH_EMULATOR_HOST = 'localhost:9098';
 const projectId = process.env.FIREBASE_EMULATOR_PROJECT_ID || process.env.GCLOUD_PROJECT || 'waitfree-9b06e';
 console.log('[Phase2Test] Using projectId =', projectId);
-if (!admin.apps.length) {
-    admin.initializeApp({ projectId });
+if (!firebaseAdmin_1.admin.apps.length) {
+    firebaseAdmin_1.admin.initializeApp({ projectId });
 }
 const host = process.env.FUNCTIONS_HOST || 'http://localhost:5002';
 const region = 'asia-south1';
@@ -97,7 +64,7 @@ async function run() {
     // Force recompute & poll for pos* flags
     await callable('debugRecompute', { clinicId, doctorId, queueId });
     async function poll(ids, label) {
-        const store = admin.firestore();
+        const store = firebaseAdmin_1.admin.firestore();
         const start = Date.now();
         let snapshots = [];
         while (Date.now() - start < 6000) {
@@ -119,7 +86,7 @@ async function run() {
     }
     await poll(patients.slice(0, 4).map(p => p.patientId), 'After in-progress (polled)');
     // Inspect first 4 patients
-    const store = admin.firestore();
+    const store = firebaseAdmin_1.admin.firestore();
     async function get(pid) {
         const s = await store.collection('clinics').doc(clinicId).collection('doctors').doc(doctorId).collection('queues').doc(queueId).collection('patients').doc(pid).get();
         return { id: pid, data: s.data() };

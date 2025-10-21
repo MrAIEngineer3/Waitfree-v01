@@ -1,4 +1,4 @@
-import * as admin from 'firebase-admin';
+import { admin } from '../firebaseAdmin';
 import fetch from 'node-fetch';
 
 if (!process.env.FIRESTORE_EMULATOR_HOST) process.env.FIRESTORE_EMULATOR_HOST = 'localhost:8081';

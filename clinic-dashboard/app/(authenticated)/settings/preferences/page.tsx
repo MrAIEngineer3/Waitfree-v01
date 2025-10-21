@@ -89,21 +89,22 @@ export default function PreferencesSettingsPage() {
 
   return (
     <div className="max-w-4xl space-y-6">
-      <Card padding="none" variant="outline" className="overflow-hidden">
-        {/* Header */}
-        <div className="bg-gradient-to-r from-indigo-500 to-blue-600 px-8 py-6">
-          <div className="flex items-center gap-3">
-            <div className="w-12 h-12 rounded-xl bg-white/20 backdrop-blur-sm flex items-center justify-center">
-              <svg className="w-6 h-6 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 6V4m0 2a2 2 0 100 4m0-4a2 2 0 110 4m-6 8a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4m6 6v10m6-2a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4" />
-              </svg>
-            </div>
-            <div>
-              <h2 className="text-xl font-semibold text-white">App Preferences</h2>
-              <p className="text-sm text-indigo-100 mt-1">Customize your experience</p>
-            </div>
-          </div>
+      {/* Page Header */}
+      <div className="flex items-start gap-4">
+        <div className="w-12 h-12 rounded-xl bg-gradient-to-br from-indigo-500 to-blue-600 flex items-center justify-center shadow-lg shadow-indigo-500/25">
+          <svg className="w-6 h-6 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 6V4m0 2a2 2 0 100 4m0-4a2 2 0 110 4m-6 8a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4m6 6v10m6-2a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4" />
+          </svg>
         </div>
+        <div className="flex-1">
+          <h1 className="text-2xl font-bold tracking-tight text-gray-900">App Preferences</h1>
+          <p className="text-sm text-gray-600 mt-1">Customize your experience with language and theme settings</p>
+        </div>
+      </div>
+
+      <Separator />
+
+      <Card padding="none" variant="outline" className="overflow-hidden">
 
         <div className="p-8 space-y-8">
           {/* Language Section */}
@@ -247,12 +248,13 @@ export default function PreferencesSettingsPage() {
           {/* Action Buttons */}
           <Separator className="my-6" />
           
-          <div className="flex items-center gap-3">
-            <Button variant="default" onClick={handleSave} loading={saving}>
+          <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-3">
+            <Button variant="default" onClick={handleSave} loading={saving} className="w-full sm:w-auto">
               Save Preferences
             </Button>
             <Button 
               variant="outline"
+              className="w-full sm:w-auto"
               onClick={() => {
                 setLanguage('en');
                 setTheme('system');

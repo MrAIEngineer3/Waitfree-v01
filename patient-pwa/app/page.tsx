@@ -3,6 +3,11 @@ import { useRouter } from 'next/navigation';
 import QrScanner from 'qr-scanner';
 import { useEffect, useRef, useState } from 'react';
 
+import { Badge } from '@/components/ui/badge';
+import { Button } from '@/components/ui/button';
+import { Card, CardContent } from '@/components/ui/card';
+import { Input } from '@/components/ui/input';
+
 // ===== QR CODE SCANNER =====
 interface QRCodeScannerProps {
   onScan: (result: string) => void;
@@ -201,53 +206,45 @@ function QRCodeScanner({ onScan, onError, onCancel }: QRCodeScannerProps) {
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
-      <div className="bg-white rounded-lg p-6 shadow-lg flex flex-col items-center max-w-sm mx-4">
-        <div className="relative w-80 h-80 bg-black rounded-lg overflow-hidden">
-          <video
-            ref={videoRef}
-            className="w-full h-full object-cover"
-            playsInline
-            muted
-          />
-          {isLoading && (
-            <div className="absolute inset-0 flex items-center justify-center bg-black/50">
-              <div className="w-8 h-8 border-2 border-white border-t-transparent rounded-full animate-spin" />
-            </div>
-          )}
-          {error && (
-            <div className="absolute inset-0 flex items-center justify-center bg-black/75 p-4">
-              <div className="text-white text-center">
-                <div className="text-red-400 mb-2">⚠️</div>
-                <div className="text-sm">{error}</div>
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-background/95 backdrop-blur-md">
+      <Card className="w-full max-w-sm border-border/50 bg-card/95 backdrop-blur-sm shadow-2xl">
+        <CardContent className="flex flex-col items-center gap-4 p-6">
+          <div className="relative h-72 w-72 overflow-hidden rounded-2xl border-2 border-border/40 bg-black shadow-lg">
+            <video
+              ref={videoRef}
+              className="h-full w-full object-cover"
+              playsInline
+              muted
+            />
+            {isLoading && (
+              <div className="absolute inset-0 flex items-center justify-center bg-black/70 backdrop-blur-sm">
+                <div className="h-10 w-10 animate-spin rounded-full border-3 border-primary border-t-transparent" />
               </div>
-            </div>
-          )}
-        </div>
-        <div className="mt-4 text-center">
-          <p className="text-sm text-gray-600 mb-3">
+            )}
+            {error && (
+              <div className="absolute inset-0 flex items-center justify-center bg-black/85 backdrop-blur-sm p-4">
+                <div className="space-y-2 text-center text-sm text-destructive">
+                  <div className="text-2xl">⚠️</div>
+                  <p className="font-medium">{error}</p>
+                </div>
+              </div>
+            )}
+          </div>
+          <p className="text-center text-sm font-medium text-muted-foreground">
             {error ? 'Camera access required' : 'Point your camera at the QR code'}
           </p>
-          <div className="flex items-center gap-2">
+          <div className="flex w-full items-center gap-2">
             {error && (
-              <button
-                type="button"
-                onClick={handleRetry}
-                className="wf-btn-secondary"
-              >
+              <Button type="button" variant="outline" className="flex-1" onClick={handleRetry}>
                 Retry
-              </button>
+              </Button>
             )}
-            <button
-              type="button"
-              onClick={handleCancel}
-              className="wf-btn-primary"
-            >
+            <Button type="button" variant={error ? "default" : "outline"} className="flex-1" onClick={handleCancel}>
               {error ? 'Close' : 'Cancel'}
-            </button>
+            </Button>
           </div>
-        </div>
-      </div>
+        </CardContent>
+      </Card>
     </div>
   );
 }
@@ -265,25 +262,24 @@ function ClinicIdEntry() {
   };
 
   return (
-    <form onSubmit={goToJoin} className="relative w-auto max-w-[180px] group">
-      <input 
-        type="text" 
-        placeholder="Enter Clinic ID" 
+    <form onSubmit={goToJoin} className="flex w-full max-w-xs items-center gap-2">
+      <Input
+        type="text"
+        placeholder="Enter clinic ID"
         value={clinicId}
-        onChange={(e) => setClinicId(e.target.value)}
-        className="w-full h-12 bg-white rounded-full pl-4 pr-12 text-gray-900 placeholder-gray-400 border border-gray-200/80 shadow-sm focus:ring-2 focus:ring-blue-400 focus:outline-none transition-all text-sm"
+        onChange={(event) => setClinicId(event.target.value)}
+        className="h-12 rounded-full bg-background/90 backdrop-blur-sm border-border/50 pl-5 pr-4 text-sm shadow-md focus-visible:shadow-lg focus-visible:ring-primary/50 transition-all"
       />
-      <button 
-        type="submit" 
+      <Button
+        type="submit"
+        size="lg"
+        variant="accent"
+        className="h-12 rounded-full px-8 shadow-lg hover:scale-[1.02] transition-transform"
+        aria-label="Go to clinic"
         disabled={!clinicId.trim()}
-        aria-label="Go to clinic" 
-        className="absolute h-9 w-9 top-1.5 right-1.5 flex items-center justify-center bg-gray-800 text-white rounded-full hover:bg-gray-900 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
       >
-        <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-          <path d="M5 12h14"/>
-          <path d="m12 5 7 7-7 7"/>
-        </svg>
-      </button>
+        Go
+      </Button>
     </form>
   );
 }
@@ -344,28 +340,42 @@ function HeroSection() {
   return (
     <section className="pt-8 sm:pt-12 pb-16 sm:pb-20 text-center">
       <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
-        <a href="#features" className="inline-flex items-center gap-1.5 sm:gap-2 bg-white px-2.5 sm:px-4 py-1 sm:py-1.5 rounded-full border border-gray-200/80 shadow-sm text-xs mb-1 hover:shadow-md transition-shadow animate-on-load hero-item-animate" style={{animationDelay: '0.2s'}}>
-          <span className="relative flex h-1.5 w-1.5 sm:h-2 sm:w-2">
-            <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-cyan-400 opacity-75"></span>
-            <span className="relative inline-flex rounded-full h-full w-full bg-cyan-500"></span>
-          </span>
-          <span className="hidden sm:inline">Introducing our new Queue Intelligence Platform</span>
-          <span className="sm:hidden">New Queue Intelligence Platform</span>
+        <a
+          href="#features"
+          className="inline-block animate-on-load hero-item-animate"
+          style={{ animationDelay: '0.2s' }}
+        >
+          <Badge
+            variant="secondary"
+            className="inline-flex items-center gap-2 rounded-full border border-primary/20 bg-primary/5 backdrop-blur-sm px-4 py-1.5 text-xs font-medium shadow-sm transition-all hover:shadow-md hover:scale-105"
+          >
+            <span className="relative flex h-2 w-2">
+              <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-primary/60" />
+              <span className="relative inline-flex h-full w-full rounded-full bg-primary" />
+            </span>
+            <span className="hidden sm:inline">Introducing our Queue Intelligence Platform</span>
+            <span className="sm:hidden">New Queue Intelligence Platform</span>
+          </Badge>
         </a>
-        <h1 className="text-3xl sm:text-4xl md:text-6xl lg:text-7xl font-extrabold tracking-tighter text-gray-900 leading-tight animate-on-load hero-item-animate" style={{animationDelay: '0.4s'}}>
+        <h1 className="text-4xl sm:text-5xl md:text-6xl lg:text-7xl font-extrabold tracking-tighter text-gray-900 leading-[1.1] mt-6 animate-on-load hero-item-animate" style={{animationDelay: '0.4s'}}>
           The Waiting Room, <br /> <span className="wf-gradient-text">Reimagined.</span>
         </h1>
-        <p className="max-w-2xl mx-auto mt-6 text-base sm:text-lg text-gray-600 animate-on-load hero-item-animate" style={{animationDelay: '0.6s'}}>
+        <p className="max-w-2xl mx-auto mt-6 text-base sm:text-lg text-gray-600 leading-relaxed animate-on-load hero-item-animate" style={{animationDelay: '0.6s'}}>
           Your clinic journey simplified. Discover, book, and track your turn from anywhere. Arrive just-in-time, stress-free.
         </p>
         <div className="mt-10 flex flex-col sm:flex-row items-center justify-center gap-4 animate-on-load hero-item-animate" style={{animationDelay: '0.8s'}}>
-          <button 
-            type="button" 
+          <Button
+            type="button"
+            size="lg"
+            variant="accent"
+            className="h-12 rounded-full px-8 shadow-xl hover:shadow-2xl hover:scale-[1.02] transition-all"
             onClick={() => setScanning(true)}
-            className="btn-primary text-white font-semibold h-12 px-4 rounded-full shadow-lg w-auto max-w-[180px]"
           >
+            <svg className="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v1m6 11h2m-6 0h-2v4m0-11v3m0 0h.01M12 12h4.01M16 20h4M4 12h4m12 0h.01M5 8h2a1 1 0 001-1V5a1 1 0 00-1-1H5a1 1 0 00-1 1v2a1 1 0 001 1zm12 0h2a1 1 0 001-1V5a1 1 0 00-1-1h-2a1 1 0 00-1 1v2a1 1 0 001 1zM5 20h2a1 1 0 001-1v-2a1 1 0 00-1-1H5a1 1 0 00-1 1v2a1 1 0 001 1z" />
+            </svg>
             Scan QR Code
-          </button>
+          </Button>
           <ClinicIdEntry />
         </div>
       </div>
@@ -411,52 +421,52 @@ function PhoneMockupSection() {
       <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
         <div className="scroll-animation relative w-full max-w-4xl mx-auto h-[400px] sm:h-[600px] flex items-center justify-center">
         {/* Phone Frame */}
-        <div className="relative w-72 sm:w-80 h-[580px] sm:h-[620px] bg-gray-800 rounded-[40px] border-[14px] border-gray-800 shadow-2xl shadow-gray-400/30 overflow-hidden">
+        <div className="relative w-72 sm:w-80 h-[580px] sm:h-[620px] bg-gray-900 rounded-[48px] border-[14px] border-gray-900 shadow-2xl shadow-black/30 overflow-hidden ring-1 ring-white/10">
           {/* Phone Screen Content */}
-          <div className="w-full h-full bg-white flex flex-col">
+          <div className="w-full h-full bg-gradient-to-b from-blue-50 to-white flex flex-col">
             {/* Header */}
-            <div className="p-4 bg-gray-50 border-b border-gray-200">
-              <p className="text-xs font-semibold tracking-wider text-blue-600">LIVE QUEUE</p>
-              <h3 className="text-lg font-semibold text-gray-900">City General Hospital</h3>
+            <div className="p-4 bg-gradient-to-r from-blue-50 to-cyan-50 border-b border-gray-200/50">
+              <p className="text-xs font-semibold tracking-wider text-primary">LIVE QUEUE</p>
+              <h3 className="text-lg font-bold text-gray-900">City General Hospital</h3>
             </div>
             {/* Queue Info */}
-            <div className="flex-grow p-6 flex flex-col justify-center items-center text-center space-y-4">
-              <p className="text-sm text-gray-500">Your Turn</p>
-              <div className="text-7xl font-bold wf-gradient-text">24</div>
-              <p className="text-sm text-gray-500">Est. Wait: <span className="font-bold text-gray-800">15 mins</span></p>
+            <div className="flex-grow p-6 flex flex-col justify-center items-center text-center space-y-6">
+              <p className="text-sm font-medium text-gray-500">Your Turn</p>
+              <div className="text-7xl font-extrabold wf-gradient-text">24</div>
+              <p className="text-sm text-gray-600">Est. Wait: <span className="font-bold text-gray-900">15 mins</span></p>
             </div>
             {/* Current Patient */}
-            <div className="p-4 m-4 bg-blue-50 rounded-xl border border-blue-200 text-center">
-              <p className="text-sm font-medium text-blue-800">Now Serving</p>
-              <p className="text-2xl font-bold text-blue-900">21</p>
+            <div className="p-4 m-4 bg-gradient-to-br from-primary/10 to-cyan-500/10 rounded-2xl border-2 border-primary/20 text-center shadow-lg">
+              <p className="text-sm font-semibold text-primary">Now Serving</p>
+              <p className="text-3xl font-bold text-primary mt-1">21</p>
             </div>
           </div>
         </div>
 
         {/* Floating Cards - Hidden on mobile to prevent overlap */}
-        <div className="hidden md:block absolute -top-10 -left-4 sm:-left-20 w-40 sm:w-56 glass-card p-4 rounded-2xl shadow-lg transition-transform hover:scale-105">
+        <div className="hidden md:block absolute -top-10 -left-4 sm:-left-20 w-40 sm:w-64 glass-card p-5 rounded-2xl shadow-xl border border-white/20 transition-all hover:scale-105 hover:shadow-2xl">
           <div className="flex items-center gap-3">
-            <div className="w-10 h-10 bg-green-100 rounded-full flex items-center justify-center flex-shrink-0">
-              <svg className="w-5 h-5 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M5 13l4 4L19 7"></path>
+            <div className="w-12 h-12 bg-gradient-to-br from-emerald-400 to-emerald-600 rounded-full flex items-center justify-center flex-shrink-0 shadow-lg">
+              <svg className="w-6 h-6 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M5 13l4 4L19 7"></path>
               </svg>
             </div>
             <div>
-              <p className="font-semibold text-sm">Checked In!</p>
-              <p className="text-xs text-gray-500">You&apos;re in the queue.</p>
+              <p className="font-semibold text-sm text-gray-900">Checked In!</p>
+              <p className="text-xs text-gray-600">You&apos;re in the queue.</p>
             </div>
           </div>
         </div>
-        <div className="hidden md:block absolute top-1/3 -right-4 sm:-right-24 w-40 sm:w-56 glass-card p-4 rounded-2xl shadow-lg transition-transform hover:scale-105">
+        <div className="hidden md:block absolute top-1/3 -right-4 sm:-right-24 w-40 sm:w-64 glass-card p-5 rounded-2xl shadow-xl border border-white/20 transition-all hover:scale-105 hover:shadow-2xl">
           <div className="flex items-center gap-3">
-            <div className="w-10 h-10 bg-cyan-100 rounded-full flex items-center justify-center flex-shrink-0">
-              <svg className="w-5 h-5 text-cyan-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6 6 0 10-12 0v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9"></path>
+            <div className="w-12 h-12 bg-gradient-to-br from-cyan-400 to-cyan-600 rounded-full flex items-center justify-center flex-shrink-0 shadow-lg">
+              <svg className="w-6 h-6 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6 6 0 10-12 0v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9"></path>
               </svg>
             </div>
             <div>
-              <p className="font-semibold text-sm">It&apos;s almost time!</p>
-              <p className="text-xs text-gray-500">Please head to the clinic.</p>
+              <p className="font-semibold text-sm text-gray-900">It&apos;s almost time!</p>
+              <p className="text-xs text-gray-600">Please head to the clinic.</p>
             </div>
           </div>
         </div>
@@ -508,22 +518,24 @@ function FeaturesSection() {
     <section id="features" className="py-16 sm:py-20">
       <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
         <div className="text-center mb-16 scroll-animation">
-        <h2 className="text-2xl sm:text-3xl md:text-4xl font-bold tracking-tight text-gray-900">A smarter way to wait.</h2>
-        <p className="max-w-xl mx-auto mt-4 text-sm sm:text-base text-gray-600">Waitfree empowers you with features that put you in control.</p>
+        <h2 className="text-3xl sm:text-4xl md:text-5xl font-bold tracking-tight text-gray-900">A smarter way to wait.</h2>
+        <p className="max-w-2xl mx-auto mt-4 text-base sm:text-lg text-gray-600">Waitfree empowers you with features that put you in control.</p>
       </div>
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-8">
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6 lg:gap-8">
         {features.map((feature, index) => (
-          <div 
+          <Card
             key={feature.title}
-            className="bg-white p-8 rounded-2xl shadow-sm border border-gray-100 scroll-animation feature-card"
-            style={{transitionDelay: `${index * 100}ms`}}
+            className="scroll-animation group border-border/40 bg-card/80 backdrop-blur-sm shadow-lg hover:shadow-2xl hover:scale-[1.02] transition-all duration-300"
+            style={{ transitionDelay: `${index * 100}ms` }}
           >
-            <div className="w-12 h-12 mb-5 rounded-xl bg-blue-100 flex items-center justify-center text-blue-600">
-              {feature.icon}
-            </div>
-            <h3 className="text-base sm:text-lg font-semibold mb-2">{feature.title}</h3>
-            <p className="text-gray-600 text-xs sm:text-sm">{feature.description}</p>
-          </div>
+            <CardContent className="space-y-4 p-6">
+              <div className="flex h-14 w-14 items-center justify-center rounded-xl bg-gradient-to-br from-primary/10 to-primary/5 text-primary ring-1 ring-primary/10 group-hover:scale-110 transition-transform">
+                {feature.icon}
+              </div>
+              <h3 className="text-lg font-semibold text-foreground">{feature.title}</h3>
+              <p className="text-sm text-muted-foreground leading-relaxed">{feature.description}</p>
+            </CardContent>
+          </Card>
         ))}
       </div>
       </div>
@@ -555,28 +567,28 @@ function HowItWorksSection() {
     <section id="how-it-works" className="py-16 sm:py-20">
       <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
         <div className="text-center mb-16 scroll-animation">
-        <h2 className="text-2xl sm:text-3xl md:text-4xl font-bold tracking-tight text-gray-900">Get started in 3 easy steps.</h2>
-        <p className="max-w-xl mx-auto mt-4 text-sm sm:text-base text-gray-600">Your journey to a stress-free clinic visit is simple.</p>
+        <h2 className="text-3xl sm:text-4xl md:text-5xl font-bold tracking-tight text-gray-900">Get started in 3 easy steps.</h2>
+        <p className="max-w-2xl mx-auto mt-4 text-base sm:text-lg text-gray-600">Your journey to a stress-free clinic visit is simple.</p>
       </div>
       <div className="relative">
         {/* Dotted Line for Desktop */}
-        <div className="hidden lg:block absolute top-1/2 left-0 w-full h-0.5 border-t-2 border-dashed border-gray-300 -translate-y-1/2"></div>
+        <div className="hidden lg:block absolute top-1/2 left-0 w-full h-0.5 border-t-2 border-dashed border-primary/20 -translate-y-1/2" aria-hidden />
         
-        <div className="relative grid grid-cols-1 md:grid-cols-3 gap-12 lg:gap-8">
+        <div className="relative grid grid-cols-1 md:grid-cols-3 gap-8 lg:gap-6">
           {steps.map((step, index) => (
-            <div 
+            <Card
               key={step.number}
-              className="text-center scroll-animation"
-              style={{transitionDelay: `${index * 150}ms`}}
+              className="scroll-animation group border-border/40 bg-card/80 backdrop-blur-sm text-center shadow-lg hover:shadow-2xl transition-all duration-300"
+              style={{ transitionDelay: `${index * 150}ms` }}
             >
-              <div className="relative inline-block">
-                <div className="w-16 h-16 sm:w-20 sm:h-20 mx-auto mb-6 flex items-center justify-center bg-white rounded-full text-xl sm:text-2xl font-bold wf-gradient-text border-2 border-gray-200 shadow-md">
+              <CardContent className="space-y-4 p-8">
+                <div className="mx-auto flex h-20 w-20 items-center justify-center rounded-full bg-gradient-to-br from-primary to-primary/70 text-2xl font-bold text-white shadow-lg shadow-primary/30 ring-4 ring-primary/10 group-hover:scale-110 transition-transform">
                   {step.number}
                 </div>
-              </div>
-              <h3 className="text-base sm:text-lg font-semibold mb-2">{step.title}</h3>
-              <p className="text-gray-600 text-xs sm:text-sm">{step.description}</p>
-            </div>
+                <h3 className="text-lg font-semibold text-foreground">{step.title}</h3>
+                <p className="text-sm text-muted-foreground leading-relaxed">{step.description}</p>
+              </CardContent>
+            </Card>
           ))}
         </div>
       </div>
@@ -590,18 +602,20 @@ function CtaSection() {
   return (
     <section className="py-16 sm:py-20">
       <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
-        <div className="relative rounded-3xl overflow-hidden scroll-animation">
-        <div className="absolute inset-0 bg-gray-800"></div>
-        <div className="absolute inset-0 bg-gradient-to-r from-blue-500/20 via-cyan-500/20 to-transparent opacity-50"></div>
+        <div className="relative rounded-3xl overflow-hidden scroll-animation shadow-2xl">
+        <div className="absolute inset-0 bg-gradient-to-br from-gray-900 via-gray-800 to-gray-900"></div>
+        <div className="absolute inset-0 bg-gradient-to-r from-blue-600/30 via-cyan-500/20 to-transparent"></div>
         <div className="relative text-center p-12 sm:p-20">
-          <h2 className="text-2xl sm:text-3xl md:text-4xl font-bold tracking-tight text-white">Join the Future of Clinic Visits</h2>
-          <p className="max-w-2xl mx-auto mt-4 text-sm sm:text-base text-gray-300">Experience calmer, smarter, patient-centric waiting. No guesswork, no crowding—just timely care.</p>
-          <button 
+          <h2 className="text-3xl sm:text-4xl md:text-5xl font-bold tracking-tight text-white">Join the Future of Clinic Visits</h2>
+          <p className="max-w-2xl mx-auto mt-6 text-base sm:text-lg text-gray-200">Experience calmer, smarter, patient-centric waiting. No guesswork, no crowding—just timely care.</p>
+          <Button
             onClick={() => window.scrollTo({ top: 0, behavior: 'smooth' })}
-            className="mt-8 inline-block btn-primary text-white font-semibold py-3 px-8 rounded-full shadow-lg"
+            size="lg"
+            variant="accent"
+            className="mt-8 h-14 rounded-full px-10 text-base shadow-2xl hover:scale-105 transition-all"
           >
             Get Started for Free
-          </button>
+          </Button>
         </div>
       </div>
       </div>

@@ -39,23 +39,27 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
 };
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.bootstrapClinicAccount = exports.setQueueAutoAdvance = exports.updateQueueStatus = exports.updatePatientStatus = exports.getPatientView = exports.joinQueue = exports.onPatientStatusChange = exports.onNewPatient = exports.ping = exports.debugGetPatient = exports.debugRecompute = exports.debugPatientPwaBaseUrl = exports.debugRuntimeFlags = void 0;
+exports.bootstrapClinicAccount = exports.deleteDoctorScheduleOverride = exports.updateDoctorScheduleOverride = exports.createDoctorScheduleOverride = exports.updateDoctorDefaultRota = exports.requestDoctorOnlineNotification = exports.updateClinicSchedulingSettings = exports.getClinicSchedulingSettings = exports.getClinicDoctorAvailability = exports.setDoctorRealTimeStatus = exports.setQueueAutoAdvance = exports.updateQueueStatus = exports.updatePatientStatus = exports.getPatientView = exports.joinQueue = exports.onPatientStatusChange = exports.onNewPatient = exports.ping = exports.debugGetPatient = exports.debugRecompute = exports.debugPatientPwaBaseUrl = exports.debugRuntimeFlags = void 0;
 const firestore_1 = require("@google-cloud/firestore");
 // Ensure local .env variables are loaded when running in emulator / local scripts
 const crypto_1 = __importDefault(require("crypto"));
-const admin = __importStar(require("firebase-admin"));
 const functions = __importStar(require("firebase-functions/v1"));
 const v2_1 = require("firebase-functions/v2");
 const https_1 = require("firebase-functions/v2/https");
 require("./loadEnv");
+const firebaseAdmin_1 = require("./firebaseAdmin");
 // Import functions for local use
 const notificationEngine_1 = require("./notificationEngine");
 const notifier_1 = require("./notifier");
+const mutations_1 = require("./scheduling/mutations");
+const notificationQueue_1 = require("./scheduling/notificationQueue");
+const availability_1 = require("./scheduling/availability");
+const settings_1 = require("./scheduling/settings");
 const timing_1 = require("./utils/timing");
-// Initialize the Admin SDK. This is required for all backend functions.
-admin.initializeApp();
+const requestDoctorOnlineNotification_1 = require("./scheduling/requestDoctorOnlineNotification");
 // Export functions from other files to make them deployable
 __exportStar(require("./notifier"), exports);
+__exportStar(require("./scheduling"), exports);
 // Simplified CORS configuration:
 // - Production: prefer origins supplied via environment variable CORS_ALLOWED_ORIGINS
 // - Local dev fallback: allow localhost on the patient PWA dev port
@@ -161,6 +165,75 @@ const adaptCallableContext = (request) => {
     };
 };
 const createV2Callable = (handler) => (0, https_1.onCall)((request) => handler(request.data, adaptCallableContext(request)));
+const mapSchedulingError = (error, action) => {
+    if (error instanceof mutations_1.ValidationError) {
+        throw new functions.https.HttpsError('invalid-argument', error.message);
+    }
+    if (error instanceof mutations_1.NotFoundError) {
+        throw new functions.https.HttpsError('not-found', error.message);
+    }
+    functions.logger.error(`Scheduling action ${action} failed`, {
+        error: error instanceof Error ? { message: error.message, stack: error.stack } : error,
+        action
+    });
+    throw new functions.https.HttpsError('internal', `Failed to ${action}`);
+};
+const sanitizeFirestoreId = (value) => {
+    if (typeof value !== 'string') {
+        return null;
+    }
+    const trimmed = value.trim();
+    if (!trimmed) {
+        return null;
+    }
+    return /^[A-Za-z0-9-_.~]+$/.test(trimmed) ? trimmed : null;
+};
+const serializeOverride = (override) => {
+    if (!override) {
+        return null;
+    }
+    const base = {
+        id: override.id,
+        type: override.type,
+        start: override.start.toDate().toISOString(),
+        end: override.end.toDate().toISOString(),
+        note: override.note ?? null,
+        createdAt: override.createdAt ? override.createdAt.toDate().toISOString() : null,
+        updatedAt: override.updatedAt ? override.updatedAt.toDate().toISOString() : null
+    };
+    if (override.type === 'blocker') {
+        return {
+            ...base,
+            reasonCode: override.reasonCode ?? null
+        };
+    }
+    return {
+        ...base,
+        label: override.label ?? null
+    };
+};
+const serializeAvailability = (result) => {
+    return {
+        status: result.status,
+        layer: result.layer,
+        reasonCode: result.reasonCode,
+        message: result.message ?? null,
+        computedAt: result.computedAt.toISOString(),
+        nextAvailableAt: result.nextAvailableAt ? result.nextAvailableAt.toISOString() : null,
+        activeOverride: serializeOverride(result.activeOverride ?? null),
+        realTimeStatus: result.realTimeStatus
+            ? {
+                online: result.realTimeStatus.online,
+                note: result.realTimeStatus.note ?? null,
+                source: result.realTimeStatus.source ?? null,
+                updatedAt: result.realTimeStatus.updatedAt
+                    ? result.realTimeStatus.updatedAt.toDate().toISOString()
+                    : null
+            }
+            : null,
+        debug: result.debug ?? null
+    };
+};
 /** DEBUG: Returns runtime flag visibility and Node version */
 const debugRuntimeFlagsHandler = async (_data, _ctx) => {
     return {
@@ -208,7 +281,7 @@ const debugGetPatientHandler = async (data, _ctx) => {
     if (!clinicId || !doctorId || !queueId || !patientId) {
         throw new functions.https.HttpsError('invalid-argument', 'clinicId, doctorId, queueId, patientId required');
     }
-    const snap = await admin.firestore().collection('clinics').doc(clinicId)
+    const snap = await firebaseAdmin_1.admin.firestore().collection('clinics').doc(clinicId)
         .collection('doctors').doc(doctorId)
         .collection('queues').doc(queueId)
         .collection('patients').doc(patientId).get();
@@ -341,10 +414,23 @@ const joinQueueHandler = async (data, _context) => {
         if (!patientData.name || !patientData.age || !patientData.phone) {
             throw new functions.https.HttpsError('invalid-argument', 'Patient data must include name, age, and phone.');
         }
+        const availability = await (0, availability_1.resolveDoctorAvailability)({
+            clinicId,
+            doctorId
+        });
+        if (availability.status !== 'AVAILABLE') {
+            const serialized = serializeAvailability(availability);
+            functions.logger.info('joinQueue blocked: doctor unavailable', {
+                clinicId,
+                doctorId,
+                availability: serialized
+            });
+            throw new functions.https.HttpsError('failed-precondition', availability.message ?? 'Doctor is currently unavailable.', { availability: serialized });
+        }
         // 1. Get current date in YYYY-MM-DD format for the queue ID
         const today = new Date().toISOString().split('T')[0]; // YYYY-MM-DD format
         // 2. Define database references
-        const db = admin.firestore();
+        const db = firebaseAdmin_1.admin.firestore();
         const queueRef = db.collection('clinics').doc(clinicId)
             .collection('doctors').doc(doctorId)
             .collection('queues').doc(today);
@@ -400,7 +486,7 @@ const joinQueueHandler = async (data, _context) => {
         try {
             // Mark the patient's notifications.joined flag (so emulator/debug shows it) and emit a debug notification
             try {
-                await admin.firestore().collection('clinics').doc(clinicId)
+                await firebaseAdmin_1.admin.firestore().collection('clinics').doc(clinicId)
                     .collection('doctors').doc(doctorId)
                     .collection('queues').doc(today)
                     .collection('patients').doc(newPatientData.id)
@@ -458,7 +544,7 @@ const getPatientViewHandler = async (data, _context) => {
         if (!clinicId || !doctorId || !queueId || !patientId || !token) {
             throw new functions.https.HttpsError('invalid-argument', 'Missing required fields: clinicId, doctorId, queueId, patientId, token');
         }
-        const db = admin.firestore();
+        const db = firebaseAdmin_1.admin.firestore();
         const patientRef = db.collection('clinics').doc(clinicId)
             .collection('doctors').doc(doctorId)
             .collection('queues').doc(queueId)
@@ -534,7 +620,7 @@ const updatePatientStatusHandler = async (data, context) => {
             throw new functions.https.HttpsError('invalid-argument', `Invalid status. Must be one of: ${validStatuses.join(', ')}`);
         }
         // Define database references
-        const db = admin.firestore();
+        const db = firebaseAdmin_1.admin.firestore();
         const patientRef = db.collection('clinics').doc(clinicId)
             .collection('doctors').doc(doctorId)
             .collection('queues').doc(queueId)
@@ -700,7 +786,7 @@ const updatePatientStatusHandler = async (data, context) => {
                 });
                 const phaseStarted = process.hrtime.bigint();
                 try {
-                    const db = admin.firestore();
+                    const db = firebaseAdmin_1.admin.firestore();
                     const patientSnap = await db.collection('clinics').doc(clinicId)
                         .collection('doctors').doc(doctorId)
                         .collection('queues').doc(queueId)
@@ -833,12 +919,12 @@ const updatePatientStatusHandler = async (data, context) => {
                     patientId
                 });
                 try {
-                    const queueSnap = await admin.firestore().collection('clinics').doc(clinicId)
+                    const queueSnap = await firebaseAdmin_1.admin.firestore().collection('clinics').doc(clinicId)
                         .collection('doctors').doc(doctorId)
                         .collection('queues').doc(queueId).get();
                     const qData = queueSnap.data() || {};
                     if (qData.autoAdvance === true && qData.status !== 'ended' && qData.status !== 'paused') {
-                        const nextSnap = await admin.firestore().collection('clinics').doc(clinicId)
+                        const nextSnap = await firebaseAdmin_1.admin.firestore().collection('clinics').doc(clinicId)
                             .collection('doctors').doc(doctorId)
                             .collection('queues').doc(queueId)
                             .collection('patients')
@@ -937,7 +1023,7 @@ const updateQueueStatusHandler = async (data, _context) => {
             throw new functions.https.HttpsError('invalid-argument', `Invalid status. Must be one of: ${validStatuses.join(', ')}`);
         }
         // Define database reference
-        const db = admin.firestore();
+        const db = firebaseAdmin_1.admin.firestore();
         const queueRef = db.collection('clinics').doc(clinicId)
             .collection('doctors').doc(doctorId)
             .collection('queues').doc(queueId);
@@ -994,7 +1080,7 @@ const setQueueAutoAdvanceHandler = async (data, _context) => {
             span.fail({ reason: 'invalid-argument' });
             throw new functions.https.HttpsError('invalid-argument', 'clinicId, doctorId, queueId, enabled(boolean) required');
         }
-        const ref = admin.firestore().collection('clinics').doc(clinicId)
+        const ref = firebaseAdmin_1.admin.firestore().collection('clinics').doc(clinicId)
             .collection('doctors').doc(doctorId)
             .collection('queues').doc(queueId);
         await ref.set({ autoAdvance: enabled }, { merge: true });
@@ -1011,6 +1097,277 @@ const setQueueAutoAdvanceHandler = async (data, _context) => {
     }
 };
 exports.setQueueAutoAdvance = createV2Callable(setQueueAutoAdvanceHandler);
+const setRealTimeStatusHandler = async (data, context) => {
+    if (!context.auth) {
+        throw new functions.https.HttpsError('unauthenticated', 'Authentication required');
+    }
+    if (typeof data?.online !== 'boolean') {
+        throw new functions.https.HttpsError('invalid-argument', 'online must be a boolean');
+    }
+    const clinicId = typeof data?.clinicId === 'string' ? data.clinicId.trim() : '';
+    const doctorId = typeof data?.doctorId === 'string' ? data.doctorId.trim() : '';
+    try {
+        const result = await (0, mutations_1.setDoctorRealTimeStatus)({
+            clinicId,
+            doctorId,
+            online: data.online,
+            note: data?.note,
+            source: data?.source
+        });
+        const transitionedToOnline = result.changed &&
+            result.previousStatus?.online === false &&
+            result.updatedStatus.online === true;
+        if (transitionedToOnline) {
+            runInBackground('doctorOnlineNotificationDispatch', async () => {
+                await (0, notificationQueue_1.dispatchDoctorOnlineNotifications)({ clinicId, doctorId });
+            });
+        }
+        return {
+            success: true,
+            changed: result.changed,
+            previousStatus: result.previousStatus,
+            updatedStatus: result.updatedStatus,
+            effectiveAt: new Date().toISOString()
+        };
+    }
+    catch (error) {
+        mapSchedulingError(error, 'set real-time status');
+    }
+};
+exports.setDoctorRealTimeStatus = createV2Callable(setRealTimeStatusHandler);
+const getClinicDoctorAvailabilityHandler = async (data, _context) => {
+    if (!data || typeof data !== 'object') {
+        throw new functions.https.HttpsError('invalid-argument', 'Request payload must be an object');
+    }
+    const clinicId = sanitizeFirestoreId(data.clinicId);
+    if (!clinicId) {
+        throw new functions.https.HttpsError('invalid-argument', 'clinicId is required');
+    }
+    const providedDoctorIds = Array.isArray(data.doctorIds) ? data.doctorIds : undefined;
+    const sanitizedDoctorIds = providedDoctorIds
+        ? providedDoctorIds
+            .map((value) => sanitizeFirestoreId(value))
+            .filter((value) => typeof value === 'string')
+        : [];
+    if (providedDoctorIds && sanitizedDoctorIds.length === 0) {
+        throw new functions.https.HttpsError('invalid-argument', 'doctorIds must contain valid Firestore identifiers');
+    }
+    const uniqueDoctorIds = Array.from(new Set(sanitizedDoctorIds));
+    const db = firebaseAdmin_1.admin.firestore();
+    const clinicRef = db.collection('clinics').doc(clinicId);
+    const clinicSnap = await clinicRef.get();
+    if (!clinicSnap.exists) {
+        throw new functions.https.HttpsError('not-found', 'Clinic not found');
+    }
+    const doctorsCollection = clinicRef.collection('doctors');
+    const doctorMetadata = new Map();
+    const extractDoctorProfile = (raw) => {
+        if (!raw) {
+            return null;
+        }
+        const name = typeof raw['name'] === 'string' ? raw['name'] : null;
+        const specialty = typeof raw['specialty'] === 'string' ? raw['specialty'] : null;
+        const avatarUrl = typeof raw['photoUrl'] === 'string' ? raw['photoUrl'] : null;
+        if (!name && !specialty && !avatarUrl) {
+            return null;
+        }
+        return {
+            name,
+            specialty,
+            avatarUrl
+        };
+    };
+    let targetDoctorIds = uniqueDoctorIds;
+    if (targetDoctorIds.length > 0) {
+        await Promise.all(targetDoctorIds.map(async (doctorId) => {
+            const snap = await doctorsCollection.doc(doctorId).get();
+            if (snap.exists) {
+                doctorMetadata.set(doctorId, snap.data() ?? {});
+            }
+            else {
+                doctorMetadata.set(doctorId, null);
+            }
+        }));
+    }
+    else {
+        const snapshot = await doctorsCollection.get();
+        targetDoctorIds = snapshot.docs.map((doc) => {
+            doctorMetadata.set(doc.id, doc.data() ?? {});
+            return doc.id;
+        });
+    }
+    if (targetDoctorIds.length === 0) {
+        return {
+            clinicId,
+            count: 0,
+            doctors: [],
+            requestedDoctorIds: providedDoctorIds ? [] : undefined
+        };
+    }
+    const availabilityResults = await (0, availability_1.resolveManyDoctorAvailability)({
+        clinicId,
+        doctorIds: targetDoctorIds
+    });
+    const doctors = availabilityResults.map((result) => {
+        const metadata = doctorMetadata.get(result.doctorId) ?? null;
+        const profile = extractDoctorProfile(metadata);
+        return {
+            doctorId: result.doctorId,
+            profile,
+            availability: serializeAvailability(result)
+        };
+    });
+    return {
+        clinicId,
+        count: doctors.length,
+        doctors,
+        requestedDoctorIds: providedDoctorIds ? targetDoctorIds : undefined
+    };
+};
+exports.getClinicDoctorAvailability = createV2Callable(getClinicDoctorAvailabilityHandler);
+const getClinicSchedulingSettingsHandler = async (data, _context) => {
+    const clinicId = sanitizeFirestoreId(data?.clinicId);
+    if (!clinicId) {
+        throw new functions.https.HttpsError('invalid-argument', 'clinicId is required');
+    }
+    const settings = await (0, settings_1.loadClinicSchedulingSettings)(clinicId);
+    return {
+        clinicId,
+        settings
+    };
+};
+exports.getClinicSchedulingSettings = createV2Callable(getClinicSchedulingSettingsHandler);
+const updateClinicSchedulingSettingsHandler = async (data, context) => {
+    if (!context.auth) {
+        throw new functions.https.HttpsError('unauthenticated', 'Authentication required');
+    }
+    const clinicId = sanitizeFirestoreId(data?.clinicId);
+    if (!clinicId) {
+        throw new functions.https.HttpsError('invalid-argument', 'clinicId is required');
+    }
+    const settings = await (0, settings_1.saveClinicSchedulingSettings)(clinicId, {
+        manualCheckInRequired: data?.manualCheckInRequired,
+        allowOfflineSignups: data?.allowOfflineSignups
+    });
+    functions.logger.info('Clinic scheduling settings updated', {
+        clinicId,
+        manualCheckInRequired: settings.manualCheckInRequired,
+        allowOfflineSignups: settings.allowOfflineSignups,
+        uid: context.auth?.uid ?? null
+    });
+    return {
+        clinicId,
+        settings
+    };
+};
+exports.updateClinicSchedulingSettings = createV2Callable(updateClinicSchedulingSettingsHandler);
+const requestDoctorOnlineNotificationHandler = (0, requestDoctorOnlineNotification_1.createRequestDoctorOnlineNotificationHandler)();
+exports.requestDoctorOnlineNotification = createV2Callable(requestDoctorOnlineNotificationHandler);
+const updateDefaultRotaHandler = async (data, context) => {
+    if (!context.auth) {
+        throw new functions.https.HttpsError('unauthenticated', 'Authentication required');
+    }
+    const clinicId = typeof data?.clinicId === 'string' ? data.clinicId.trim() : '';
+    const doctorId = typeof data?.doctorId === 'string' ? data.doctorId.trim() : '';
+    const timeZone = typeof data?.timeZone === 'string' ? data.timeZone.trim() : '';
+    const week = data?.week ?? {};
+    try {
+        const rota = await (0, mutations_1.updateDoctorDefaultRota)({
+            clinicId,
+            doctorId,
+            timeZone,
+            week
+        });
+        return {
+            success: true,
+            rota
+        };
+    }
+    catch (error) {
+        mapSchedulingError(error, 'update default rota');
+    }
+};
+exports.updateDoctorDefaultRota = createV2Callable(updateDefaultRotaHandler);
+const createOverrideHandler = async (data, context) => {
+    if (!context.auth) {
+        throw new functions.https.HttpsError('unauthenticated', 'Authentication required');
+    }
+    const payload = {
+        clinicId: typeof data?.clinicId === 'string' ? data.clinicId.trim() : '',
+        doctorId: typeof data?.doctorId === 'string' ? data.doctorId.trim() : '',
+        type: data?.type,
+        start: data?.start,
+        end: data?.end,
+        note: data?.note,
+        overrideId: typeof data?.overrideId === 'string' ? data.overrideId.trim() || undefined : undefined
+    };
+    if (data?.type === 'blocker') {
+        payload.reasonCode = data.reasonCode ?? null;
+    }
+    if (data?.type === 'exception') {
+        payload.label = data.label ?? null;
+    }
+    try {
+        const result = await (0, mutations_1.createDoctorScheduleOverride)(payload);
+        return {
+            success: true,
+            overrideId: result.id,
+            override: result.override
+        };
+    }
+    catch (error) {
+        mapSchedulingError(error, 'create schedule override');
+    }
+};
+exports.createDoctorScheduleOverride = createV2Callable(createOverrideHandler);
+const updateOverrideHandler = async (data, context) => {
+    if (!context.auth) {
+        throw new functions.https.HttpsError('unauthenticated', 'Authentication required');
+    }
+    const payload = {
+        clinicId: typeof data?.clinicId === 'string' ? data.clinicId.trim() : '',
+        doctorId: typeof data?.doctorId === 'string' ? data.doctorId.trim() : '',
+        overrideId: typeof data?.overrideId === 'string' ? data.overrideId.trim() : undefined,
+        type: data?.type,
+        start: data?.start,
+        end: data?.end,
+        note: data?.note
+    };
+    if (data?.type === 'blocker') {
+        payload.reasonCode = data.reasonCode ?? null;
+    }
+    if (data?.type === 'exception') {
+        payload.label = data.label ?? null;
+    }
+    try {
+        const result = await (0, mutations_1.updateDoctorScheduleOverride)(payload);
+        return {
+            success: true,
+            overrideId: result.id,
+            override: result.override
+        };
+    }
+    catch (error) {
+        mapSchedulingError(error, 'update schedule override');
+    }
+};
+exports.updateDoctorScheduleOverride = createV2Callable(updateOverrideHandler);
+const deleteOverrideHandler = async (data, context) => {
+    if (!context.auth) {
+        throw new functions.https.HttpsError('unauthenticated', 'Authentication required');
+    }
+    const clinicId = typeof data?.clinicId === 'string' ? data.clinicId.trim() : '';
+    const doctorId = typeof data?.doctorId === 'string' ? data.doctorId.trim() : '';
+    const overrideId = typeof data?.overrideId === 'string' ? data.overrideId.trim() : '';
+    try {
+        const result = await (0, mutations_1.deleteDoctorScheduleOverride)({ clinicId, doctorId, overrideId });
+        return { success: result.deleted };
+    }
+    catch (error) {
+        mapSchedulingError(error, 'delete schedule override');
+    }
+};
+exports.deleteDoctorScheduleOverride = createV2Callable(deleteOverrideHandler);
 /**
  * Server-Sent Events (SSE) patient stream for a given queue.
  * URL params: /sse/clinics/{clinicId}/doctors/{doctorId}/queues/{queueId}/patients
@@ -1040,7 +1397,7 @@ const bootstrapClinicAccountHandler = async (data, _context) => {
         const clinicId = providedClinicId ? String(providedClinicId) : slugify(clinicName);
         const doctorId = providedDoctorId ? String(providedDoctorId) : slugify(doctorName);
         const today = new Date().toISOString().split('T')[0];
-        const db = admin.firestore();
+        const db = firebaseAdmin_1.admin.firestore();
         const clinicRef = db.collection('clinics').doc(clinicId);
         const doctorRef = clinicRef.collection('doctors').doc(doctorId);
         const queueRef = doctorRef.collection('queues').doc(today);

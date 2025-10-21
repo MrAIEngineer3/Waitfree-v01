@@ -46,7 +46,9 @@ export default function DoctorPicker({ clinicId, value, onChange }:{ clinicId: s
           <SelectValue placeholder={loading ? "Loading…" : "Select a doctor…"} />
         </SelectTrigger>
         <SelectContent>
-          {!loading && list.length === 0 && <SelectItem value="" disabled>No doctors found</SelectItem>}
+          {!loading && list.length === 0 && (
+            <div className="px-3 py-2 text-sm text-muted-foreground">No doctors found</div>
+          )}
           {!loading && list.map(d=> (
             <SelectItem key={d.id} value={d.id}>{d.name}{d.specialty? ` • ${d.specialty}`: ''}</SelectItem>
           ))}

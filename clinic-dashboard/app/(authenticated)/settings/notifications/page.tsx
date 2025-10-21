@@ -298,12 +298,23 @@ export default function NotificationsSettingsPage() {
   }
 
   return (
-    <div className="max-w-4xl">
-      <Card padding="none" variant="outline" className="overflow-hidden">
-        <div className="bg-gradient-to-r from-violet-500 to-purple-600 px-8 py-6">
-          <h2 className="text-xl font-semibold text-white">Notification Preferences</h2>
-          <p className="text-sm text-violet-100 mt-1">Choose how you and your patients receive updates</p>
+    <div className="max-w-4xl space-y-6">
+      {/* Page Header */}
+      <div className="flex items-start gap-4">
+        <div className="w-12 h-12 rounded-xl bg-gradient-to-br from-violet-500 to-purple-600 flex items-center justify-center shadow-lg shadow-violet-500/25">
+          <svg className="w-6 h-6 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9" />
+          </svg>
         </div>
+        <div className="flex-1">
+          <h1 className="text-2xl font-bold tracking-tight text-gray-900">Notification Preferences</h1>
+          <p className="text-sm text-gray-600 mt-1">Choose how you and your patients receive updates</p>
+        </div>
+      </div>
+
+      <Separator />
+
+      <Card padding="none" variant="outline" className="overflow-hidden">
 
         <div className="p-8 space-y-8">
           <section className="space-y-4">
@@ -379,11 +390,11 @@ export default function NotificationsSettingsPage() {
 
           <Separator className="my-6" />
 
-          <div className="flex items-center gap-3">
-            <Button variant="default" onClick={save} loading={saving} disabled={!clinicId || !hasPendingChanges}>
+          <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-3">
+            <Button variant="default" onClick={save} loading={saving} disabled={!clinicId || !hasPendingChanges} className="w-full sm:w-auto">
               Save Preferences
             </Button>
-            <Button variant="outline" onClick={resetToServer} disabled={!hasPendingChanges}>
+            <Button variant="outline" onClick={resetToServer} disabled={!hasPendingChanges} className="w-full sm:w-auto">
               Reset
             </Button>
           </div>

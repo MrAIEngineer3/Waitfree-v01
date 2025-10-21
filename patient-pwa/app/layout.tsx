@@ -2,6 +2,7 @@ import type { Metadata, Viewport } from "next";
 import { Inter } from "next/font/google";
 import ConditionalShell from "./components/ConditionalShell";
 import "./globals.css";
+import { Toaster } from "sonner";
 
 const inter = Inter({
   variable: "--font-inter",
@@ -30,6 +31,7 @@ export default function RootLayout({
     <html lang="en" className="h-full overflow-x-hidden">
       <body className={`${inter.variable} antialiased min-h-full overflow-x-hidden [text-size-adjust:100%]`}>        
         <ConditionalShell>{children}</ConditionalShell>
+        <Toaster richColors position="top-center" closeButton />
       </body>
     </html>
   );

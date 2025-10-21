@@ -1,11 +1,14 @@
 "use client";
 
+export const dynamic = "force-dynamic";
+
 import { signInAnonymously } from 'firebase/auth';
 import { doc, onSnapshot, type DocumentData, type Timestamp } from 'firebase/firestore';
 import { httpsCallable } from 'firebase/functions';
 import { useParams } from 'next/navigation';
 import { useEffect, useRef, useState } from 'react';
 import { auth, db, functions } from '../../../../../../lib/firebase';
+import { ensurePatientToken } from './tokenStorage';
 
 interface Patient {
   id: string;
@@ -73,17 +76,12 @@ export default function QueueStatus() {
         // 0) Token fallback: if sessionStorage is missing the access token but the URL has ?t=,
         //    persist it and immediately scrub the URL to avoid accidental sharing.
         try {
-          const key = `patientToken:${patientId}`;
-          const hasToken = !!sessionStorage.getItem(key);
-          const url = new URL(window.location.href);
-          const urlToken = url.searchParams.get('t');
-          if (!hasToken && urlToken) {
-            sessionStorage.setItem(key, urlToken);
-            // Remove only the 't' parameter and keep other params/hash intact
-            url.searchParams.delete('t');
-            const cleaned = url.pathname + (url.search ? `?${url.searchParams.toString()}` : '') + url.hash;
-            window.history.replaceState({}, '', cleaned);
-          }
+          ensurePatientToken({
+            patientId,
+            storage: window.sessionStorage,
+            locationUrl: new URL(window.location.href),
+            replaceUrl: (cleaned) => window.history.replaceState({}, '', cleaned)
+          });
         } catch (scrubErr) {
           // Non-fatal; continue with normal flow
           console.warn('Token URL scrub failed (non-fatal):', scrubErr);
@@ -294,69 +292,72 @@ export default function QueueStatus() {
 
   if (isLoading && !error) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-blue-50 via-white to-indigo-50 text-sm text-gray-600">
-        Loading your queue status…
+      <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-blue-50/50 via-white to-cyan-50/30">
+        <div className="text-center space-y-3">
+          <div className="h-10 w-10 animate-spin rounded-full border-3 border-primary border-t-transparent mx-auto" />
+          <p className="text-sm font-medium text-gray-600">Loading your queue status…</p>
+        </div>
       </div>
     );
   }
 
   // Compact, mobile-first UI inspired by sample: single glass card centered, no scrolling for key info
   return (
-    <div className="relative min-h-screen w-full antialiased text-gray-800 flex items-start sm:items-center justify-center px-4 pt-4 pb-6 sm:py-6" aria-describedby="queue-live-region">
+    <div className="relative min-h-screen w-full antialiased text-gray-800 flex items-start sm:items-center justify-center px-4 pt-6 pb-6 sm:py-6 bg-gradient-to-br from-blue-50/50 via-white to-cyan-50/30" aria-describedby="queue-live-region">
       <div id="queue-live-region" aria-live="polite" className="sr-only">{liveMessage}</div>
 
       {/* Background gradient aurora */}
       <div aria-hidden className="pointer-events-none absolute inset-0 overflow-hidden">
-        <div className="absolute -top-60 -left-40 w-[28rem] h-[28rem] rounded-full bg-gradient-to-br from-blue-200/50 via-cyan-100/40 to-transparent blur-3xl opacity-60" />
-        <div className="absolute top-1/2 -right-40 w-[26rem] h-[26rem] rounded-full bg-gradient-to-tr from-cyan-100/40 via-blue-200/40 to-transparent blur-3xl opacity-50" />
+        <div className="absolute -top-60 -left-40 w-[28rem] h-[28rem] rounded-full bg-gradient-to-br from-blue-200/40 via-cyan-100/30 to-transparent blur-3xl opacity-60" />
+        <div className="absolute top-1/2 -right-40 w-[26rem] h-[26rem] rounded-full bg-gradient-to-tr from-cyan-100/30 via-blue-200/30 to-transparent blur-3xl opacity-50" />
       </div>
 
       {/* Main glass card */}
       <main className="relative z-10 w-full max-w-md">
-        <div className="rounded-3xl shadow-lg p-4 sm:p-6 space-y-5 bg-white/60 backdrop-blur-xl border border-white/20">
+        <div className="rounded-3xl shadow-2xl shadow-blue-500/10 p-5 sm:p-7 space-y-6 bg-white/70 backdrop-blur-xl border border-white/40">
           {/* Doctor Info */}
           <header className="text-center">
-            <h1 className="text-lg sm:text-xl font-bold tracking-tight text-gray-900 bg-gradient-to-tr from-blue-900 via-blue-700 to-sky-600 bg-clip-text text-transparent">
+            <h1 className="text-xl sm:text-2xl font-bold tracking-tight text-gray-900 bg-gradient-to-br from-blue-900 via-blue-700 to-sky-600 bg-clip-text text-transparent">
               {doctor?.name || '—'}
             </h1>
-            <p className="text-[12px] text-gray-600 mt-0.5">{doctor?.specialty || 'Clinic'}</p>
+            <p className="text-xs text-gray-600 mt-1 font-medium">{doctor?.specialty || 'Clinic'}</p>
           </header>
 
           {/* Token Display */}
-          <section className="text-center space-y-2">
-            <p className="text-[11px] font-medium text-blue-800 uppercase tracking-wider">Your Token Number</p>
-            <div className="bg-gradient-to-r from-blue-800 via-blue-600 to-sky-500 bg-clip-text text-transparent text-5xl sm:text-6xl font-extrabold tracking-tighter">
+          <section className="text-center space-y-3">
+            <p className="text-xs font-semibold text-blue-800 uppercase tracking-wider">Your Token Number</p>
+            <div className="bg-gradient-to-br from-blue-800 via-blue-600 to-sky-500 bg-clip-text text-transparent text-6xl sm:text-7xl font-extrabold tracking-tighter">
               {patient?.tokenNumber ?? '—'}
             </div>
           </section>
 
           {/* Queue Stats */}
-          <section className="grid grid-cols-3 gap-3 text-center">
-            <div>
-              <p className="text-[10px] sm:text-xs font-medium text-gray-500">Now Serving</p>
-              <p className="text-xl sm:text-2xl font-bold text-emerald-600 mt-0.5">{nowServingDisplay}</p>
+          <section className="grid grid-cols-3 gap-4 text-center">
+            <div className="p-3 rounded-xl bg-gradient-to-br from-emerald-50 to-emerald-100/50 border border-emerald-200/50">
+              <p className="text-[10px] sm:text-xs font-semibold text-emerald-700 uppercase tracking-wide">Now Serving</p>
+              <p className="text-2xl sm:text-3xl font-bold text-emerald-600 mt-1">{nowServingDisplay}</p>
             </div>
-            <div>
-              <p className="text-[10px] sm:text-xs font-medium text-gray-500">Ahead of You</p>
-              <p className="text-xl sm:text-2xl font-bold text-orange-500 mt-0.5">{patientsAhead}</p>
+            <div className="p-3 rounded-xl bg-gradient-to-br from-orange-50 to-orange-100/50 border border-orange-200/50">
+              <p className="text-[10px] sm:text-xs font-semibold text-orange-700 uppercase tracking-wide">Ahead</p>
+              <p className="text-2xl sm:text-3xl font-bold text-orange-600 mt-1">{patientsAhead}</p>
             </div>
-            <div>
-              <p className="text-[10px] sm:text-xs font-medium text-gray-500">Est. Wait</p>
-              <p className="text-sm font-semibold text-gray-800 mt-1">{estimatedWaitTime}</p>
+            <div className="p-3 rounded-xl bg-gradient-to-br from-blue-50 to-blue-100/50 border border-blue-200/50">
+              <p className="text-[10px] sm:text-xs font-semibold text-blue-700 uppercase tracking-wide">Est. Wait</p>
+              <p className="text-sm font-bold text-blue-800 mt-2">{estimatedWaitTime}</p>
             </div>
           </section>
 
           {/* Stepper: 4 compact steps (center-aligned) */}
           <section>
             <div className="relative">
-              <div className="absolute top-4 left-0 right-0 h-[2px] bg-slate-200" aria-hidden />
-              <ol className="relative flex items-center justify-between px-1.5">
+              <div className="absolute top-5 left-0 right-0 h-[2px] bg-slate-200" aria-hidden />
+              <ol className="relative flex items-center justify-between px-2">
                 {['Joined','In Queue','Ready','Done'].map((label, idx) => {
                   const isActive = patient?.status === 'completed' ? true : idx <= currentStepIndex;
                   const isCurrent = idx === currentStepIndex && patient?.status !== 'completed' && patient?.status !== 'cancelled';
                   return (
-                    <li key={label} className="relative flex-1 flex flex-col items-center gap-1 text-center">
-                      <span className={`relative h-8 w-8 rounded-full flex items-center justify-center text-xs font-semibold shadow-sm ${isActive ? 'bg-blue-600 text-white ring-4 ring-blue-50' : 'bg-slate-200 text-slate-400'}`}>
+                    <li key={label} className="relative flex-1 flex flex-col items-center gap-1.5 text-center">
+                      <span className={`relative h-10 w-10 rounded-full flex items-center justify-center text-xs font-bold shadow-md transition-all ${isActive ? 'bg-gradient-to-br from-blue-600 to-blue-500 text-white ring-4 ring-blue-50' : 'bg-slate-200 text-slate-400'}`}>
                         {isCurrent && <span className="animate-ping absolute inset-0 rounded-full bg-blue-400 opacity-75" aria-hidden />}
                         <span className="relative z-10">
                           {patient?.status === 'completed' && idx === 3 ? (
@@ -366,7 +367,7 @@ export default function QueueStatus() {
                           )}
                         </span>
                       </span>
-                      <span className={`text-[11px] font-medium ${isActive ? 'text-blue-700' : 'text-slate-500'}`}>{label}</span>
+                      <span className={`text-[11px] font-semibold ${isActive ? 'text-blue-700' : 'text-slate-500'}`}>{label}</span>
                     </li>
                   );
                 })}
@@ -376,13 +377,13 @@ export default function QueueStatus() {
 
           {/* Info + Action */}
           {patient?.status === 'cancelled' && (
-            <div className="p-3.5 rounded-xl border border-red-200/70 bg-red-50 flex items-start gap-2.5">
-              <div className="h-2 w-2 rounded-full bg-red-600 mt-1.5" aria-hidden />
-              <p className="text-xs text-red-900 leading-relaxed">Your token (#{patient.tokenNumber}) has been cancelled. Please contact the clinic or re-join.</p>
+            <div className="p-4 rounded-xl border border-red-200/80 bg-gradient-to-br from-red-50 to-red-100/50 flex items-start gap-3">
+              <div className="h-2.5 w-2.5 rounded-full bg-red-600 mt-1.5" aria-hidden />
+              <p className="text-xs text-red-900 leading-relaxed font-medium">Your token (#{patient.tokenNumber}) has been cancelled. Please contact the clinic or re-join.</p>
             </div>
           )}
 
-          <button className="w-full bg-gray-200 text-gray-500 py-2.5 px-6 rounded-xl font-medium text-sm hover:bg-gray-300 focus:outline-none focus:ring-2 focus:ring-gray-400 focus:ring-offset-2 transition-colors shadow-sm disabled:opacity-60 disabled:cursor-not-allowed active:scale-[.985]" disabled title="Cancellation feature is coming soon">
+          <button className="w-full bg-gray-200 text-gray-500 py-3 px-6 rounded-xl font-semibold text-sm hover:bg-gray-300 focus:outline-none focus:ring-2 focus:ring-gray-400 focus:ring-offset-2 transition-all shadow-sm disabled:opacity-60 disabled:cursor-not-allowed active:scale-[.985]" disabled title="Cancellation feature is coming soon">
             Cancel My Token (Soon)
           </button>
 

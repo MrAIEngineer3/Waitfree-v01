@@ -33,6 +33,15 @@ const tabs = [
     )
   },
   { 
+    label: 'Workflow', 
+    href: '/settings/workflow',
+    icon: (
+      <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 3H7a2 2 0 01-2-2V7a2 2 0 012-2h3l1-2h2l1 2h3a2 2 0 012 2v10a2 2 0 01-2 2z" />
+      </svg>
+    )
+  },
+  { 
     label: 'Notifications', 
     href: '/settings/notifications',
     icon: (

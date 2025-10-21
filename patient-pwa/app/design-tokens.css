@@ -1,0 +1,109 @@
+:root {
+  /* Brand Palette - Aligned with clinic dashboard */
+  --color-brand-50: #eef6ff;
+  --color-brand-100: #d8ecff;
+  --color-brand-200: #b6dcff;
+  --color-brand-300: #84c4ff;
+  --color-brand-400: #4ca7ff;
+  --color-brand-500: #1d83f0; /* primary */
+  --color-brand-600: #1667c7;
+  --color-brand-700: #134fa0;
+  --color-brand-800: #123f7d;
+  --color-brand-900: #112f5a;
+
+  /* Semantic (map to brand + neutrals) */
+  --color-sem-primary: var(--color-brand-600);
+  --color-sem-primary-hover: var(--color-brand-500);
+  --color-sem-primary-active: var(--color-brand-700);
+  --color-sem-accent: #0891b2;
+  --color-sem-danger: #dc2626;
+  --color-sem-danger-hover: #b91c1c;
+  --color-sem-warning: #d97706;
+  --color-sem-warning-hover: #b45309;
+  --color-sem-success: #059669;
+  --color-sem-success-hover: #047857;
+  --color-sem-muted: #6b7280;
+  --color-sem-border: #e2e8f0;
+  --color-sem-surface: #ffffff;
+  --color-sem-surface-alt: #f8fafc;
+  --color-sem-overlay: #0f172a;
+
+  /* Elevation - Modern shadows matching clinic dashboard */
+  --shadow-xs: 0 1px 2px 0 rgb(0 0 0 / 0.04);
+  --shadow-sm: 0 1px 3px 0 rgb(0 0 0 / 0.08), 0 1px 2px -1px rgb(0 0 0 / 0.05);
+  --shadow-md: 0 4px 8px -2px rgba(0 0 0 / 0.08), 0 2px 4px -2px rgba(0 0 0 / 0.06);
+  --shadow-lg: 0 12px 28px -6px rgba(0 0 0 / 0.15);
+  --shadow-xl: 0 20px 40px -15px rgba(0 0 0 / 0.20);
+
+  /* Radii - Matching clinic dashboard */
+  --radius-xs: 2px;
+  --radius-sm: 4px;
+  --radius-md: 8px;
+  --radius-lg: 12px;
+  --radius-xl: 16px;
+  --radius-pill: 999px;
+
+  /* Spacing (4px scale) */
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+  --space-8: 32px;
+  --space-10: 40px;
+  --space-12: 48px;
+
+  /* Typography */
+  --font-weight-regular: 400;
+  --font-weight-medium: 500;
+  --font-weight-semibold: 600;
+  --font-weight-bold: 700;
+  --line-height-tight: 1.15;
+  --line-height-snug: 1.25;
+  --line-height-normal: 1.45;
+
+  /* Motion - Matching clinic dashboard */
+  --ease-brand: cubic-bezier(.4,.22,.2,1);
+  --dur-fast: 120ms;
+  --dur-base: 180ms;
+  --dur-slow: 300ms;
+
+  /* Component Tokens */
+  --btn-height-sm: 32px;
+  --btn-height-md: 40px;
+  --btn-height-lg: 48px;
+  --border-width: 1px;
+  --focus-ring: 0 0 0 3px rgba(29 131 240 / 0.35);
+
+  /* Gradient helpers for consistency */
+  --wf-gradient-start: 222 89% 55%;
+  --wf-gradient-end: 188 94% 43%;
+  --wf-bg: 210 40% 98%;
+  --wf-bg-alt: 0 0% 100% / 0.7;
+  --wf-border: 220 14% 90%;
+  --wf-ring: 222 89% 55%;
+  --wf-danger: 0 72% 51%;
+  --wf-warn: 32 95% 44%;
+  --wf-success: 161 94% 30%;
+  --wf-shadow-color: 222 89% 55% / 0.25;
+  --wf-radius-sm: 0.5rem;
+  --wf-radius: 0.75rem;
+  --wf-radius-lg: 1.25rem;
+  --wf-radius-full: 999px;
+  --wf-ease: cubic-bezier(.4,.0,.2,1);
+  --wf-duration: 180ms;
+
+  /* Utility gradient background */
+  --wf-body-bg: linear-gradient(180deg, #f8fbff 0%, #eef5fb 100%);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --color-sem-surface: #0f172a;
+    --color-sem-surface-alt: #1e293b;
+    --color-sem-border: #334155;
+    --color-sem-muted: #94a3b8;
+    --color-sem-overlay: #ffffff;
+  }
+}
