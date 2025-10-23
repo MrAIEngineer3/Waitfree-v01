@@ -545,13 +545,13 @@ export default function QueueList({ clinicId: clinicIdProp, doctorId: doctorIdPr
         {/* Toolbar now minimal since controls moved to section headers */}
       </div>
       {/* Mobile sticky action bar */}
-  <div className="sm:hidden fixed bottom-0 inset-x-0 z-40 bg-white/95 backdrop-blur border-t border-gray-200 px-3 py-3 flex items-center gap-2 overflow-x-auto" role="toolbar" aria-label="Queue actions" style={{ paddingBottom: 'calc(env(safe-area-inset-bottom,0px) + 0.75rem)' }}>
+  <div className="sm:hidden fixed bottom-0 inset-x-0 z-40 bg-background/95 backdrop-blur border-t border-border px-3 py-3 flex items-center gap-2 overflow-x-auto" role="toolbar" aria-label="Queue actions" style={{ paddingBottom: 'calc(env(safe-area-inset-bottom,0px) + 0.75rem)' }}>
         {/* Mobile controls simplified - main controls now in section headers */}
       </div>
       <div className="sm:hidden h-4" />
 
       {endedFlag && (
-        <div className="rounded-md border border-red-300 bg-red-50 px-4 py-3 text-xs text-red-700 mb-2">
+        <div className="rounded-md border border-red-300 dark:border-red-800 bg-red-50 dark:bg-red-950/30 px-4 py-3 text-xs text-red-700 dark:text-red-400 mb-2">
           Queue is ended. New patients joining are recorded as waiting but cannot be called until you restart.
         </div>
       )}
@@ -567,15 +567,15 @@ export default function QueueList({ clinicId: clinicIdProp, doctorId: doctorIdPr
             <li>Allow new patients to still join (they remain Waiting).</li>
             <li>Require a manual restart to resume operations.</li>
           </ul>
-          <p className="font-medium text-gray-700">Currently waiting: <span className="text-blue-700">{waitingCount}</span></p>
+          <p className="font-medium text-foreground">Currently waiting: <span className="text-blue-600 dark:text-blue-400">{waitingCount}</span></p>
           <div className="space-y-2 pt-2">
-            <label className="block text-xs font-semibold uppercase tracking-wide text-gray-600">Type END to confirm</label>
+            <label className="block text-xs font-semibold uppercase tracking-wide text-muted-foreground">Type END to confirm</label>
             <input
               autoFocus
               value={endConfirmText}
               onChange={e=>setEndConfirmText(e.target.value)}
               placeholder="END"
-              className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-red-500"
+              className="w-full rounded-md border border-input bg-background text-foreground px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-red-500 dark:focus:ring-red-400"
             />
           </div>
           <AlertDialogFooter>
@@ -618,7 +618,7 @@ export default function QueueList({ clinicId: clinicIdProp, doctorId: doctorIdPr
             </AlertDialogDescription>
           </AlertDialogHeader>
           {(cancelPatientName || cancelPatientId) && (
-            <p className="text-xs text-gray-500">Patient: <span className="font-mono">{cancelPatientName || cancelPatientId}</span></p>
+            <p className="text-xs text-muted-foreground">Patient: <span className="font-mono">{cancelPatientName || cancelPatientId}</span></p>
           )}
           <AlertDialogFooter>
             <AlertDialogCancel>Cancel</AlertDialogCancel>
@@ -636,7 +636,7 @@ export default function QueueList({ clinicId: clinicIdProp, doctorId: doctorIdPr
             </AlertDialogDescription>
           </AlertDialogHeader>
           {(uncallPatientName || uncallPatientId) && (
-            <p className="text-xs text-gray-500">Patient: <span className="font-mono">{uncallPatientName || uncallPatientId}</span></p>
+            <p className="text-xs text-muted-foreground">Patient: <span className="font-mono">{uncallPatientName || uncallPatientId}</span></p>
           )}
           <AlertDialogFooter>
             <AlertDialogCancel>Cancel</AlertDialogCancel>
@@ -654,7 +654,7 @@ export default function QueueList({ clinicId: clinicIdProp, doctorId: doctorIdPr
             </AlertDialogDescription>
           </AlertDialogHeader>
           {(completePatientName || completePatientId) && (
-            <p className="text-xs text-gray-500">Patient: <span className="font-mono">{completePatientName || completePatientId}</span></p>
+            <p className="text-xs text-muted-foreground">Patient: <span className="font-mono">{completePatientName || completePatientId}</span></p>
           )}
           <AlertDialogFooter>
             <AlertDialogCancel>Cancel</AlertDialogCancel>
@@ -679,8 +679,8 @@ export default function QueueList({ clinicId: clinicIdProp, doctorId: doctorIdPr
                   <li>{next ? 'Call next waiting patient' : 'No waiting patient to call'}</li>
                 </ul>
                 <div className="pt-1 space-y-1">
-                  <p className="text-gray-500">Current: {current ? <span className="font-mono">{current.name} (#{current.tokenNumber})</span> : '—'}</p>
-                  <p className="text-gray-500">Next: {next ? <span className="font-mono">{next.name} (#{next.tokenNumber})</span> : '—'}</p>
+                  <p className="text-muted-foreground">Current: {current ? <span className="font-mono">{current.name} (#{current.tokenNumber})</span> : '—'}</p>
+                  <p className="text-muted-foreground">Next: {next ? <span className="font-mono">{next.name} (#{next.tokenNumber})</span> : '—'}</p>
                 </div>
               </div>
             );
@@ -708,7 +708,7 @@ export default function QueueList({ clinicId: clinicIdProp, doctorId: doctorIdPr
       </AlertDialog>
 
       {activeActionMessage && (
-        <div className="flex items-center gap-3 text-sm text-blue-700 bg-blue-50 border border-blue-200 rounded-lg px-4 py-3 shadow-sm" role="status">
+        <div className="flex items-center gap-3 text-sm text-blue-700 dark:text-blue-300 bg-blue-50 dark:bg-blue-950/30 border border-blue-200 dark:border-blue-800 rounded-lg px-4 py-3 shadow-sm" role="status">
           <svg className="w-5 h-5 animate-spin flex-shrink-0" fill="none" viewBox="0 0 24 24">
             <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
             <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
@@ -718,13 +718,13 @@ export default function QueueList({ clinicId: clinicIdProp, doctorId: doctorIdPr
       )}
 
       {isReadOnly && (
-        <div className="flex items-start gap-3 text-sm text-gray-700 bg-gray-50 border border-gray-300 rounded-lg px-4 py-3 shadow-sm">
+        <div className="flex items-start gap-3 text-sm text-muted-foreground bg-muted border border-border rounded-lg px-4 py-3 shadow-sm">
           <svg className="w-5 h-5 flex-shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
           </svg>
           <div>
             <span className="font-medium">Viewing historical queue data for </span>
-            <span className="font-mono text-gray-900">{queueId}</span>
+            <span className="font-mono text-foreground">{queueId}</span>
             <span>. Actions are disabled.</span>
           </div>
         </div>
@@ -736,14 +736,14 @@ export default function QueueList({ clinicId: clinicIdProp, doctorId: doctorIdPr
           return (
             <div className="space-y-3" aria-hidden>
               {Array.from({ length: 4 }).map((_, i) => (
-                <div key={i} className="bg-white border border-gray-200 rounded-lg p-4 animate-pulse">
+                <div key={i} className="bg-card border border-border rounded-lg p-4 animate-pulse">
                   <div className="flex items-center gap-4">
-                    <div className="w-12 h-12 rounded-full bg-gray-200" />
+                    <div className="w-12 h-12 rounded-full bg-muted" />
                     <div className="flex-1 space-y-2">
-                      <div className="h-5 w-1/3 rounded bg-gray-200" />
-                      <div className="h-4 w-1/4 rounded bg-gray-200" />
+                      <div className="h-5 w-1/3 rounded bg-muted" />
+                      <div className="h-4 w-1/4 rounded bg-muted" />
                     </div>
-                    <div className="h-9 w-20 rounded bg-gray-200" />
+                    <div className="h-9 w-20 rounded bg-muted" />
                   </div>
                 </div>
               ))}
@@ -754,14 +754,14 @@ export default function QueueList({ clinicId: clinicIdProp, doctorId: doctorIdPr
           return (
             <div className="text-center py-16 px-4">
               <div className="max-w-sm mx-auto space-y-4">
-                <div className="h-16 w-16 mx-auto rounded-full bg-gray-100 flex items-center justify-center">
-                  <svg className="w-8 h-8 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <div className="h-16 w-16 mx-auto rounded-full bg-muted flex items-center justify-center">
+                  <svg className="w-8 h-8 text-muted-foreground" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z" />
                   </svg>
                 </div>
                 <div>
-                  <h3 className="text-lg font-semibold text-gray-900 mb-1">No Patients Yet</h3>
-                  <p className="text-sm text-gray-600">Patients who join the queue will appear here</p>
+                  <h3 className="text-lg font-semibold text-foreground mb-1">No Patients Yet</h3>
+                  <p className="text-sm text-muted-foreground">Patients who join the queue will appear here</p>
                 </div>
               </div>
             </div>
@@ -781,35 +781,35 @@ export default function QueueList({ clinicId: clinicIdProp, doctorId: doctorIdPr
               <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 px-1">
                 <div className="flex items-center gap-3">
                   <div className={`h-10 w-10 rounded-lg flex items-center justify-center ${
-                    groupKey === 'in-progress' ? 'bg-green-100' :
-                    groupKey === 'waiting' ? 'bg-blue-100' :
-                    groupKey === 'completed' ? 'bg-gray-100' :
-                    'bg-red-100'
+                    groupKey === 'in-progress' ? 'bg-green-100 dark:bg-green-950/30' :
+                    groupKey === 'waiting' ? 'bg-blue-100 dark:bg-blue-950/30' :
+                    groupKey === 'completed' ? 'bg-muted' :
+                    'bg-red-100 dark:bg-red-950/30'
                   }`}>
                     {groupKey === 'in-progress' && (
-                      <svg className="w-5 h-5 text-green-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <svg className="w-5 h-5 text-green-600 dark:text-green-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
                       </svg>
                     )}
                     {groupKey === 'waiting' && (
-                      <svg className="w-5 h-5 text-blue-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <svg className="w-5 h-5 text-blue-600 dark:text-blue-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
                       </svg>
                     )}
                     {groupKey === 'completed' && (
-                      <svg className="w-5 h-5 text-gray-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <svg className="w-5 h-5 text-muted-foreground" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
                       </svg>
                     )}
                     {groupKey === 'cancelled' && (
-                      <svg className="w-5 h-5 text-red-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <svg className="w-5 h-5 text-red-600 dark:text-red-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 14l2-2m0 0l2-2m-2 2l-2-2m2 2l2 2m7-2a9 9 0 11-18 0 9 9 0 0118 0z" />
                       </svg>
                     )}
                   </div>
                   <div>
-                    <h4 className="text-base font-bold text-gray-900">{titles[groupKey]}</h4>
-                    <p className="text-xs text-gray-500">{list.length} patient{list.length !== 1 ? 's' : ''}</p>
+                    <h4 className="text-base font-bold text-foreground">{titles[groupKey]}</h4>
+                    <p className="text-xs text-muted-foreground">{list.length} patient{list.length !== 1 ? 's' : ''}</p>
                   </div>
                 </div>
                 
@@ -820,7 +820,7 @@ export default function QueueList({ clinicId: clinicIdProp, doctorId: doctorIdPr
                       onClick={()=>{ if (skipAdvanceToday) { handleNextPatient(); } else { setShowAdvanceModal(true); } }}
                       disabled={isNextPatientLoading || !patients.length || endedFlag || autoAdvance}
                       size="sm"
-                      className="bg-blue-600 hover:bg-blue-700 text-white shadow-sm h-9 disabled:opacity-50 disabled:cursor-not-allowed"
+                      className="bg-blue-600 hover:bg-blue-700 dark:bg-blue-500 dark:hover:bg-blue-600 text-white shadow-sm h-9 disabled:opacity-50 disabled:cursor-not-allowed"
                       title={autoAdvance ? "Next Patient is automatic when auto-advance is enabled" : "Call the next waiting patient"}
                     >
                       {isNextPatientLoading ? (
@@ -840,17 +840,17 @@ export default function QueueList({ clinicId: clinicIdProp, doctorId: doctorIdPr
                         </>
                       )}
                     </Button>
-                    <label className="flex items-center gap-2 px-3 py-2 text-sm text-gray-700 bg-white border border-gray-300 rounded-lg hover:bg-gray-50 cursor-pointer transition-colors shadow-sm h-9">
+                    <label className="flex items-center gap-2 px-3 py-2 text-sm text-foreground bg-card border border-input rounded-lg hover:bg-accent cursor-pointer transition-colors shadow-sm h-9">
                       <input
                         type="checkbox"
                         checked={autoAdvance}
                         disabled={isAutoAdvUpdating}
                         onChange={(e) => handleToggleAutoAdvance(e.target.checked)}
-                        className="h-4 w-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500 disabled:opacity-50 cursor-pointer"
+                        className="h-4 w-4 rounded border-input text-blue-600 focus:ring-blue-500 disabled:opacity-50 cursor-pointer"
                       />
                       <span className="font-medium whitespace-nowrap">Auto-advance</span>
                       {isAutoAdvUpdating && (
-                        <svg className="w-3 h-3 animate-spin text-gray-400" fill="none" viewBox="0 0 24 24">
+                        <svg className="w-3 h-3 animate-spin text-muted-foreground" fill="none" viewBox="0 0 24 24">
                           <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
                           <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
                         </svg>
@@ -875,14 +875,14 @@ export default function QueueList({ clinicId: clinicIdProp, doctorId: doctorIdPr
                   return (
                     <div
                       key={patient.id}
-                      className={`flex flex-col sm:flex-row sm:items-center gap-4 bg-white border rounded-lg p-4 transition-all duration-200 ${
+                      className={`flex flex-col sm:flex-row sm:items-center gap-4 bg-card border rounded-lg p-4 transition-all duration-200 ${
                         isInProgress 
-                          ? 'border-blue-300 bg-blue-50/30 shadow-sm' 
+                          ? 'border-blue-300 dark:border-blue-700 bg-blue-50/30 dark:bg-blue-950/20 shadow-sm' 
                           : isCompleted 
-                          ? 'border-gray-200 bg-gray-50/50' 
+                          ? 'border-border bg-muted/50' 
                           : isCancelled
-                          ? 'border-red-200 bg-red-50/30'
-                          : 'border-gray-200 hover:border-gray-300 hover:shadow-sm'
+                          ? 'border-red-200 dark:border-red-800 bg-red-50/30 dark:bg-red-950/20'
+                          : 'border-border hover:border-border/80 hover:shadow-sm'
                       }`}
                     >
                       {/* Patient Info Section */}
@@ -890,12 +890,12 @@ export default function QueueList({ clinicId: clinicIdProp, doctorId: doctorIdPr
                         {/* Token Number */}
                         <div className={`flex-shrink-0 w-12 h-12 rounded-full flex items-center justify-center font-bold text-base border-2 ${
                           isInProgress 
-                            ? 'bg-blue-100 border-blue-400 text-blue-700' 
+                            ? 'bg-blue-100 dark:bg-blue-950/40 border-blue-400 dark:border-blue-600 text-blue-700 dark:text-blue-300' 
                             : isCompleted
-                            ? 'bg-gray-100 border-gray-300 text-gray-500'
+                            ? 'bg-muted border-border text-muted-foreground'
                             : isCancelled
-                            ? 'bg-red-100 border-red-300 text-red-600'
-                            : 'bg-indigo-50 border-indigo-300 text-indigo-700'
+                            ? 'bg-red-100 dark:bg-red-950/40 border-red-300 dark:border-red-700 text-red-600 dark:text-red-400'
+                            : 'bg-indigo-50 dark:bg-indigo-950/30 border-indigo-300 dark:border-indigo-700 text-indigo-700 dark:text-indigo-300'
                         }`}>
                           {patient.tokenNumber}
                         </div>
@@ -904,20 +904,20 @@ export default function QueueList({ clinicId: clinicIdProp, doctorId: doctorIdPr
                         <div className="flex-1 min-w-0 space-y-1">
                           <div className="flex items-center gap-2 flex-wrap">
                             <p className={`font-semibold text-base ${
-                              isCompleted ? 'text-gray-500 line-through' : 'text-gray-900'
+                              isCompleted ? 'text-muted-foreground line-through' : 'text-foreground'
                             }`}>
                               {patient.name}
                             </p>
                             {isInProgress && (
-                              <Badge className="bg-blue-100 text-blue-700 border border-blue-300 text-[10px] px-2 py-0.5 font-semibold">
+                              <Badge className="bg-blue-100 dark:bg-blue-950/40 text-blue-700 dark:text-blue-300 border border-blue-300 dark:border-blue-700 text-[10px] px-2 py-0.5 font-semibold">
                                 NOW
                               </Badge>
                             )}
                           </div>
-                          <div className="flex items-center gap-3 text-sm text-gray-600">
+                          <div className="flex items-center gap-3 text-sm text-muted-foreground">
                             {patient.age !== undefined && (
                               <span className="flex items-center gap-1.5">
-                                <svg className="w-4 h-4 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
                                 </svg>
                                 {patient.age} yrs
@@ -925,7 +925,7 @@ export default function QueueList({ clinicId: clinicIdProp, doctorId: doctorIdPr
                             )}
                             {patient.phone && (
                               <span className="flex items-center gap-1.5 truncate">
-                                <svg className="w-4 h-4 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 5a2 2 0 012-2h3.28a1 1 0 01.948.684l1.498 4.493a1 1 0 01-.502 1.21l-2.257 1.13a11.042 11.042 0 005.516 5.516l1.13-2.257a1 1 0 011.21-.502l4.493 1.498a1 1 0 01.684.949V19a2 2 0 01-2 2h-1C9.716 21 3 14.284 3 6V5z" />
                                 </svg>
                                 {patient.phone}
@@ -939,10 +939,10 @@ export default function QueueList({ clinicId: clinicIdProp, doctorId: doctorIdPr
                           <Badge 
                             variant="outline"
                             className={`text-xs font-medium border ${
-                              isInProgress ? 'bg-green-50 text-green-700 border-green-300' :
-                              isCompleted ? 'bg-gray-50 text-gray-600 border-gray-300' :
-                              isCancelled ? 'bg-red-50 text-red-700 border-red-300' :
-                              'bg-blue-50 text-blue-700 border-blue-300'
+                              isInProgress ? 'bg-green-50 dark:bg-green-950/20 text-green-700 dark:text-green-300 border-green-300 dark:border-green-700' :
+                              isCompleted ? 'bg-muted text-muted-foreground border-border' :
+                              isCancelled ? 'bg-red-50 dark:bg-red-950/20 text-red-700 dark:text-red-300 border-red-300 dark:border-red-700' :
+                              'bg-blue-50 dark:bg-blue-950/20 text-blue-700 dark:text-blue-300 border-blue-300 dark:border-blue-700'
                             }`}
                           >
                             {getStatusText(patient.status)}
@@ -960,7 +960,7 @@ export default function QueueList({ clinicId: clinicIdProp, doctorId: doctorIdPr
                             }}
                             disabled={isLoading}
                             size="sm" 
-                            className="bg-blue-600 hover:bg-blue-700 text-white shadow-sm h-9 px-4 disabled:opacity-50 disabled:cursor-not-allowed"
+                            className="bg-blue-600 hover:bg-blue-700 dark:bg-blue-500 dark:hover:bg-blue-600 text-white shadow-sm h-9 px-4 disabled:opacity-50 disabled:cursor-not-allowed"
                           >
                             {isLoading ? (
                               <svg className="w-4 h-4 mr-1.5 animate-spin" fill="none" viewBox="0 0 24 24">
@@ -984,7 +984,7 @@ export default function QueueList({ clinicId: clinicIdProp, doctorId: doctorIdPr
                             disabled={isLoading}
                             variant="default"
                             size="sm" 
-                            className="bg-green-600 hover:bg-green-700 text-white shadow-sm h-9 px-4 disabled:opacity-50 disabled:cursor-not-allowed"
+                            className="bg-green-600 hover:bg-green-700 dark:bg-green-500 dark:hover:bg-green-600 text-white shadow-sm h-9 px-4 disabled:opacity-50 disabled:cursor-not-allowed"
                           >
                             {isLoading ? (
                               <svg className="w-4 h-4 mr-1.5 animate-spin" fill="none" viewBox="0 0 24 24">
@@ -1008,7 +1008,7 @@ export default function QueueList({ clinicId: clinicIdProp, doctorId: doctorIdPr
                             disabled={isLoading}
                             variant="outline" 
                             size="sm" 
-                            className="border-gray-300 hover:bg-gray-50 h-9 px-4 disabled:opacity-50 disabled:cursor-not-allowed"
+                            className="h-9 px-4 disabled:opacity-50 disabled:cursor-not-allowed"
                           >
                             {isLoading ? (
                               <svg className="w-4 h-4 mr-1.5 animate-spin" fill="none" viewBox="0 0 24 24">
@@ -1032,7 +1032,7 @@ export default function QueueList({ clinicId: clinicIdProp, doctorId: doctorIdPr
                             disabled={isLoading}
                             variant="outline" 
                             size="sm" 
-                            className="border-red-300 text-red-600 hover:bg-red-50 hover:border-red-400 h-9 px-4 disabled:opacity-50 disabled:cursor-not-allowed"
+                            className="border-red-300 dark:border-red-800 text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-950/30 hover:border-red-400 dark:hover:border-red-700 h-9 px-4 disabled:opacity-50 disabled:cursor-not-allowed"
                           >
                             {isLoading ? (
                               <svg className="w-4 h-4 mr-1.5 animate-spin" fill="none" viewBox="0 0 24 24">

@@ -45,9 +45,9 @@ export default function AuthGuard({ children }: { children: React.ReactNode }) {
 
   if (!mappingChecked) {
     return (
-      <div className="min-h-screen flex flex-col items-center justify-center gap-4 text-sm text-gray-600">
+      <div className="min-h-screen flex flex-col items-center justify-center gap-4 text-sm text-muted-foreground">
         <div className="w-10 h-10 border-4 border-brand-500/30 border-t-brand-600 rounded-full animate-spin" />
-        <div className="text-xs tracking-wide uppercase font-medium text-gray-500">Checking authentication</div>
+        <div className="text-xs tracking-wide uppercase font-medium text-muted-foreground">Checking authentication</div>
       </div>
     );
   }

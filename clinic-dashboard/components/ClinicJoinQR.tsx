@@ -134,24 +134,24 @@ export default function ClinicJoinQR({ clinicId, className }: Props) {
 
   return (
     <div className={className}>
-      <div className="rounded-xl border border-gray-200 bg-white/70 backdrop-blur-sm shadow-sm overflow-hidden">
-        <div className="px-4 py-3 border-b border-gray-200 bg-gradient-to-r from-blue-50 to-indigo-50">
-          <h3 className="text-sm font-semibold text-gray-900">Patient Join QR</h3>
-          <p className="text-xs text-gray-600">Scan to open Join page. Works with any QR scanner.</p>
+      <div className="rounded-xl border border-border bg-card/70 backdrop-blur-sm shadow-sm overflow-hidden">
+        <div className="px-4 py-3 border-b border-border bg-gradient-to-r from-blue-50 to-indigo-50 dark:from-blue-950/30 dark:to-indigo-950/30">
+          <h3 className="text-sm font-semibold text-foreground">Patient Join QR</h3>
+          <p className="text-xs text-muted-foreground">Scan to open Join page. Works with any QR scanner.</p>
         </div>
         <div className="p-4 flex flex-col items-center gap-3">
-          <div ref={svgWrapperRef} className="bg-white p-3 rounded-lg border border-gray-200">
+          <div ref={svgWrapperRef} className="bg-background p-3 rounded-lg border border-border">
             <QRCode value={url} size={192} bgColor="#ffffff" fgColor="#000000" />
           </div>
-          <div className="text-[11px] text-gray-600 break-all text-center max-w-full">
+          <div className="text-[11px] text-muted-foreground break-all text-center max-w-full">
             {url}
           </div>
           <div className="flex gap-2 flex-wrap justify-center">
-            <button onClick={copyLink} className="h-8 px-3 text-xs font-medium text-gray-700 bg-white hover:bg-gray-50 border border-gray-200 rounded-lg shadow-sm">Copy link</button>
-            <button onClick={downloadPng} className="h-8 px-3 text-xs font-medium text-gray-700 bg-white hover:bg-gray-50 border border-gray-200 rounded-lg shadow-sm">Download PNG</button>
-            <button onClick={printQR} className="h-8 px-3 text-xs font-medium text-white bg-blue-600 hover:bg-blue-700 rounded-lg shadow-sm">Print</button>
+            <button onClick={copyLink} className="h-8 px-3 text-xs font-medium text-foreground bg-background hover:bg-accent border border-border rounded-lg shadow-sm">Copy link</button>
+            <button onClick={downloadPng} className="h-8 px-3 text-xs font-medium text-foreground bg-background hover:bg-accent border border-border rounded-lg shadow-sm">Download PNG</button>
+            <button onClick={printQR} className="h-8 px-3 text-xs font-medium text-white bg-blue-600 hover:bg-blue-700 dark:bg-blue-500 dark:hover:bg-blue-600 rounded-lg shadow-sm">Print</button>
           </div>
-          <div className="text-[11px] text-gray-500 text-center">No scanner? Open the patient app and enter Clinic ID: <span className="font-mono">{clinicId}</span></div>
+          <div className="text-[11px] text-muted-foreground text-center">No scanner? Open the patient app and enter Clinic ID: <span className="font-mono">{clinicId}</span></div>
         </div>
       </div>
     </div>

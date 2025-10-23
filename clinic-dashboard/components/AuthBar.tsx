@@ -106,16 +106,16 @@ export default function AuthBar() {
     <div className="mb-6">
       {user ? (
         <div className="flex items-center justify-between">
-          <div className="text-sm text-gray-700">Signed in as <strong className="text-gray-900">{user.email}</strong></div>
+          <div className="text-sm text-muted-foreground">Signed in as <strong className="text-foreground">{user.email}</strong></div>
           <div className="flex items-center gap-3">
             <Button onClick={doSignOut} size="sm" variant="destructive" className="px-3 h-8">Sign out</Button>
           </div>
         </div>
       ) : (
-        <div className="bg-gray-100 rounded-lg p-4">
+        <div className="bg-muted rounded-lg p-4">
           <div className="flex items-center justify-between mb-3">
-            <div className="text-sm text-gray-700">Sign in / Sign up</div>
-            <div className="text-xs text-gray-600">Mode: <strong>{mode}</strong></div>
+            <div className="text-sm text-muted-foreground">Sign in / Sign up</div>
+            <div className="text-xs text-muted-foreground">Mode: <strong>{mode}</strong></div>
           </div>
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 mb-2">
             <Input value={email} onChange={e=>setEmail(e.target.value)} placeholder="Email" className="col-span-2" />
@@ -142,11 +142,11 @@ export default function AuthBar() {
           </div>
           <div className="mt-3">
             <Button onClick={createDemoAccount} disabled={loading} variant="outline" className="text-sm">Create demo account</Button>
-            <div className="text-xs text-gray-600 mt-2">Creates a demo clinic/doctor and signs you in (dev only).</div>
+            <div className="text-xs text-muted-foreground mt-2">Creates a demo clinic/doctor and signs you in (dev only).</div>
           </div>
           {error && <div className="mt-2 text-sem-danger text-sm">{error}</div>}
-          {success && <div className="mt-2 text-green-600 text-sm">{success}</div>}
-          <div className="mt-2 text-xs text-gray-600">Simplified mode: any authenticated user can manage queues.</div>
+          {success && <div className="mt-2 text-sem-success text-sm">{success}</div>}
+          <div className="mt-2 text-xs text-muted-foreground">Simplified mode: any authenticated user can manage queues.</div>
         </div>
       )}
     </div>

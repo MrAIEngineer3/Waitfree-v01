@@ -9,9 +9,9 @@ export default function AccountBadge() {
 
   if (loading) {
     return (
-      <div className="h-8 px-4 rounded-full bg-white/60 border border-gray-200 flex items-center gap-2 animate-pulse text-[11px] text-gray-500">
-        <div className="w-16 h-3 bg-gray-200 rounded" />
-        <div className="w-10 h-3 bg-gray-200 rounded" />
+      <div className="h-8 px-4 rounded-full bg-background/60 border border-border flex items-center gap-2 animate-pulse text-[11px] text-muted-foreground">
+        <div className="w-16 h-3 bg-muted rounded" />
+        <div className="w-10 h-3 bg-muted rounded" />
       </div>
     );
   }
@@ -28,10 +28,10 @@ export default function AccountBadge() {
   }
 
   return (
-    <div className="flex items-center gap-3 text-xs bg-white/70 border border-gray-200 rounded-full pl-3 pr-1.5 py-1 shadow-sm">
+    <div className="flex items-center gap-3 text-xs bg-background/70 border border-border rounded-full pl-3 pr-1.5 py-1 shadow-sm">
       <div className="flex flex-col leading-tight pr-1">
-        <span className="font-semibold text-gray-800">{mapping?.doctorName || email}</span>
-        <span className="text-[10px] text-gray-500">{mapping?.clinicName || 'Clinic pending'}{mapping?.specialty ? ` • ${mapping.specialty}` : ''}</span>
+        <span className="font-semibold text-foreground">{mapping?.doctorName || email}</span>
+        <span className="text-[10px] text-muted-foreground">{mapping?.clinicName || 'Clinic pending'}{mapping?.specialty ? ` • ${mapping.specialty}` : ''}</span>
       </div>
       <Button size="sm" variant="ghost" onClick={()=>signOut(auth)} className="h-6 text-[11px] px-2">Sign out</Button>
     </div>

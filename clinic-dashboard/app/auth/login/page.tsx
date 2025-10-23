@@ -42,14 +42,14 @@ export default function LoginPage() {
             </svg>
           </div>
         </div>
-        <h1 className="text-3xl font-bold tracking-tight text-gray-900">Welcome Back</h1>
-        <p className="text-sm text-gray-600">Sign in to access your clinic dashboard</p>
+        <h1 className="text-3xl font-bold tracking-tight text-foreground">Welcome Back</h1>
+        <p className="text-sm text-muted-foreground">Sign in to access your clinic dashboard</p>
       </header>
 
       <Card padding="lg" variant="outline" className="space-y-6 shadow-sm">
         <form onSubmit={handleLogin} className="space-y-5">
           <div className="space-y-2">
-            <Label htmlFor="email" className="text-sm font-semibold text-gray-700">
+            <Label htmlFor="email" className="text-sm font-semibold text-foreground">
               Email Address
             </Label>
             <Input 
@@ -63,7 +63,7 @@ export default function LoginPage() {
             />
           </div>
           <div className="space-y-2">
-            <Label htmlFor="password" className="text-sm font-semibold text-gray-700">
+            <Label htmlFor="password" className="text-sm font-semibold text-foreground">
               Password
             </Label>
             <Input 
@@ -78,7 +78,7 @@ export default function LoginPage() {
             />
           </div>
           {error && (
-            <div className="text-sm text-red-700 bg-red-50 border border-red-200 rounded-lg px-4 py-3 flex items-start gap-2">
+            <div className="text-sm text-destructive bg-destructive/10 border border-destructive/20 rounded-lg px-4 py-3 flex items-start gap-2">
               <svg className="w-5 h-5 flex-shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
               </svg>
@@ -97,9 +97,9 @@ export default function LoginPage() {
         
         <Separator className="my-4" />
         
-        <div className="text-center text-sm text-gray-600">
+        <div className="text-center text-sm text-muted-foreground">
           <span className="mr-1">New to Waitfree?</span>
-          <Link href="/auth/signup" className="text-blue-600 hover:text-blue-700 hover:underline font-semibold transition-colors">
+          <Link href="/auth/signup" className="text-blue-600 hover:text-blue-700 dark:text-blue-400 dark:hover:text-blue-300 hover:underline font-semibold transition-colors">
             Create your clinic
           </Link>
         </div>

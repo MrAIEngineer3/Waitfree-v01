@@ -118,13 +118,13 @@ export default function DoctorStatusToggle({
   if (loading) {
     return (
       <div className={`flex items-center gap-2 ${className}`}>
-        {showLabel && <span className="text-sm text-gray-500">Loading...</span>}
-        <div className="h-5 w-9 bg-gray-200 rounded-full animate-pulse" />
+        {showLabel && <span className="text-sm text-muted-foreground">Loading...</span>}
+        <div className="h-5 w-9 bg-muted rounded-full animate-pulse" />
       </div>
     );
   }
 
-  const statusColor = online ? 'bg-emerald-500' : 'bg-gray-300';
+  const statusColor = online ? 'bg-emerald-500 dark:bg-emerald-400' : 'bg-muted-foreground/30';
   const statusLabel = online ? 'Online' : 'Offline';
 
   return (
@@ -133,11 +133,11 @@ export default function DoctorStatusToggle({
         {showLabel && (
           <div className="flex items-center gap-1.5">
             <span className={`h-2 w-2 rounded-full ${statusColor}`} />
-            <span className="text-sm font-medium text-gray-700">{statusLabel}</span>
+            <span className="text-sm font-medium text-foreground">{statusLabel}</span>
           </div>
         )}
         {toggling && (
-          <svg className="w-4 h-4 animate-spin text-gray-400" fill="none" viewBox="0 0 24 24">
+          <svg className="w-4 h-4 animate-spin text-muted-foreground" fill="none" viewBox="0 0 24 24">
             <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
             <path
               className="opacity-75"

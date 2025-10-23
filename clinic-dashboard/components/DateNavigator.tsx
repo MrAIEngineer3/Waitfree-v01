@@ -73,7 +73,7 @@ export default function DateNavigator({ value, onChange, max, min, disableFuture
         onClick={goPrev}
         disabled={prevDisabled}
         aria-label="Previous day"
-        className="h-6 w-6 flex items-center justify-center text-slate-600 bg-white hover:bg-slate-50 hover:text-slate-800 rounded-lg border border-slate-200 transition-all duration-200 disabled:opacity-40 disabled:cursor-not-allowed shadow-sm hover:shadow"
+        className="h-6 w-6 flex items-center justify-center text-muted-foreground bg-background hover:bg-accent hover:text-foreground rounded-lg border border-border transition-all duration-200 disabled:opacity-40 disabled:cursor-not-allowed shadow-sm hover:shadow"
       >‹</button>
       <Popover open={open} onOpenChange={setOpen}>
         <PopoverTrigger asChild>
@@ -81,11 +81,11 @@ export default function DateNavigator({ value, onChange, max, min, disableFuture
             type="button"
             aria-haspopup="dialog"
             aria-expanded={open}
-            className="h-6 min-w-[110px] font-mono text-slate-700 px-3 py-0.5 flex items-center justify-center rounded-lg bg-white border border-slate-200 hover:bg-slate-50 hover:border-slate-300 focus-visible:ring-2 focus-visible:ring-blue-500 text-xs transition-all duration-200 shadow-sm hover:shadow"
+            className="h-6 min-w-[110px] font-mono text-foreground px-3 py-0.5 flex items-center justify-center rounded-lg bg-background border border-border hover:bg-accent hover:border-border focus-visible:ring-2 focus-visible:ring-ring text-xs transition-all duration-200 shadow-sm hover:shadow"
           >
             <span className="flex items-center gap-1.5">
               <span className="text-blue-500">📅</span> {value}
-              {!isToday && <span className="inline-block text-[9px] uppercase tracking-wide text-slate-400 bg-slate-100 px-1.5 py-0.5 rounded-full">PAST</span>}
+              {!isToday && <span className="inline-block text-[9px] uppercase tracking-wide text-muted-foreground bg-muted px-1.5 py-0.5 rounded-full">PAST</span>}
             </span>
           </button>
         </PopoverTrigger>
@@ -107,7 +107,7 @@ export default function DateNavigator({ value, onChange, max, min, disableFuture
         onClick={goNext}
         disabled={nextDisabled}
         aria-label="Next day"
-        className="h-6 w-6 flex items-center justify-center text-slate-600 bg-white hover:bg-slate-50 hover:text-slate-800 rounded-lg border border-slate-200 transition-all duration-200 disabled:opacity-40 disabled:cursor-not-allowed shadow-sm hover:shadow"
+        className="h-6 w-6 flex items-center justify-center text-muted-foreground bg-background hover:bg-accent hover:text-foreground rounded-lg border border-border transition-all duration-200 disabled:opacity-40 disabled:cursor-not-allowed shadow-sm hover:shadow"
       >›</button>
       {showTodayButton && !isToday && (
         <button

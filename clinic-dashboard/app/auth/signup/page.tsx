@@ -91,11 +91,11 @@ export default function SignupPage() {
             </svg>
           </div>
         </div>
-        <h1 className="text-3xl font-bold tracking-tight text-gray-900">Create Your Clinic</h1>
-        <p className="text-sm text-gray-600">Two quick steps to set up your clinic and doctor</p>
+        <h1 className="text-3xl font-bold tracking-tight text-foreground">Create Your Clinic</h1>
+        <p className="text-sm text-muted-foreground">Two quick steps to set up your clinic and doctor</p>
         <div className="flex items-center justify-center gap-2 pt-2">
-          <div className={`h-2 w-16 rounded-full transition-colors ${step === 1 ? 'bg-blue-500' : 'bg-gray-300'}`} />
-          <div className={`h-2 w-16 rounded-full transition-colors ${step === 2 ? 'bg-blue-500' : 'bg-gray-300'}`} />
+          <div className={`h-2 w-16 rounded-full transition-colors ${step === 1 ? 'bg-blue-500' : 'bg-muted'}`} />
+          <div className={`h-2 w-16 rounded-full transition-colors ${step === 2 ? 'bg-blue-500' : 'bg-muted'}`} />
         </div>
       </header>
 
@@ -107,10 +107,10 @@ export default function SignupPage() {
                 <svg className="w-5 h-5 text-blue-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-5 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4" />
                 </svg>
-                <h3 className="text-base font-semibold text-gray-900">Clinic Information</h3>
+                <h3 className="text-base font-semibold text-foreground">Clinic Information</h3>
               </div>
               <div className="space-y-2">
-                <Label htmlFor="clinic-name" className="text-sm font-semibold text-gray-700">
+                <Label htmlFor="clinic-name" className="text-sm font-semibold text-foreground">
                   Clinic Name
                 </Label>
                 <Input 
@@ -123,8 +123,8 @@ export default function SignupPage() {
                 />
               </div>
               <div className="space-y-2">
-                <Label htmlFor="clinic-phone" className="text-sm font-semibold text-gray-700">
-                  Clinic Phone <span className="text-gray-500 font-normal">(optional)</span>
+                <Label htmlFor="clinic-phone" className="text-sm font-semibold text-foreground">
+                  Clinic Phone <span className="text-muted-foreground font-normal">(optional)</span>
                 </Label>
                 <Input 
                   id="clinic-phone"
@@ -143,11 +143,11 @@ export default function SignupPage() {
                 <svg className="w-5 h-5 text-blue-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
                 </svg>
-                <h3 className="text-base font-semibold text-gray-900">Account Details</h3>
+                <h3 className="text-base font-semibold text-foreground">Account Details</h3>
               </div>
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <div className="space-y-2">
-                  <Label htmlFor="email" className="text-sm font-semibold text-gray-700">
+                  <Label htmlFor="email" className="text-sm font-semibold text-foreground">
                     Email Address
                   </Label>
                   <Input 
@@ -161,7 +161,7 @@ export default function SignupPage() {
                   />
                 </div>
                 <div className="space-y-2">
-                  <Label htmlFor="password" className="text-sm font-semibold text-gray-700">
+                  <Label htmlFor="password" className="text-sm font-semibold text-foreground">
                     Password (min 6 chars)
                   </Label>
                   <Input 
@@ -203,11 +203,11 @@ export default function SignupPage() {
                 <svg className="w-5 h-5 text-blue-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
                 </svg>
-                <h3 className="text-base font-semibold text-gray-900">Primary Doctor</h3>
+                <h3 className="text-base font-semibold text-foreground">Primary Doctor</h3>
               </div>
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <div className="space-y-2">
-                  <Label htmlFor="doctor-name" className="text-sm font-semibold text-gray-700">
+                  <Label htmlFor="doctor-name" className="text-sm font-semibold text-foreground">
                     Doctor Name
                   </Label>
                   <Input 
@@ -220,7 +220,7 @@ export default function SignupPage() {
                   />
                 </div>
                 <div className="space-y-2">
-                  <Label htmlFor="specialty" className="text-sm font-semibold text-gray-700">
+                  <Label htmlFor="specialty" className="text-sm font-semibold text-foreground">
                     Specialty
                   </Label>
                   <Input 
@@ -240,25 +240,25 @@ export default function SignupPage() {
             <div className="space-y-4">
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-2">
-                  <svg className="w-5 h-5 text-gray-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <svg className="w-5 h-5 text-muted-foreground" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z" />
                   </svg>
-                  <h4 className="text-sm font-semibold text-gray-900">Additional Doctors</h4>
-                  <span className="text-xs text-gray-500 font-normal">(optional)</span>
+                  <h4 className="text-sm font-semibold text-foreground">Additional Doctors</h4>
+                  <span className="text-xs text-muted-foreground font-normal">(optional)</span>
                 </div>
               </div>
               {additionalDoctors.length === 0 && (
-                <div className="text-xs text-gray-600 bg-gray-50 rounded-lg p-3 border border-gray-200">
-                  <svg className="w-4 h-4 inline-block mr-1 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <div className="text-xs text-muted-foreground bg-muted/50 rounded-lg p-3 border border-border">
+                  <svg className="w-4 h-4 inline-block mr-1 text-muted-foreground" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
                   </svg>
                   You can add more doctors now or later from Settings → Doctors
                 </div>
               )}
               {additionalDoctors.map((d, idx) => (
-                <div key={idx} className="grid grid-cols-1 gap-4 md:grid-cols-5 md:items-end border border-gray-200 rounded-lg p-4 bg-gray-50">
+                <div key={idx} className="grid grid-cols-1 gap-4 md:grid-cols-5 md:items-end border border-border rounded-lg p-4 bg-muted/30">
                   <div className="md:col-span-2 space-y-2">
-                    <Label htmlFor={`extra-doctor-name-${idx}`} className="text-xs font-semibold text-gray-700">
+                    <Label htmlFor={`extra-doctor-name-${idx}`} className="text-xs font-semibold text-foreground">
                       Name
                     </Label>
                     <Input 
@@ -272,7 +272,7 @@ export default function SignupPage() {
                     />
                   </div>
                   <div className="md:col-span-2 space-y-2">
-                    <Label htmlFor={`extra-doctor-specialty-${idx}`} className="text-xs font-semibold text-gray-700">
+                    <Label htmlFor={`extra-doctor-specialty-${idx}`} className="text-xs font-semibold text-foreground">
                       Specialty
                     </Label>
                     <Input 
@@ -316,7 +316,7 @@ export default function SignupPage() {
             </div>
             
             {error && (
-              <div className="text-sm text-red-700 bg-red-50 border border-red-200 rounded-lg px-4 py-3 flex items-start gap-2">
+              <div className="text-sm text-destructive bg-destructive/10 border border-destructive/20 rounded-lg px-4 py-3 flex items-start gap-2">
                 <svg className="w-5 h-5 flex-shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
                 </svg>
@@ -375,7 +375,7 @@ export default function SignupPage() {
                 </svg>
                 Create Demo Clinic Instantly
               </Button>
-              <p className="text-[11px] text-gray-500 max-w-sm mx-auto">
+              <p className="text-[11px] text-muted-foreground max-w-sm mx-auto">
                 Generates a disposable account with a ready clinic, doctor & queue
               </p>
             </div>
@@ -384,9 +384,9 @@ export default function SignupPage() {
 
         <Separator className="my-4" />
         
-        <div className="text-center text-sm text-gray-600">
+        <div className="text-center text-sm text-muted-foreground">
           <span className="mr-1">Already have an account?</span>
-          <a href="/auth/login" className="text-blue-600 hover:text-blue-700 hover:underline font-semibold transition-colors">
+          <a href="/auth/login" className="text-blue-600 hover:text-blue-700 dark:text-blue-400 dark:hover:text-blue-300 hover:underline font-semibold transition-colors">
             Sign in
           </a>
         </div>

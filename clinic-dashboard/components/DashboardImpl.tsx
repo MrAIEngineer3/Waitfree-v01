@@ -166,9 +166,9 @@ export default function DashboardImpl() {
     <div className="space-y-4">
       {/* Main Queue Management - Full width */}
       <div className="w-full">
-        <div className="rounded-lg md:rounded-xl border border-gray-200 bg-white shadow-sm overflow-hidden">
+        <div className="rounded-lg md:rounded-xl border border-border bg-card shadow-sm overflow-hidden">
           {/* Queue header with integrated metrics */}
-          <div className="border-b border-gray-200 bg-gradient-to-r from-gray-50 to-white px-4 md:px-6 py-5">
+          <div className="border-b border-border bg-gradient-to-r from-muted/30 to-card px-4 md:px-6 py-5">
             <div className="flex flex-col gap-4">
               <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
                 <div className="flex flex-col sm:flex-row sm:items-center gap-3">
@@ -178,7 +178,7 @@ export default function DashboardImpl() {
                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-3 7h3m-3 4h3m-6-4h.01M9 16h.01" />
                       </svg>
                     </div>
-                    <h2 className="text-lg md:text-xl font-bold text-gray-900">Today&apos;s Queue</h2>
+                    <h2 className="text-lg md:text-xl font-bold text-foreground">Today&apos;s Queue</h2>
                   </div>
                   <DateNavigator value={selectedDate} onChange={setSelectedDate} max={todayKey} disableFuture showTodayButton />
                 </div>
@@ -217,7 +217,7 @@ export default function DashboardImpl() {
                       onClick={() => {
                         window.dispatchEvent(new CustomEvent('endQueue'));
                       }}
-                      className="h-9 text-rose-600 border-rose-200 hover:bg-rose-50 hover:border-rose-300 shadow-sm hover:shadow"
+                      className="h-9 text-rose-600 dark:text-rose-400 border-rose-200 dark:border-rose-800 hover:bg-rose-50 dark:hover:bg-rose-950 hover:border-rose-300 dark:hover:border-rose-700 shadow-sm hover:shadow"
                     >
                       <svg className="w-4 h-4 mr-2" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
@@ -231,7 +231,7 @@ export default function DashboardImpl() {
                       onClick={() => {
                         window.dispatchEvent(new CustomEvent('restartQueue'));
                       }}
-                      className="h-9 text-emerald-600 border-emerald-200 hover:bg-emerald-50 hover:border-emerald-300 shadow-sm hover:shadow"
+                      className="h-9 text-emerald-600 dark:text-emerald-400 border-emerald-200 dark:border-emerald-800 hover:bg-emerald-50 dark:hover:bg-emerald-950 hover:border-emerald-300 dark:hover:border-emerald-700 shadow-sm hover:shadow"
                     >
                       <svg className="w-4 h-4 mr-2" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
@@ -247,28 +247,28 @@ export default function DashboardImpl() {
                 <>
                   <Separator className="my-2" />
                   <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
-                    <div className="flex flex-col gap-1.5 p-3 rounded-lg bg-blue-50/50 border border-blue-100">
-                      <span className="text-xs font-medium text-blue-700 uppercase tracking-wide">Current Token</span>
+                    <div className="flex flex-col gap-1.5 p-3 rounded-lg bg-blue-50/50 dark:bg-blue-950/20 border border-blue-100 dark:border-blue-900">
+                      <span className="text-xs font-medium text-blue-700 dark:text-blue-400 uppercase tracking-wide">Current Token</span>
                       <div className="flex items-baseline gap-1">
-                        <span className="text-2xl font-bold text-blue-600">#{queue.currentToken}</span>
+                        <span className="text-2xl font-bold text-blue-600 dark:text-blue-400">#{queue.currentToken}</span>
                       </div>
                     </div>
-                    <div className="flex flex-col gap-1.5 p-3 rounded-lg bg-green-50/50 border border-green-100">
-                      <span className="text-xs font-medium text-green-700 uppercase tracking-wide">Completed</span>
+                    <div className="flex flex-col gap-1.5 p-3 rounded-lg bg-green-50/50 dark:bg-green-950/20 border border-green-100 dark:border-green-900">
+                      <span className="text-xs font-medium text-green-700 dark:text-green-400 uppercase tracking-wide">Completed</span>
                       <div className="flex items-baseline gap-1">
-                        <span className="text-2xl font-bold text-green-600">{queue.completedPatients}</span>
+                        <span className="text-2xl font-bold text-green-600 dark:text-green-400">{queue.completedPatients}</span>
                       </div>
                     </div>
-                    <div className="flex flex-col gap-1.5 p-3 rounded-lg bg-indigo-50/50 border border-indigo-100">
-                      <span className="text-xs font-medium text-indigo-700 uppercase tracking-wide">Total Patients</span>
+                    <div className="flex flex-col gap-1.5 p-3 rounded-lg bg-indigo-50/50 dark:bg-indigo-950/20 border border-indigo-100 dark:border-indigo-900">
+                      <span className="text-xs font-medium text-indigo-700 dark:text-indigo-400 uppercase tracking-wide">Total Patients</span>
                       <div className="flex items-baseline gap-1">
-                        <span className="text-2xl font-bold text-indigo-600">{queue.totalPatients}</span>
+                        <span className="text-2xl font-bold text-indigo-600 dark:text-indigo-400">{queue.totalPatients}</span>
                       </div>
                     </div>
-                    <div className="flex flex-col gap-1.5 p-3 rounded-lg bg-orange-50/50 border border-orange-100">
-                      <span className="text-xs font-medium text-orange-700 uppercase tracking-wide">Remaining</span>
+                    <div className="flex flex-col gap-1.5 p-3 rounded-lg bg-orange-50/50 dark:bg-orange-950/20 border border-orange-100 dark:border-orange-900">
+                      <span className="text-xs font-medium text-orange-700 dark:text-orange-400 uppercase tracking-wide">Remaining</span>
                       <div className="flex items-baseline gap-1">
-                        <span className="text-2xl font-bold text-orange-600">{queue.totalPatients - queue.completedPatients}</span>
+                        <span className="text-2xl font-bold text-orange-600 dark:text-orange-400">{queue.totalPatients - queue.completedPatients}</span>
                       </div>
                     </div>
                   </div>
@@ -291,14 +291,14 @@ export default function DashboardImpl() {
             {(!clinicId || !doctorId) && authReady && (
               <div className="p-8 text-center m-6">
                 <div className="max-w-sm mx-auto space-y-4">
-                  <div className="h-16 w-16 mx-auto rounded-full bg-gradient-to-br from-blue-100 to-cyan-100 flex items-center justify-center">
-                    <svg className="w-8 h-8 text-blue-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <div className="h-16 w-16 mx-auto rounded-full bg-gradient-to-br from-blue-100 to-cyan-100 dark:from-blue-950 dark:to-cyan-950 flex items-center justify-center">
+                    <svg className="w-8 h-8 text-blue-600 dark:text-blue-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" />
                     </svg>
                   </div>
                   <div className="space-y-2">
-                    <h3 className="text-lg font-semibold text-gray-900">Get Started</h3>
-                    <p className="text-sm text-gray-600 leading-relaxed">
+                    <h3 className="text-lg font-semibold text-foreground">Get Started</h3>
+                    <p className="text-sm text-muted-foreground leading-relaxed">
                       Create or attach a clinic and doctor mapping to begin managing today&apos;s queue.
                     </p>
                   </div>

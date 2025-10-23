@@ -10,9 +10,9 @@ export interface QueueMetricsProps {
 
 function StatCard({ label, value, accent }: { label: string; value: React.ReactNode; accent?: string }) {
   return (
-    <div className="flex flex-col rounded-lg bg-white/60 border border-gray-300 px-4 py-3 min-w-[140px]">
-      <span className="text-[11px] uppercase tracking-wide text-gray-600 font-medium mb-1">{label}</span>
-      <span className={`text-lg font-semibold ${accent || 'text-gray-900'}`}>{value}</span>
+    <div className="flex flex-col rounded-lg bg-card/60 border border-border px-4 py-3 min-w-[140px]">
+      <span className="text-[11px] uppercase tracking-wide text-muted-foreground font-medium mb-1">{label}</span>
+      <span className={`text-lg font-semibold ${accent || 'text-foreground'}`}>{value}</span>
     </div>
   );
 }

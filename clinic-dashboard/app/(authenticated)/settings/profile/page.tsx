@@ -98,8 +98,8 @@ export default function ProfileSettingsPage() {
 
   if (loading) return (
     <div className="flex items-center justify-center py-12">
-      <div className="flex items-center gap-3 text-gray-600">
-        <div className="w-5 h-5 border-2 border-violet-500 border-t-transparent rounded-full animate-spin" />
+      <div className="flex items-center gap-3 text-muted-foreground">
+        <div className="w-5 h-5 border-2 border-primary border-t-transparent rounded-full animate-spin" />
         <span className="text-sm font-medium">Loading profile…</span>
       </div>
     </div>
@@ -109,14 +109,14 @@ export default function ProfileSettingsPage() {
     <div className="max-w-4xl space-y-6">
       {/* Page Header */}
       <div className="flex items-start gap-4">
-        <div className="w-12 h-12 rounded-xl bg-gradient-to-br from-violet-500 to-purple-600 flex items-center justify-center shadow-lg shadow-violet-500/25">
-          <svg className="w-6 h-6 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+        <div className="w-12 h-12 rounded-xl bg-primary flex items-center justify-center shadow-lg shadow-primary/25">
+          <svg className="w-6 h-6 text-primary-foreground" fill="none" viewBox="0 0 24 24" stroke="currentColor">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
           </svg>
         </div>
         <div className="flex-1">
-          <h1 className="text-2xl font-bold tracking-tight text-gray-900">Profile Information</h1>
-          <p className="text-sm text-gray-600 mt-1">Update your personal details and contact information</p>
+          <h1 className="text-2xl font-bold tracking-tight text-foreground">Profile Information</h1>
+          <p className="text-sm text-muted-foreground mt-1">Update your personal details and contact information</p>
         </div>
       </div>
 
@@ -134,7 +134,7 @@ export default function ProfileSettingsPage() {
                     alt="Profile"
                     width={96}
                     height={96}
-                    className="h-24 w-24 rounded-2xl object-cover border-2 border-gray-200 shadow-md"
+                    className="h-24 w-24 rounded-2xl object-cover border-2 border-border shadow-md"
                   />
                   <div className="absolute inset-0 bg-black/40 rounded-2xl opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
                     <svg className="w-8 h-8 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -144,8 +144,8 @@ export default function ProfileSettingsPage() {
                   </div>
                 </div>
               ) : (
-                <div className="h-24 w-24 rounded-2xl bg-gradient-to-br from-violet-100 to-purple-100 flex items-center justify-center border-2 border-violet-200 shadow-md">
-                  <svg className="w-12 h-12 text-violet-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <div className="h-24 w-24 rounded-2xl bg-muted flex items-center justify-center border-2 border-border shadow-md">
+                  <svg className="w-12 h-12 text-muted-foreground" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
                   </svg>
                 </div>
@@ -153,8 +153,8 @@ export default function ProfileSettingsPage() {
             </div>
             <div className="flex-1 space-y-3">
               <div>
-                <Label className="text-sm font-semibold text-gray-700">Profile Photo</Label>
-                <p className="text-xs text-gray-500 mt-1">Upload a professional photo. JPG, PNG or GIF. Max 5MB.</p>
+                <Label className="text-sm font-semibold text-foreground">Profile Photo</Label>
+                <p className="text-xs text-muted-foreground mt-1">Upload a professional photo. JPG, PNG or GIF. Max 5MB.</p>
               </div>
               <div className="flex flex-col sm:flex-row sm:items-center gap-3">
                 <label className="relative cursor-pointer">
@@ -164,7 +164,7 @@ export default function ProfileSettingsPage() {
                     onChange={(e) => setFile(e.target.files?.[0] || null)}
                     className="sr-only"
                   />
-                  <span className="inline-flex items-center justify-center gap-2 px-4 py-2 bg-white border border-gray-300 rounded-lg text-sm font-medium text-gray-700 hover:bg-gray-50 transition-colors w-full sm:w-auto">
+                  <span className="inline-flex items-center justify-center gap-2 px-4 py-2 bg-card border border-border rounded-lg text-sm font-medium text-foreground hover:bg-accent transition-colors w-full sm:w-auto">
                     <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" />
                     </svg>
@@ -173,11 +173,11 @@ export default function ProfileSettingsPage() {
                 </label>
                 {file && (
                   <div className="flex items-center gap-2 min-w-0 flex-1">
-                    <span className="text-sm text-gray-600 truncate">{file.name}</span>
+                    <span className="text-sm text-muted-foreground truncate">{file.name}</span>
                     <button
                       type="button"
                       onClick={() => setFile(null)}
-                      className="text-gray-400 hover:text-gray-600 flex-shrink-0"
+                      className="text-muted-foreground hover:text-foreground flex-shrink-0"
                     >
                       <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
@@ -194,13 +194,13 @@ export default function ProfileSettingsPage() {
           {/* Form Fields */}
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
             <div className="space-y-2">
-              <Label htmlFor="display-name" className="text-sm font-semibold text-gray-700">
+              <Label htmlFor="display-name" className="text-sm font-semibold text-foreground">
                 Display Name
                 <span className="text-red-500 ml-1">*</span>
               </Label>
               <div className="relative">
                 <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
-                  <svg className="w-5 h-5 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <svg className="w-5 h-5 text-muted-foreground" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
                   </svg>
                 </div>
@@ -208,7 +208,7 @@ export default function ProfileSettingsPage() {
                   id="display-name"
                   value={displayName}
                   onChange={(e) => setDisplayName(e.target.value)}
-                  className="w-full pl-10 pr-4 py-3 rounded-lg border border-gray-300 text-sm focus:outline-none focus:ring-2 focus:ring-violet-500 focus:border-transparent transition-all"
+                  className="w-full pl-10 pr-4 py-3 rounded-lg border border-border bg-background text-foreground text-sm focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent transition-all"
                   placeholder="Dr. John Doe"
                   required
                 />
@@ -216,13 +216,13 @@ export default function ProfileSettingsPage() {
             </div>
 
             <div className="space-y-2">
-              <Label htmlFor="email" className="text-sm font-semibold text-gray-700">
+              <Label htmlFor="email" className="text-sm font-semibold text-foreground">
                 Email Address
                 <span className="text-red-500 ml-1">*</span>
               </Label>
               <div className="relative">
                 <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
-                  <svg className="w-5 h-5 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <svg className="w-5 h-5 text-muted-foreground" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" />
                   </svg>
                 </div>
@@ -231,7 +231,7 @@ export default function ProfileSettingsPage() {
                   type="email"
                   value={email}
                   onChange={(e) => setEmail(e.target.value)}
-                  className="w-full pl-10 pr-4 py-3 rounded-lg border border-gray-300 text-sm focus:outline-none focus:ring-2 focus:ring-violet-500 focus:border-transparent transition-all"
+                  className="w-full pl-10 pr-4 py-3 rounded-lg border border-border bg-background text-foreground text-sm focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent transition-all"
                   placeholder="doctor@clinic.com"
                   required
                 />
@@ -239,12 +239,12 @@ export default function ProfileSettingsPage() {
             </div>
 
             <div className="space-y-2 md:col-span-2">
-              <Label htmlFor="phone" className="text-sm font-semibold text-gray-700">
+              <Label htmlFor="phone" className="text-sm font-semibold text-foreground">
                 Phone Number
               </Label>
               <div className="relative">
                 <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
-                  <svg className="w-5 h-5 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <svg className="w-5 h-5 text-muted-foreground" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 5a2 2 0 012-2h3.28a1 1 0 01.948.684l1.498 4.493a1 1 0 01-.502 1.21l-2.257 1.13a11.042 11.042 0 005.516 5.516l1.13-2.257a1 1 0 011.21-.502l4.493 1.498a1 1 0 01.684.949V19a2 2 0 01-2 2h-1C9.716 21 3 14.284 3 6V5z" />
                   </svg>
                 </div>
@@ -252,29 +252,29 @@ export default function ProfileSettingsPage() {
                   id="phone"
                   value={phone}
                   onChange={(e) => setPhone(e.target.value)}
-                  className="w-full pl-10 pr-4 py-3 rounded-lg border border-gray-300 text-sm focus:outline-none focus:ring-2 focus:ring-violet-500 focus:border-transparent transition-all"
-                  placeholder="+91 98765 43210"
+                  className="w-full pl-10 pr-4 py-3 rounded-lg border border-border bg-background text-foreground text-sm focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent transition-all"
+                  placeholder="+1 (555) 123-4567"
                 />
               </div>
-              <p className="text-xs text-gray-500">Used for WhatsApp notifications and contact purposes</p>
+              <p className="text-xs text-muted-foreground">Used for WhatsApp notifications and contact purposes</p>
             </div>
           </div>
 
           {/* Error/Success Messages */}
           {error && (
-            <div className="flex items-start gap-3 bg-red-50 border border-red-200 rounded-lg px-4 py-3">
-              <svg className="w-5 h-5 text-red-500 flex-shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <div className="flex items-start gap-3 bg-red-50 dark:bg-red-950/50 border border-red-200 dark:border-red-800 rounded-lg px-4 py-3">
+              <svg className="w-5 h-5 text-red-500 dark:text-red-400 flex-shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
               </svg>
-              <span className="text-sm text-red-700">{error}</span>
+              <span className="text-sm text-red-700 dark:text-red-400">{error}</span>
             </div>
           )}
           {success && (
-            <div className="flex items-start gap-3 bg-green-50 border border-green-200 rounded-lg px-4 py-3">
-              <svg className="w-5 h-5 text-green-500 flex-shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <div className="flex items-start gap-3 bg-green-50 dark:bg-green-950/50 border border-green-200 dark:border-green-800 rounded-lg px-4 py-3">
+              <svg className="w-5 h-5 text-green-500 dark:text-green-400 flex-shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
               </svg>
-              <span className="text-sm text-green-700">{success}</span>
+              <span className="text-sm text-green-700 dark:text-green-400">{success}</span>
             </div>
           )}
 

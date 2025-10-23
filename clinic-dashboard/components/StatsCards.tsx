@@ -75,21 +75,21 @@ export default function StatsCards() {
         {stats.map((stat, index) => (
           <div
             key={index}
-            className="group relative bg-white border border-gray-200 rounded-2xl p-6 shadow-sm hover:shadow-lg transition-all duration-300 overflow-hidden"
+            className="group relative bg-card border border-border rounded-2xl p-6 shadow-sm hover:shadow-lg transition-all duration-300 overflow-hidden"
           >
             {/* Subtle gradient background on hover */}
-            <div className={`absolute inset-0 bg-gradient-to-br ${stat.bgGradient} opacity-0 group-hover:opacity-100 transition-opacity duration-300`} />
+            <div className={`absolute inset-0 bg-gradient-to-br ${stat.bgGradient} dark:opacity-10 opacity-0 group-hover:opacity-100 dark:group-hover:opacity-20 transition-opacity duration-300`} />
             
             {/* Content */}
             <div className="relative space-y-4">
               {/* Header with icon */}
               <div className="flex items-start justify-between">
-                <div className={`w-11 h-11 rounded-xl bg-gradient-to-br ${stat.gradient} flex items-center justify-center text-white shadow-lg shadow-black/10`}>
+                <div className={`w-11 h-11 rounded-xl bg-gradient-to-br ${stat.gradient} flex items-center justify-center text-white shadow-lg shadow-black/10 dark:shadow-black/30`}>
                   {stat.icon}
                 </div>
                 <div className="flex items-center gap-2">
-                  <div className="w-2 h-2 bg-green-500 rounded-full animate-pulse" />
-                  <span className="text-xs font-medium text-gray-500">Live</span>
+                  <div className="w-2 h-2 bg-green-500 dark:bg-green-400 rounded-full animate-pulse" />
+                  <span className="text-xs font-medium text-muted-foreground">Live</span>
                 </div>
               </div>
 
@@ -97,10 +97,10 @@ export default function StatsCards() {
               <div className="space-y-2">
                 <div className="flex items-end justify-between">
                   <div>
-                    <div className="text-4xl font-bold text-gray-900 tabular-nums">
+                    <div className="text-4xl font-bold text-foreground tabular-nums">
                       {stat.value}
                     </div>
-                    <div className="text-xs text-gray-500 mt-1">{stat.description}</div>
+                    <div className="text-xs text-muted-foreground mt-1">{stat.description}</div>
                   </div>
                   <div className="flex-shrink-0">
                     <Sparkline
@@ -115,8 +115,8 @@ export default function StatsCards() {
               </div>
 
               {/* Label */}
-              <div className="pt-3 border-t border-gray-200">
-                <h3 className="text-sm font-semibold text-gray-700">{stat.label}</h3>
+              <div className="pt-3 border-t border-border">
+                <h3 className="text-sm font-semibold text-foreground">{stat.label}</h3>
               </div>
             </div>
           </div>
@@ -124,23 +124,23 @@ export default function StatsCards() {
       </div>
 
       {/* Quick Summary Bar */}
-      <div className="bg-gradient-to-r from-gray-50 to-gray-100 border border-gray-200 rounded-xl p-4">
+      <div className="bg-gradient-to-r from-muted/50 to-muted border border-border rounded-xl p-4">
         <div className="flex items-center justify-between text-sm">
-          <div className="flex items-center gap-2 text-gray-600">
+          <div className="flex items-center gap-2 text-muted-foreground">
             <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 7h8m0 0v8m0-8l-8 8-4-4-6 6" />
             </svg>
             <span className="font-medium">Today&apos;s Progress:</span>
           </div>
           <div className="flex items-center gap-6">
-            <div className="text-gray-700">
+            <div className="text-foreground">
               <span className="font-semibold">{queue?.completedPatients || 0}</span>
-              <span className="text-gray-500"> / </span>
+              <span className="text-muted-foreground"> / </span>
               <span className="font-semibold">{queue?.totalPatients || 0}</span>
-              <span className="text-gray-500 ml-1">patients</span>
+              <span className="text-muted-foreground ml-1">patients</span>
             </div>
             <div className="flex items-center gap-2">
-              <div className="w-32 bg-gray-200 rounded-full h-2">
+              <div className="w-32 bg-muted rounded-full h-2">
                 <div 
                   className="bg-gradient-to-r from-emerald-500 to-teal-500 h-2 rounded-full transition-all duration-500" 
                   style={{
@@ -148,7 +148,7 @@ export default function StatsCards() {
                   }}
                 />
               </div>
-              <span className="text-xs font-semibold text-gray-600">
+              <span className="text-xs font-semibold text-muted-foreground">
                 {queue?.totalPatients ? Math.round((queue.completedPatients / queue.totalPatients) * 100) : 0}%
               </span>
             </div>

@@ -13,6 +13,7 @@ import DoctorStatusToggle from './DoctorStatusToggle';
 import EnvWarningBanner from './EnvWarningBanner';
 import { Badge } from './ui/Badge';
 import { Button } from './ui/Button';
+import { ThemeToggle } from './theme-toggle';
 
 interface NavItem {
   label: string;
@@ -197,10 +198,10 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
     return <Badge variant={variant} className="ml-2">{text}</Badge>;
   };
   return (
-    <div className="min-h-screen w-full flex bg-gray-50 text-gray-900">
+    <div className="min-h-screen w-full flex bg-background text-foreground">
       {/* Sidebar */}
-      <aside className="hidden md:flex md:flex-col w-60 border-r border-gray-200 bg-white/80 backdrop-blur-sm">
-        <div className="px-5 py-5 border-b border-gray-200">
+      <aside className="hidden md:flex md:flex-col w-60 border-r border-border bg-card/80 backdrop-blur-sm">
+        <div className="px-5 py-5 border-b border-border">
           <div className="text-lg font-semibold tracking-tight flex items-center gap-2">
             <span className="h-3 w-3 rounded-sm bg-gradient-to-r from-blue-500 to-cyan-400 inline-block" />
             Waitfree
@@ -209,7 +210,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
         <nav className="flex-1 px-3 py-4 overflow-y-auto">
           {navSections.map((section, sectionIdx) => (
             <div key={section.label} className="mb-6">
-              <p className="text-[11px] uppercase tracking-wide text-gray-500 mb-2 px-3">
+              <p className="text-[11px] uppercase tracking-wide text-muted-foreground mb-2 px-3">
                 {section.label}
               </p>
               <div className="space-y-1">
@@ -224,8 +225,8 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
                       }}
                       className={`group flex items-center gap-3 rounded-md px-3 py-2 text-sm font-medium transition-colors border ${
                         active 
-                          ? 'bg-gray-900 text-white border-gray-900 shadow-sm' 
-                          : 'text-gray-700 hover:text-gray-900 hover:bg-gray-100/60 border-transparent'
+                          ? 'bg-primary text-primary-foreground border-primary shadow-sm' 
+                          : 'text-foreground hover:text-foreground hover:bg-accent border-transparent'
                       } ${item.isSubItem ? 'pl-4' : ''}`}
                     >
                       {item.icon && (
@@ -234,7 +235,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
                         </span>
                       )}
                       <span className="flex-1">{item.label}</span>
-                      {item.soon && <span className="text-[10px] px-1.5 py-0.5 rounded bg-gray-200 text-gray-700 border border-gray-300">Soon</span>}
+                      {item.soon && <span className="text-[10px] px-1.5 py-0.5 rounded bg-muted text-muted-foreground border border-border">Soon</span>}
                     </Link>
                   );
                 })}
@@ -245,14 +246,14 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
             </div>
           ))}
         </nav>
-        <div className="px-4 py-4 text-[10px] text-gray-500 border-t border-gray-200">
+        <div className="px-4 py-4 text-[10px] text-muted-foreground border-t border-border">
           <p>Build {new Date().getFullYear()}</p>
         </div>
       </aside>
       {/* Main area */}
       <div className="flex-1 flex flex-col min-w-0">
         {/* Top Bar */}
-        <header className="sticky top-0 z-30 backdrop-blur supports-[backdrop-filter]:bg-white/70 bg-white/90 border-b border-gray-200">
+        <header className="sticky top-0 z-30 backdrop-blur supports-[backdrop-filter]:bg-background/70 bg-background/90 border-b border-border">
           <div className="max-w-7xl mx-auto px-4 py-3 flex items-center justify-between gap-4">
             <div className="flex items-center gap-4 min-w-0 flex-1">
               <div className="md:hidden block">
@@ -260,7 +261,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
                   <SheetTrigger asChild>
                     <button
                       aria-label="Open menu"
-                      className="inline-flex items-center justify-center h-9 w-9 rounded-md border border-gray-300 bg-white text-gray-700 hover:bg-gray-50 active:bg-gray-100 shadow-sm"
+                      className="inline-flex items-center justify-center h-9 w-9 rounded-md border border-input bg-background text-foreground hover:bg-accent active:bg-accent/80 shadow-sm"
                     >
                       <svg className="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                         <line x1="3" y1="6" x2="21" y2="6" />
@@ -274,7 +275,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
                     title="Menu"
                     description="Main navigation and actions"
                   >
-                    <div className="px-5 py-5 border-b border-gray-200">
+                    <div className="px-5 py-5 border-b border-border">
                     <div className="text-lg font-semibold tracking-tight flex items-center gap-2">
                       <span className="h-3 w-3 rounded-sm bg-gradient-to-r from-blue-500 to-cyan-400 inline-block" />
                       Waitfree
@@ -296,7 +297,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
                     <nav className="py-2 max-h-[60vh] overflow-y-auto">
                       {navSections.map((section) => (
                         <div key={section.label} className="mb-4">
-                          <p className="text-[11px] uppercase tracking-wide text-gray-500 mb-2 px-3">
+                          <p className="text-[11px] uppercase tracking-wide text-muted-foreground mb-2 px-3">
                             {section.label}
                           </p>
                           <div className="space-y-0.5">
@@ -311,8 +312,8 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
                                   }}
                                   className={`flex items-center gap-3 px-3 py-2 text-sm ${
                                     active 
-                                      ? 'text-gray-900 font-semibold bg-gray-100' 
-                                      : 'text-gray-700 hover:bg-gray-50'
+                                      ? 'text-foreground font-semibold bg-accent' 
+                                      : 'text-muted-foreground hover:bg-accent/50 hover:text-foreground'
                                   } ${item.isSubItem ? 'pl-6' : ''}`}
                                 >
                                   {item.icon && (
@@ -321,7 +322,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
                                     </span>
                                   )}
                                   <span className="flex-1">{item.label}</span>
-                                  {active && <span className="text-[10px] px-1.5 py-0.5 rounded bg-gray-900 text-white">Active</span>}
+                                  {active && <span className="text-[10px] px-1.5 py-0.5 rounded bg-primary text-primary-foreground">Active</span>}
                                 </Link>
                               );
                             })}
@@ -329,17 +330,21 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
                         </div>
                       ))}
                     </nav>
-                    <div className="border-t border-gray-200" />
+                    <div className="border-t border-border" />
                     <div className="p-2 flex flex-col gap-2">
+                      <div className="flex items-center justify-between px-3 py-2">
+                        <span className="text-sm font-medium text-foreground">Theme</span>
+                        <ThemeToggle />
+                      </div>
                       {clinicId && (
                         <button
                           onClick={() => { 
                             setShowJoinQr(true);
                             setMobileMenuOpen(false);
                           }}
-                          className="h-10 w-full inline-flex items-center justify-center gap-2 rounded-md border border-gray-300 bg-white text-gray-700 hover:bg-gray-50 active:bg-gray-100 shadow-sm"
+                          className="h-10 w-full inline-flex items-center justify-center gap-2 rounded-md border border-input bg-background text-foreground hover:bg-accent active:bg-accent/80 shadow-sm"
                         >
-                          <svg className="w-4 h-4 text-gray-600" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                          <svg className="w-4 h-4 text-muted-foreground" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
                             <path d="M3 3h7v7H3zM14 3h7v7h-7zM3 14h7v7H3zM17 17h.01M14 14h7v7h-7z" />
                           </svg>
                           Show QR
@@ -350,7 +355,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
                           signOut(auth);
                           setMobileMenuOpen(false);
                         }}
-                        className="h-10 w-full inline-flex items-center justify-center gap-2 rounded-md border border-gray-300 bg-white text-gray-700 hover:bg-gray-50 active:bg-gray-100 shadow-sm"
+                        className="h-10 w-full inline-flex items-center justify-center gap-2 rounded-md border border-input bg-background text-foreground hover:bg-accent active:bg-accent/80 shadow-sm"
                       >
                         Sign out
                       </button>
@@ -362,7 +367,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
               {/* Header: Clinic title and doctor picker */}
               <div className="min-w-0 flex-1">
                 <div className="flex items-center gap-2">
-                  <h1 className="text-sm sm:text-base font-semibold text-gray-900 tracking-wide truncate">
+                  <h1 className="text-sm sm:text-base font-semibold text-foreground tracking-wide truncate">
                     {clinicName || 'Clinic'}
                   </h1>
                   {renderQueueStatus(queueStatus)}
@@ -384,14 +389,15 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
             </div>
             
             <div className="hidden md:flex items-center gap-4 flex-shrink-0">
+              <ThemeToggle />
               {clinicId && (
                 <Button
                   size="sm"
                   variant="outline"
                   onClick={() => setShowJoinQr(true)}
-                  className="text-gray-700 border-gray-300 hover:bg-gray-50 h-9 px-3"
+                  className="h-9 px-3"
                   leftIcon={(
-                    <svg className="w-3.5 h-3.5 text-gray-600" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                    <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
                       <path d="M3 3h7v7H3zM14 3h7v7h-7zM3 14h7v7H3zM17 17h.01M14 14h7v7h-7z" />
                     </svg>
                   )}
@@ -403,20 +409,20 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
                 size="sm"
                 variant="outline"
                 onClick={() => signOut(auth)}
-                className="text-gray-700 border-gray-300 hover:bg-gray-50 h-9 px-3"
+                className="h-9 px-3"
               >
                 Sign out
               </Button>
               <div className="flex items-center gap-2">
-                <div className="h-2 w-2 rounded-full bg-emerald-500 animate-pulse" aria-label="Realtime Connected" />
-                <span className="text-[11px] text-gray-600">Realtime</span>
+                <div className="h-2 w-2 rounded-full bg-emerald-500 dark:bg-emerald-400 animate-pulse" aria-label="Realtime Connected" />
+                <span className="text-[11px] text-muted-foreground">Realtime</span>
               </div>
             </div>
 
             {/* Mobile hamburger (shows menu with actions and nav) */}
             <div className="md:hidden flex items-center gap-2 flex-shrink-0">
               <div className="flex items-center gap-2">
-                <div className="h-2 w-2 rounded-full bg-emerald-500 animate-pulse" aria-label="Realtime Connected" />
+                <div className="h-2 w-2 rounded-full bg-emerald-500 dark:bg-emerald-400 animate-pulse" aria-label="Realtime Connected" />
               </div>
             </div>
           </div>
@@ -433,7 +439,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
             <div className="relative z-10 flex items-center justify-center min-h-full p-4">
               <div className="relative w-full max-w-sm" onClick={(e) => e.stopPropagation()}>
                 <button
-                  className="absolute -top-2 -right-2 z-20 h-8 w-8 rounded-full bg-white border border-gray-200 shadow-sm flex items-center justify-center text-gray-600 hover:text-gray-800"
+                  className="absolute -top-2 -right-2 z-20 h-8 w-8 rounded-full bg-background border border-border shadow-sm flex items-center justify-center text-muted-foreground hover:text-foreground"
                   onClick={() => setShowJoinQr(false)}
                   aria-label="Close"
                 >

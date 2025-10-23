@@ -35,6 +35,24 @@ const config = {
           800: 'var(--color-brand-800)',
           900: 'var(--color-brand-900)'
         },
+        neutral: {
+          50: 'var(--color-neutral-50)',
+          100: 'var(--color-neutral-100)',
+          200: 'var(--color-neutral-200)',
+          300: 'var(--color-neutral-300)',
+          400: 'var(--color-neutral-400)',
+          500: 'var(--color-neutral-500)',
+          600: 'var(--color-neutral-600)',
+          700: 'var(--color-neutral-700)',
+          800: 'var(--color-neutral-800)',
+          900: 'var(--color-neutral-900)'
+        },
+        surface: {
+          base: 'var(--surface-base)',
+          raised: 'var(--surface-raised)',
+          overlay: 'var(--surface-overlay)',
+          sunken: 'var(--surface-sunken)'
+        },
         sem: {
           primary: 'var(--color-sem-primary)',
           'primary-hover': 'var(--color-sem-primary-hover)',
