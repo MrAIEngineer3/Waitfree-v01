@@ -9,6 +9,7 @@ import { auth } from '../lib/firebase';
 import { useClinicContext } from './ClinicContext';
 import ClinicJoinQR from './ClinicJoinQR';
 import DoctorPicker from './DoctorPicker';
+import DoctorStatusToggle from './DoctorStatusToggle';
 import EnvWarningBanner from './EnvWarningBanner';
 import { Badge } from './ui/Badge';
 import { Button } from './ui/Button';
@@ -150,7 +151,7 @@ const navSections: NavSection[] = [
 export default function AppShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
   const router = useRouter();
-  const { clinicId, clinicName, doctorId, queueStatus } = useClinicContext();
+  const { clinicId, clinicName, doctorId, doctorName, queueStatus } = useClinicContext();
   const [showJoinQr, setShowJoinQr] = useState(false);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
 
@@ -274,14 +275,22 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
                     description="Main navigation and actions"
                   >
                     <div className="px-5 py-5 border-b border-gray-200">
-                      <div className="text-lg font-semibold tracking-tight flex items-center gap-2">
-                        <span className="h-3 w-3 rounded-sm bg-gradient-to-r from-blue-500 to-cyan-400 inline-block" />
-                        Waitfree
-                      </div>
+                    <div className="text-lg font-semibold tracking-tight flex items-center gap-2">
+                      <span className="h-3 w-3 rounded-sm bg-gradient-to-r from-blue-500 to-cyan-400 inline-block" />
+                      Waitfree
                     </div>
+                  </div>
                     {clinicId && (
-                      <div className="px-3 pt-3">
+                      <div className="px-3 pt-3 space-y-3">
                         <DoctorPicker clinicId={clinicId} value={doctorId ?? undefined} />
+                        {doctorId && (
+                          <DoctorStatusToggle 
+                            clinicId={clinicId} 
+                            doctorId={doctorId}
+                            doctorName={doctorName ?? undefined}
+                            showLabel={true}
+                          />
+                        )}
                       </div>
                     )}
                     <nav className="py-2 max-h-[60vh] overflow-y-auto">
@@ -359,8 +368,16 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
                   {renderQueueStatus(queueStatus)}
                 </div>
                 {clinicId && (
-                  <div className="mt-1">
+                  <div className="mt-1 flex items-center gap-3 flex-wrap">
                     <DoctorPicker clinicId={clinicId} value={doctorId ?? undefined} />
+                    {doctorId && (
+                      <DoctorStatusToggle 
+                        clinicId={clinicId} 
+                        doctorId={doctorId}
+                        doctorName={doctorName ?? undefined}
+                        showLabel={true}
+                      />
+                    )}
                   </div>
                 )}
               </div>

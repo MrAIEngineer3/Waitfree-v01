@@ -753,12 +753,37 @@ export default function DoctorsSettingsPage() {
                       )}
                     </div>
                     <div className="flex items-center gap-2">
-                      <Switch
-                        checked={online}
-                        onCheckedChange={(checked) => handleToggleRealTimeStatus(d, checked)}
-                        disabled={isToggling || !clinicId}
-                        aria-label={`Toggle ${d.name} online status`}
-                      />
+                      <AlertDialog>
+                        <AlertDialogTrigger asChild>
+                          <div onClick={(e) => e.stopPropagation()}>
+                            <Switch
+                              checked={online}
+                              onCheckedChange={() => {}}
+                              disabled={isToggling || !clinicId}
+                              aria-label={`Toggle ${d.name} online status`}
+                            />
+                          </div>
+                        </AlertDialogTrigger>
+                        <AlertDialogContent>
+                          <AlertDialogHeader>
+                            <AlertDialogTitle>
+                              {online ? 'Set Doctor Offline?' : 'Set Doctor Online?'}
+                            </AlertDialogTitle>
+                            <AlertDialogDescription>
+                              {online
+                                ? `${d.name} will be marked as offline. New patients won't be able to join their queue.`
+                                : `${d.name} will be marked as online and available for patients to join the queue.`
+                              }
+                            </AlertDialogDescription>
+                          </AlertDialogHeader>
+                          <AlertDialogFooter>
+                            <AlertDialogCancel>Cancel</AlertDialogCancel>
+                            <AlertDialogAction onClick={() => handleToggleRealTimeStatus(d, !online)}>
+                              {online ? 'Set Offline' : 'Set Online'}
+                            </AlertDialogAction>
+                          </AlertDialogFooter>
+                        </AlertDialogContent>
+                      </AlertDialog>
                     </div>
                   </div>
                   <p className="text-xs text-gray-600">
