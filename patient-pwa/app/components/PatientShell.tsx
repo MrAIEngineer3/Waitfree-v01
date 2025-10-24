@@ -3,6 +3,7 @@ import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import React from 'react';
 import SiteFooter from './SiteFooter';
+import Logo from '../../components/Logo';
 
 interface PatientShellProps { children: React.ReactNode; }
 
@@ -26,12 +27,7 @@ export default function PatientShell({ children }: PatientShellProps) {
         <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
           <div className="my-4 glass-card rounded-full flex items-center justify-between p-2 shadow-sm">
             <Link href="/" className="flex items-center gap-2 pl-4">
-              <svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-                <path d="M12 2L2 7L12 12L22 7L12 2Z" stroke="#007CF0" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
-                <path d="M2 17L12 22L22 17" stroke="#00DFD8" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
-                <path d="M2 12L12 17L22 12" stroke="#00A2E4" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
-              </svg>
-              <span className="font-bold text-lg text-gray-900">Waitfree</span>
+              <Logo className="text-gray-900" />
             </Link>
             <nav className="flex items-center gap-1.5">
               {nav.map(item => {

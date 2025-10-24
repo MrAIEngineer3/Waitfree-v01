@@ -154,15 +154,7 @@ export default function EnhancedStatsCards() {
               </div>
             </div>
 
-            {/* Live indicator for current token */}
-            {index === 0 && currentToken > 0 && (
-              <div className="absolute top-4 right-4">
-                <div className="flex items-center gap-1.5">
-                  <div className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
-                  <span className="text-[10px] font-medium text-muted-foreground uppercase tracking-wider">Live</span>
-                </div>
-              </div>
-            )}
+            {/* Removed duplicate Live indicator - kept only in header */}
           </div>
         ))}
       </div>

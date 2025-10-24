@@ -3,6 +3,12 @@
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
 import { cn } from '@/lib/utils';
+import { useClinicContext } from './ClinicContext';
+import { useEffect, useState } from 'react';
+import { auth, db } from '../lib/firebase';
+import { doc, onSnapshot } from 'firebase/firestore';
+import SidebarProfile from './SidebarProfile';
+import Logo from './Logo';
 
 interface NavItem {
   label: string;
@@ -137,46 +143,62 @@ interface ModernSidebarProps {
 export default function ModernSidebar({ collapsed = false, onToggle }: ModernSidebarProps) {
   const pathname = usePathname();
   const router = useRouter();
+  const { doctorId, doctorName, clinicName } = useClinicContext();
+  const [doctorData, setDoctorData] = useState<{ specialty?: string; photoURL?: string }>({});
+
+  // Fetch doctor profile data (specialty, photo)
+  useEffect(() => {
+    const user = auth.currentUser;
+    if (!user) return;
+
+    const userDocRef = doc(db, 'users', user.uid);
+    const unsubscribe = onSnapshot(
+      userDocRef,
+      (snapshot) => {
+        if (snapshot.exists()) {
+          const data = snapshot.data();
+          setDoctorData({
+            specialty: data.specialty,
+            photoURL: data.photoURL || user.photoURL,
+          });
+        }
+      },
+      (error) => {
+        console.error('Error fetching user profile:', error);
+      }
+    );
+
+    return () => unsubscribe();
+  }, []);
 
   return (
     <aside
       className={cn(
-        "hidden md:flex md:flex-col border-r border-border bg-card transition-all duration-300 ease-in-out",
+        "hidden md:flex md:flex-col border-r border-border bg-card transition-[width] duration-300 ease-in-out",
         collapsed ? "w-16" : "w-64"
       )}
     >
       {/* Logo & Toggle */}
-      <div className="flex items-center justify-between px-4 py-5 border-b border-border">
-        {!collapsed && (
-          <div className="flex items-center gap-2">
-            <div className="h-8 w-8 rounded-lg bg-foreground flex items-center justify-center">
-              <svg className="w-5 h-5 text-background" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
-                <path strokeLinecap="round" strokeLinejoin="round" d="M13 10V3L4 14h7v7l9-11h-7z" />
-              </svg>
-            </div>
-            <div className="flex flex-col">
-              <span className="text-base font-bold tracking-tight text-foreground">WaitFree</span>
-              <span className="text-[10px] text-muted-foreground">Clinic Dashboard</span>
-            </div>
-          </div>
-        )}
-        {collapsed && (
-          <div className="mx-auto h-8 w-8 rounded-lg bg-foreground flex items-center justify-center">
-            <svg className="w-5 h-5 text-background" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
-              <path strokeLinecap="round" strokeLinejoin="round" d="M13 10V3L4 14h7v7l9-11h-7z" />
-            </svg>
-          </div>
-        )}
+      <div className={cn(
+        "flex items-center border-b border-border px-4 py-5",
+        collapsed ? "flex-col gap-3 px-3" : "justify-between"
+      )}>
+        <Logo 
+          showText={!collapsed}
+          className={cn("text-foreground", collapsed && "mx-auto")} 
+          iconClassName="h-7 w-7"
+          textClassName="text-base font-bold tracking-tight"
+        />
         <button
           onClick={onToggle}
           className={cn(
-            "hidden lg:flex h-7 w-7 items-center justify-center rounded-md border border-border bg-background hover:bg-accent transition-colors",
-            collapsed && "mx-auto mt-2"
+            "hidden lg:flex h-7 w-7 items-center justify-center rounded-md border border-border bg-background hover:bg-accent transition-colors flex-shrink-0",
+            collapsed && "mx-auto"
           )}
           aria-label={collapsed ? "Expand sidebar" : "Collapse sidebar"}
         >
           <svg
-            className={cn("w-4 h-4 text-muted-foreground transition-transform", collapsed && "rotate-180")}
+            className={cn("w-4 h-4 text-muted-foreground transition-transform duration-300", collapsed && "rotate-180")}
             fill="none"
             viewBox="0 0 24 24"
             stroke="currentColor"
@@ -243,22 +265,14 @@ export default function ModernSidebar({ collapsed = false, onToggle }: ModernSid
         ))}
       </nav>
 
-      {/* Footer */}
-      <div className="border-t border-border px-4 py-3">
-        {!collapsed ? (
-          <div className="space-y-2">
-            <div className="flex items-center gap-2 text-xs text-muted-foreground">
-              <div className="h-2 w-2 rounded-full bg-emerald-500 animate-pulse" />
-              <span>Connected</span>
-            </div>
-            <p className="text-[10px] text-muted-foreground">© 2025 WaitFree</p>
-          </div>
-        ) : (
-          <div className="flex justify-center">
-            <div className="h-2 w-2 rounded-full bg-emerald-500 animate-pulse" />
-          </div>
-        )}
-      </div>
+      {/* Profile Section */}
+      <SidebarProfile
+        collapsed={collapsed}
+        doctorName={doctorName}
+        specialty={doctorData.specialty}
+        clinicName={clinicName}
+        photoURL={doctorData.photoURL}
+      />
     </aside>
   );
 }

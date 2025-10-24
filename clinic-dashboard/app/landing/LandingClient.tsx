@@ -7,6 +7,7 @@ import { Badge } from '../../components/ui/Badge';
 import { Button } from '../../components/ui/Button';
 import { Card, CardContent } from '../../components/ui/Card';
 import { auth, db } from '../../lib/firebase';
+import Logo from '../../components/Logo';
 
 export default function LandingClient() {
   const router = useRouter();
@@ -228,10 +229,7 @@ export default function LandingClient() {
       {/* Header */}
       <header className={`sticky top-0 z-50 w-full backdrop-blur-xl transition-all duration-500 ${isScrolled ? 'bg-white/30 border-b border-white/20 shadow-sm' : 'bg-transparent border-b border-transparent'} ${mounted ? 'opacity-100 translate-y-0' : 'opacity-0 -translate-y-4'}`}>
         <div className="max-w-7xl mx-auto px-4 sm:px-5 h-16 sm:h-20 flex items-center justify-between">
-          <div className="flex items-center gap-2 font-semibold text-gray-800 tracking-tight group cursor-pointer">
-            <span className="h-3 w-3 rounded-sm bg-gradient-to-r from-brand-500 to-cyan-400 transition-transform duration-300 group-hover:rotate-180" />
-            Waitfree
-          </div>
+          <Logo className="text-gray-800 tracking-tight group cursor-pointer" iconClassName="group-hover:rotate-180 transition-transform duration-300" />
           
           <nav className="hidden md:flex items-center gap-8 text-sm text-gray-600">
             <a href="#features" onClick={(e) => handleSmoothScroll(e, '#features')} className="hover:text-gray-900 transition-all duration-200 hover:scale-105">Features</a>
@@ -584,10 +582,7 @@ export default function LandingClient() {
 
           <div className="grid gap-10 lg:grid-cols-4 text-sm text-gray-600">
             <div className="space-y-4">
-              <div className="flex items-center gap-2 text-gray-900 font-semibold text-base">
-                <span className="h-3 w-3 rounded-sm bg-gradient-to-r from-brand-500 to-cyan-400" />
-                Waitfree
-              </div>
+              <Logo className="text-gray-900" textClassName="text-base" />
               <p className="leading-relaxed text-gray-600">Waitlist orchestration for high-performing healthcare teams. Measure, iterate, and deliver calmer patient journeys.</p>
               <div className="flex gap-3">
                 {socialLinks.map((item) => (

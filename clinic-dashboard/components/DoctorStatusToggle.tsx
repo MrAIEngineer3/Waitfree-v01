@@ -124,17 +124,27 @@ export default function DoctorStatusToggle({
     );
   }
 
-  const statusColor = online ? 'bg-emerald-500 dark:bg-emerald-400' : 'bg-muted-foreground/30';
+  const dotColor = online ? 'bg-green-500' : 'bg-red-500';
   const statusLabel = online ? 'Online' : 'Offline';
+  const statusTextColor = online ? 'text-green-600 dark:text-green-400' : 'text-red-600 dark:text-red-400';
 
   return (
     <>
-      <div className={`flex items-center gap-2 ${className}`}>
+      <div className={`flex items-center gap-2.5 ${className}`}>
         {showLabel && (
-          <div className="flex items-center gap-1.5">
-            <span className={`h-2 w-2 rounded-full ${statusColor}`} />
-            <span className="text-sm font-medium text-foreground">{statusLabel}</span>
+          <div className="flex items-center gap-2">
+            <span className={`relative flex h-2.5 w-2.5`}>
+              <span className={`animate-ping absolute inline-flex h-full w-full rounded-full ${dotColor} opacity-75`}></span>
+              <span className={`relative inline-flex rounded-full h-2.5 w-2.5 ${dotColor}`}></span>
+            </span>
+            <span className={`text-sm font-medium ${statusTextColor}`}>{statusLabel}</span>
           </div>
+        )}
+        {!showLabel && (
+          <span className={`relative flex h-2 w-2`}>
+            <span className={`animate-ping absolute inline-flex h-full w-full rounded-full ${dotColor} opacity-75`}></span>
+            <span className={`relative inline-flex rounded-full h-2 w-2 ${dotColor}`}></span>
+          </span>
         )}
         {toggling && (
           <svg className="w-4 h-4 animate-spin text-muted-foreground" fill="none" viewBox="0 0 24 24">

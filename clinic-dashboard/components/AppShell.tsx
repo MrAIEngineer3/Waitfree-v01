@@ -4,7 +4,6 @@ import { signOut } from 'firebase/auth';
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
 import { useEffect, useState } from 'react';
-import { auth } from '../lib/firebase';
 import { useClinicContext } from './ClinicContext';
 import ClinicJoinQR from './ClinicJoinQR';
 import DoctorPicker from './DoctorPicker';
@@ -14,6 +13,11 @@ import ModernSidebar from './ModernSidebar';
 import { Badge } from './ui/Badge';
 import { Button } from './ui/Button';
 import { ThemeToggle } from './theme-toggle';
+import { Avatar, AvatarFallback, AvatarImage } from './ui/avatar';
+import { auth, db } from '../lib/firebase';
+import { doc, onSnapshot } from 'firebase/firestore';
+import { Separator } from './ui/separator';
+import Logo from './Logo';
 
 interface NavItem {
   label: string;
@@ -149,6 +153,15 @@ const navSections: NavSection[] = [
   }
 ];
 
+function getInitials(name: string | null | undefined): string {
+  if (!name) return 'DR';
+  const parts = name.trim().split(' ');
+  if (parts.length >= 2) {
+    return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
+  }
+  return name.slice(0, 2).toUpperCase();
+}
+
 export default function AppShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
   const router = useRouter();
@@ -156,6 +169,29 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
   const [showJoinQr, setShowJoinQr] = useState(false);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  const [doctorPhotoURL, setDoctorPhotoURL] = useState<string | null>(null);
+
+  // Fetch doctor photo
+  useEffect(() => {
+    const user = auth.currentUser;
+    if (!user) return;
+
+    const userDocRef = doc(db, 'users', user.uid);
+    const unsubscribe = onSnapshot(
+      userDocRef,
+      (snapshot) => {
+        if (snapshot.exists()) {
+          const data = snapshot.data();
+          setDoctorPhotoURL(data.photoURL || user.photoURL || null);
+        }
+      },
+      (error) => {
+        console.error('Error fetching user profile:', error);
+      }
+    );
+
+    return () => unsubscribe();
+  }, []);
 
   // Close mobile menu when pathname changes
   useEffect(() => {
@@ -192,12 +228,6 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
     };
   }, [clinicId, router]);
 
-  const renderQueueStatus = (status: typeof queueStatus) => {
-    if (!status) return null;
-    const variant = status === 'active' ? 'success' : status === 'paused' ? 'warning' : 'destructive';
-    const text = status === 'active' ? 'Active' : status === 'paused' ? 'Paused' : 'Ended';
-    return <Badge variant={variant} className="ml-2">{text}</Badge>;
-  };
   return (
     <div className="min-h-screen w-full flex bg-background text-foreground">
       {/* Modern Sidebar - Desktop Only */}
@@ -208,10 +238,12 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
       
       {/* Main area */}
       <div className="flex-1 flex flex-col min-w-0">
-        {/* Enhanced Top Bar */}
-        <header className="sticky top-0 z-30 backdrop-blur-md supports-[backdrop-filter]:bg-background/80 bg-background/95 border-b border-border shadow-sm">
-          <div className="w-full px-4 lg:px-6 py-3.5 flex items-center justify-between gap-4">
-            <div className="flex items-center gap-4 min-w-0 flex-1">
+        {/* Compact Enhanced Top Bar */}
+        <header className="sticky top-0 z-30 h-14 backdrop-blur-md supports-[backdrop-filter]:bg-background/80 bg-background/95 border-b border-border shadow-sm">
+          <div className="h-full w-full px-4 lg:px-6 flex items-center justify-between gap-4">
+            {/* LEFT: Mobile Menu + Avatar + Doctor/Clinic Info */}
+            <div className="flex items-center gap-3 min-w-0 flex-1">
+              {/* Mobile Menu Button */}
               <div className="md:hidden block">
                 <Sheet open={mobileMenuOpen} onOpenChange={setMobileMenuOpen}>
                   <SheetTrigger asChild>
@@ -232,11 +264,12 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
                     description="Main navigation and actions"
                   >
                     <div className="px-5 py-5 border-b border-border">
-                    <div className="text-lg font-semibold tracking-tight flex items-center gap-2">
-                      <span className="h-3 w-3 rounded-sm bg-gradient-to-r from-blue-500 to-cyan-400 inline-block" />
-                      Waitfree
+                      <Logo 
+                        className="text-foreground" 
+                        iconClassName="h-4 w-4"
+                        textClassName="text-lg font-semibold tracking-tight"
+                      />
                     </div>
-                  </div>
                     {clinicId && (
                       <div className="px-3 pt-3 space-y-3">
                         <DoctorPicker clinicId={clinicId} value={doctorId ?? undefined} />
@@ -320,70 +353,104 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
                 </Sheet>
               </div>
 
-              {/* Header: Clinic title and doctor picker */}
-              <div className="min-w-0 flex-1">
-                <div className="flex items-center gap-2">
-                  <h1 className="text-sm sm:text-base font-semibold text-foreground tracking-wide truncate">
-                    {clinicName || 'Clinic'}
-                  </h1>
-                  {renderQueueStatus(queueStatus)}
-                </div>
+              {/* Doctor Avatar + Doctor Picker + Clinic Info */}
+              <div className="flex items-center gap-2.5 min-w-0 flex-1">
+                {/* Avatar - Desktop only */}
+                <Avatar className="hidden sm:flex h-8 w-8 flex-shrink-0">
+                  {doctorPhotoURL && <AvatarImage src={doctorPhotoURL} alt={doctorName || 'Doctor'} />}
+                  <AvatarFallback className="bg-muted text-muted-foreground text-xs font-semibold">
+                    {getInitials(doctorName)}
+                  </AvatarFallback>
+                </Avatar>
+
+                {/* Doctor Picker - Functional Selector */}
                 {clinicId && (
-                  <div className="mt-1 flex items-center gap-3 flex-wrap">
+                  <div className="hidden sm:block">
                     <DoctorPicker clinicId={clinicId} value={doctorId ?? undefined} />
-                    {doctorId && (
-                      <DoctorStatusToggle 
-                        clinicId={clinicId} 
-                        doctorId={doctorId}
-                        doctorName={doctorName ?? undefined}
-                        showLabel={true}
-                      />
-                    )}
                   </div>
                 )}
-              </div>
-            </div>
-            
-            <div className="hidden md:flex items-center gap-4 flex-shrink-0">
-              <ThemeToggle />
-              {clinicId && (
-                <Button
-                  size="sm"
-                  variant="outline"
-                  onClick={() => setShowJoinQr(true)}
-                  className="h-9 px-3"
-                  leftIcon={(
-                    <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                      <path d="M3 3h7v7H3zM14 3h7v7h-7zM3 14h7v7H3zM17 17h.01M14 14h7v7h-7z" />
-                    </svg>
+
+                {/* Divider */}
+                {clinicName && (
+                  <span className="hidden sm:inline-block text-muted-foreground">|</span>
+                )}
+
+                {/* Clinic Name */}
+                <div className="flex items-center gap-2 min-w-0">
+                  <h1 className="text-sm font-medium text-foreground truncate">
+                    {clinicName || 'Clinic'}
+                  </h1>
+                  {queueStatus && (
+                    <Badge 
+                      variant={queueStatus === 'active' ? 'success' : queueStatus === 'paused' ? 'warning' : 'destructive'}
+                      className="hidden md:inline-flex text-xs px-2 py-0.5"
+                    >
+                      {queueStatus === 'active' ? 'Active' : queueStatus === 'paused' ? 'Paused' : 'Ended'}
+                    </Badge>
                   )}
-                >
-                  Show QR
-                </Button>
-              )}
-              <Button
-                size="sm"
-                variant="outline"
-                onClick={() => signOut(auth)}
-                className="h-9 px-3"
-              >
-                Sign out
-              </Button>
-              <div className="flex items-center gap-2">
-                <div className="h-2 w-2 rounded-full bg-emerald-500 dark:bg-emerald-400 animate-pulse" aria-label="Realtime Connected" />
-                <span className="text-[11px] text-muted-foreground">Realtime</span>
+                </div>
               </div>
             </div>
 
-            {/* Mobile hamburger (shows menu with actions and nav) */}
-            <div className="md:hidden flex items-center gap-2 flex-shrink-0">
-              <div className="flex items-center gap-2">
-                <div className="h-2 w-2 rounded-full bg-emerald-500 dark:bg-emerald-400 animate-pulse" aria-label="Realtime Connected" />
+            {/* CENTER: Status Controls - Desktop only */}
+            {clinicId && doctorId && (
+              <div className="hidden lg:flex items-center gap-3">
+                <DoctorStatusToggle 
+                  clinicId={clinicId} 
+                  doctorId={doctorId}
+                  doctorName={doctorName ?? undefined}
+                  showLabel={true}
+                />
+              </div>
+            )}
+            
+            {/* RIGHT: Action Buttons */}
+            <div className="hidden md:flex items-center gap-2 flex-shrink-0">
+              {clinicId && (
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  onClick={() => setShowJoinQr(true)}
+                  className="h-8 w-8 p-0"
+                  title="Show QR Code"
+                >
+                  <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                    <path d="M3 3h7v7H3zM14 3h7v7h-7zM3 14h7v7H3zM17 17h.01M14 14h7v7h-7z" />
+                  </svg>
+                </Button>
+              )}
+              <ThemeToggle />
+              <Separator orientation="vertical" className="h-5" />
+              <div className="flex items-center gap-1.5">
+                <div className="h-1.5 w-1.5 rounded-full bg-emerald-500 animate-pulse" aria-label="Realtime Connected" />
+                <span className="text-[10px] text-muted-foreground font-medium">Live</span>
               </div>
             </div>
+
+            {/* Mobile - Minimal right section */}
+            <div className="md:hidden flex items-center gap-2 flex-shrink-0">
+              {clinicId && (
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  onClick={() => setShowJoinQr(true)}
+                  className="h-8 w-8 p-0"
+                  title="Show QR Code"
+                >
+                  <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <path d="M3 3h7v7H3zM14 3h7v7h-7zM3 14h7v7H3zM17 17h.01M14 14h7v7h-7z" />
+                  </svg>
+                </Button>
+              )}
+            </div>
           </div>
-          <div className="w-full px-4 lg:px-6 pb-2"><EnvWarningBanner /></div>
         </header>
+
+        {/* Environment Warning Banner */}
+        <div className="w-full px-4 lg:px-6 pt-4">
+          <EnvWarningBanner />
+        </div>
+
         <main className="flex-1 w-full px-4 lg:px-6 py-6">
           {children}
         </main>

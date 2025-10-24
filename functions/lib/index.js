@@ -39,7 +39,7 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
 };
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.bootstrapClinicAccount = exports.deleteDoctorScheduleOverride = exports.updateDoctorScheduleOverride = exports.createDoctorScheduleOverride = exports.updateDoctorDefaultRota = exports.requestDoctorOnlineNotification = exports.updateClinicSchedulingSettings = exports.getClinicSchedulingSettings = exports.getClinicDoctorAvailability = exports.setDoctorRealTimeStatus = exports.setQueueAutoAdvance = exports.updateQueueStatus = exports.advanceQueue = exports.uncallPatient = exports.cancelPatient = exports.completePatient = exports.callPatient = exports.updatePatientStatus = exports.getPatientView = exports.joinQueue = exports.onPatientStatusChange = exports.onNewPatient = exports.ping = exports.debugGetPatient = exports.debugRecompute = exports.debugPatientPwaBaseUrl = exports.debugRuntimeFlags = void 0;
+exports.bootstrapClinicAccount = exports.deleteDoctorScheduleOverride = exports.updateDoctorScheduleOverride = exports.createDoctorScheduleOverride = exports.updateDoctorDefaultRota = exports.requestDoctorOnlineNotification = exports.updateClinicSchedulingSettings = exports.getClinicSchedulingSettings = exports.getClinicDoctorAvailability = exports.setDoctorRealTimeStatus = exports.setQueueAutoAdvance = exports.updateQueueStatus = exports.advanceQueue = exports.uncallPatient = exports.cancelPatient = exports.completePatient = exports.callPatient = exports.updatePatientStatus = exports.getPatientView = exports.manualAddPatient = exports.joinQueue = exports.onPatientStatusChange = exports.onNewPatient = exports.ping = exports.debugGetPatient = exports.debugRecompute = exports.debugPatientPwaBaseUrl = exports.debugRuntimeFlags = void 0;
 const firestore_1 = require("@google-cloud/firestore");
 // Ensure local .env variables are loaded when running in emulator / local scripts
 const crypto_1 = __importDefault(require("crypto"));
@@ -534,6 +534,184 @@ const joinQueueHandler = async (data, _context) => {
     }
 };
 exports.joinQueue = createV2Callable(joinQueueHandler);
+const manualAddPatientHandler = async (data, context) => {
+    const authUid = context.auth?.uid ?? null;
+    const span = (0, timing_1.startTiming)('manualAddPatient', {
+        uid: authUid,
+        clinicId: data?.clinicId ?? null,
+        doctorId: data?.doctorId ?? null,
+        queueId: data?.queueId ?? null,
+        suppressNotification: data?.suppressNotification === true
+    });
+    try {
+        if (!context.auth) {
+            span.fail({ reason: 'unauthenticated' });
+            throw new functions.https.HttpsError('unauthenticated', 'Authentication required');
+        }
+        const uid = context.auth.uid;
+        const clinicId = sanitizeFirestoreId(data?.clinicId);
+        const doctorId = sanitizeFirestoreId(data?.doctorId);
+        const queueId = sanitizeFirestoreId(data?.queueId);
+        if (!clinicId || !doctorId || !queueId) {
+            span.fail({ reason: 'invalid-argument' });
+            throw new functions.https.HttpsError('invalid-argument', 'clinicId, doctorId, and queueId are required');
+        }
+        const patientInput = data?.patient ?? {};
+        const rawName = typeof patientInput.name === 'string' ? patientInput.name.trim() : '';
+        if (!rawName) {
+            span.fail({ reason: 'invalid-name' });
+            throw new functions.https.HttpsError('invalid-argument', 'Patient name is required');
+        }
+        let age = null;
+        if (patientInput.age != null) {
+            const parsedAge = Number(patientInput.age);
+            if (!Number.isFinite(parsedAge) || parsedAge <= 0 || parsedAge > 200) {
+                span.fail({ reason: 'invalid-age', provided: patientInput.age });
+                throw new functions.https.HttpsError('invalid-argument', 'Patient age must be between 1 and 200');
+            }
+            age = Math.round(parsedAge);
+        }
+        let phone = null;
+        if (typeof patientInput.phone === 'string') {
+            const trimmedPhone = patientInput.phone.trim();
+            if (trimmedPhone.length > 0) {
+                const digitsOnly = trimmedPhone.replace(/\D+/g, '');
+                if (digitsOnly.length !== 10) {
+                    span.fail({ reason: 'invalid-phone', providedLength: digitsOnly.length });
+                    throw new functions.https.HttpsError('invalid-argument', 'Phone number must contain exactly 10 digits');
+                }
+                phone = digitsOnly;
+            }
+        }
+        const suppressNotification = data?.suppressNotification === true;
+        const db = firebaseAdmin_1.admin.firestore();
+        const queueRef = db.collection('clinics').doc(clinicId)
+            .collection('doctors').doc(doctorId)
+            .collection('queues').doc(queueId);
+        const patientsRef = queueRef.collection('patients');
+        let newPatientId = '';
+        let newTokenNumber = 0;
+        let rawAccessToken = '';
+        await db.runTransaction(async (transaction) => {
+            const queueSnap = await transaction.get(queueRef);
+            const queueData = queueSnap.exists ? queueSnap.data() : undefined;
+            if (queueData && typeof queueData.status === 'string' && (queueData.status === 'ended' || queueData.status === 'closed')) {
+                throw new functions.https.HttpsError('failed-precondition', 'Queue has ended. New patients cannot be added.');
+            }
+            if (!queueSnap.exists) {
+                newTokenNumber = 1;
+                transaction.set(queueRef, {
+                    id: queueId,
+                    doctorId,
+                    clinicId,
+                    status: 'active',
+                    currentToken: 0,
+                    totalPatients: newTokenNumber,
+                    completedPatients: 0,
+                    createdAt: firestore_1.FieldValue.serverTimestamp(),
+                    updatedAt: firestore_1.FieldValue.serverTimestamp()
+                });
+            }
+            else {
+                const currentTotal = queueData?.totalPatients ?? 0;
+                newTokenNumber = currentTotal + 1;
+                transaction.update(queueRef, {
+                    totalPatients: newTokenNumber,
+                    updatedAt: firestore_1.FieldValue.serverTimestamp()
+                });
+            }
+            const patientRef = patientsRef.doc();
+            newPatientId = patientRef.id;
+            rawAccessToken = crypto_1.default.randomBytes(32).toString('hex');
+            const accessTokenHash = crypto_1.default.createHash('sha256').update(rawAccessToken).digest('hex');
+            const patientDoc = {
+                id: newPatientId,
+                name: rawName,
+                tokenNumber: newTokenNumber,
+                status: 'waiting',
+                joinedAt: firestore_1.FieldValue.serverTimestamp(),
+                queueId,
+                clinicId,
+                doctorId,
+                accessTokenHash,
+                createdBy: uid,
+                createdVia: 'staff'
+            };
+            if (age !== null) {
+                patientDoc.age = age;
+            }
+            patientDoc.phone = phone ?? '';
+            if (suppressNotification) {
+                patientDoc.notifications = { joinedSuppressed: true };
+            }
+            transaction.set(patientRef, patientDoc);
+        });
+        const patientDocRef = queueRef.collection('patients').doc(newPatientId);
+        if (phone && !suppressNotification) {
+            try {
+                await patientDocRef.set({ notifications: { joined: true } }, { merge: true });
+                await (0, notifier_1.sendNotification)({
+                    to: phone,
+                    type: 'joined',
+                    payload: {
+                        name: rawName,
+                        tokenNumber: newTokenNumber,
+                        clinicId,
+                        doctorId,
+                        queueId,
+                        patientId: newPatientId,
+                        accessToken: rawAccessToken
+                    }
+                });
+            }
+            catch (notifyErr) {
+                functions.logger.warn('Failed to send manual joined notification', notifyErr);
+            }
+        }
+        else if (suppressNotification) {
+            try {
+                await patientDocRef.set({ notifications: { joinedSuppressed: true } }, { merge: true });
+            }
+            catch (notifyFlagErr) {
+                functions.logger.warn('Failed to record notification suppression flag', notifyFlagErr);
+            }
+        }
+        runInBackground('manualAddPatient.recompute', () => (0, notificationEngine_1.recomputeQueueNotifications)({ clinicId, doctorId, queueId }));
+        functions.logger.info('Manual patient added', {
+            clinicId,
+            doctorId,
+            queueId,
+            patientId: newPatientId,
+            tokenNumber: newTokenNumber,
+            suppressNotification,
+            uid
+        });
+        span.succeed({ patientId: newPatientId, tokenNumber: newTokenNumber });
+        return {
+            success: true,
+            patientId: newPatientId,
+            queueId,
+            doctorId,
+            clinicId,
+            accessToken: rawAccessToken,
+            tokenNumber: newTokenNumber
+        };
+    }
+    catch (error) {
+        functions.logger.error('manualAddPatient failed', error, {
+            clinicId: data?.clinicId ?? null,
+            doctorId: data?.doctorId ?? null,
+            queueId: data?.queueId ?? null,
+            uid: authUid
+        });
+        span.fail({ error: error instanceof Error ? error.message : String(error) });
+        if (error instanceof functions.https.HttpsError) {
+            throw error;
+        }
+        throw new functions.https.HttpsError('internal', 'Failed to manually add patient');
+    }
+};
+exports.manualAddPatient = createV2Callable(manualAddPatientHandler);
 /**
  * Callable Cloud Function to return a patient's view after validating a short-lived token.
  * Expected data: { clinicId, doctorId, queueId, patientId, token }

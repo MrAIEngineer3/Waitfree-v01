@@ -1,3 +1,5 @@
+import Logo from '../../components/Logo';
+
 export default function SiteFooter() {
   const links = [
     { label:'About Us', href:'#' },
@@ -10,10 +12,7 @@ export default function SiteFooter() {
       <div className="mx-auto max-w-6xl px-6 py-12 space-y-10">
         <div className="flex flex-col gap-8 md:flex-row md:items-start md:justify-between">
           <div className="space-y-4 max-w-sm">
-            <div className="flex items-center gap-2 font-semibold text-gray-900">
-              <span className="h-5 w-5 rounded-md bg-gradient-to-br from-blue-600 to-cyan-500 shadow-inner shadow-white/30 ring-1 ring-black/5" />
-              <span>Waitfree</span>
-            </div>
+            <Logo className="text-gray-900" />
             <p className="text-xs leading-relaxed text-gray-600">Building a calmer healthcare access experience – transparent, efficient & human.</p>
           </div>
           <nav className="flex flex-wrap gap-x-10 gap-y-4 text-[11px] font-medium tracking-wide text-gray-600">

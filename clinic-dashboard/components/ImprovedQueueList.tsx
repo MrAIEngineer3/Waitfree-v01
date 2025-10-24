@@ -55,6 +55,20 @@ function getWaitTime(joinedAt: Date | { seconds: number; nanoseconds: number } |
   return `${hours}h ${mins}m`;
 }
 
+const formatAge = (value: number | undefined): string => {
+  if (typeof value === 'number' && value > 0) {
+    return `${value} yrs`;
+  }
+  return '—';
+};
+
+const formatPhone = (value: string | undefined): string => {
+  if (typeof value === 'string' && value.trim().length > 0) {
+    return value.trim();
+  }
+  return '—';
+};
+
 export default function ImprovedQueueList({ 
   clinicId: clinicIdProp, 
   doctorId: doctorIdProp, 
@@ -294,7 +308,7 @@ export default function ImprovedQueueList({
     if (isReadOnly) return null;
 
     return (
-      <div className="flex items-center justify-end gap-1">
+      <div className="flex items-center justify-center gap-1">
         {canCall && (
           <Button
             variant="ghost"
@@ -322,7 +336,7 @@ export default function ImprovedQueueList({
             size="sm"
             onClick={() => requestCompletePatient(patient.id)}
             disabled={isLoading}
-            className="h-8 px-2 hover:bg-accent"
+            className="h-8 px-2 hover:bg-accent text-green-600 hover:text-green-700 dark:text-green-500 dark:hover:text-green-400"
             title="Mark Complete"
           >
             <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
@@ -528,54 +542,54 @@ export default function ImprovedQueueList({
             <Table>
               <TableHeader>
                 <TableRow className="bg-muted/30">
-                  <TableHead className="w-20 font-semibold">Token</TableHead>
-                  <TableHead className="font-semibold">Name</TableHead>
-                  <TableHead className="w-24 font-semibold">Age</TableHead>
-                  <TableHead className="hidden xl:table-cell font-semibold">Phone</TableHead>
-                  <TableHead className="w-32 font-semibold">Status</TableHead>
-                  <TableHead className="w-28 font-semibold">Wait Time</TableHead>
-                  <TableHead className="w-36 text-right font-semibold">Actions</TableHead>
+                  <TableHead className="w-20 font-semibold pl-6 pr-4 text-center">Token</TableHead>
+                  <TableHead className="font-semibold px-4 text-center">Name</TableHead>
+                  <TableHead className="w-24 font-semibold px-4 text-center">Age</TableHead>
+                  <TableHead className="hidden xl:table-cell font-semibold px-4 text-center">Phone</TableHead>
+                  <TableHead className="w-36 font-semibold px-4 text-center">Actions</TableHead>
+                  <TableHead className="w-32 font-semibold px-4 text-center">Status</TableHead>
+                  <TableHead className="w-28 font-semibold pl-4 pr-6 text-center">Wait Time</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
             {/* In Progress */}
             {inProgressPatients.map((patient) => (
-              <TableRow key={patient.id} className="bg-muted/20 hover:bg-muted/30">
-                <TableCell className="font-bold text-base py-3">{patient.tokenNumber}</TableCell>
-                <TableCell className="font-medium py-3">{patient.name}</TableCell>
-                <TableCell className="text-muted-foreground py-3">{patient.age} yrs</TableCell>
-                <TableCell className="hidden xl:table-cell text-muted-foreground py-3">{patient.phone}</TableCell>
-                <TableCell className="py-3">
-                  <Badge variant="outline" className="bg-muted text-foreground border-foreground/20 font-medium">
+              <TableRow key={patient.id} className="bg-blue-50 dark:bg-blue-950/30 hover:bg-blue-100 dark:hover:bg-blue-950/40 border-l-4 border-l-blue-500">
+                <TableCell className="font-bold text-base py-3 pl-6 pr-4 text-center">{patient.tokenNumber}</TableCell>
+                <TableCell className="font-medium py-3 px-4 text-center">{patient.name}</TableCell>
+                <TableCell className="text-muted-foreground py-3 px-4 text-center">{formatAge(patient.age)}</TableCell>
+                <TableCell className="hidden xl:table-cell text-muted-foreground py-3 px-4 text-center">{formatPhone(patient.phone)}</TableCell>
+                <TableCell className="py-3 px-4 text-center">
+                  <PatientActions patient={patient} />
+                </TableCell>
+                <TableCell className="py-3 px-4 text-center">
+                  <Badge className="bg-blue-500 text-white hover:bg-blue-600 font-medium border-0">
                     In Progress
                   </Badge>
                 </TableCell>
-                <TableCell className="text-muted-foreground font-medium py-3">{getWaitTime(patient.joinedAt)}</TableCell>
-                <TableCell className="text-right py-3">
-                  <PatientActions patient={patient} />
-                </TableCell>
+                <TableCell className="text-muted-foreground font-medium py-3 pl-4 pr-6 text-center">{getWaitTime(patient.joinedAt)}</TableCell>
               </TableRow>
             ))}
             {/* Waiting */}
             {waitingPatients.map((patient) => (
               <TableRow key={patient.id} className="hover:bg-muted/20">
-                <TableCell className="font-bold text-base py-3">{patient.tokenNumber}</TableCell>
-                <TableCell className="font-medium py-3">{patient.name}</TableCell>
-                <TableCell className="text-muted-foreground py-3">{patient.age} yrs</TableCell>
-                <TableCell className="hidden xl:table-cell text-muted-foreground py-3">{patient.phone}</TableCell>
-                <TableCell className="py-3">
-                  <Badge variant="outline" className="font-medium">Waiting</Badge>
-                </TableCell>
-                <TableCell className="text-muted-foreground font-medium py-3">{getWaitTime(patient.joinedAt)}</TableCell>
-                <TableCell className="text-right py-3">
+                <TableCell className="font-bold text-base py-3 pl-6 pr-4 text-center">{patient.tokenNumber}</TableCell>
+                <TableCell className="font-medium py-3 px-4 text-center">{patient.name}</TableCell>
+                <TableCell className="text-muted-foreground py-3 px-4 text-center">{formatAge(patient.age)}</TableCell>
+                <TableCell className="hidden xl:table-cell text-muted-foreground py-3 px-4 text-center">{formatPhone(patient.phone)}</TableCell>
+                <TableCell className="py-3 px-4 text-center">
                   <PatientActions patient={patient} />
                 </TableCell>
+                <TableCell className="py-3 px-4 text-center">
+                  <Badge className="bg-amber-500 text-white hover:bg-amber-600 font-medium border-0">Waiting</Badge>
+                </TableCell>
+                <TableCell className="text-muted-foreground font-medium py-3 pl-4 pr-6 text-center">{getWaitTime(patient.joinedAt)}</TableCell>
               </TableRow>
             ))}
             
             {inProgressPatients.length === 0 && waitingPatients.length === 0 && (
               <TableRow>
-                <TableCell colSpan={7} className="h-32 text-center">
+                <TableCell colSpan={7} className="h-32 text-center px-4">
                   <div className="flex flex-col items-center justify-center text-muted-foreground">
                     <svg className="w-12 h-12 mb-2 opacity-50" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
                       <path strokeLinecap="round" strokeLinejoin="round" d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z" />
@@ -596,23 +610,26 @@ export default function ImprovedQueueList({
         {inProgressPatients.length > 0 && (
           <div className="space-y-3">
             <div className="flex items-center gap-2 px-2">
-              <div className="h-1 w-1 rounded-full bg-foreground"></div>
+              <div className="h-1 w-1 rounded-full bg-blue-500"></div>
               <h4 className="text-sm font-semibold text-foreground uppercase tracking-wide">In Progress</h4>
             </div>
             {inProgressPatients.map((patient) => (
-              <div key={patient.id} className="bg-muted/20 border border-border rounded-lg p-4 shadow-sm">
+              <div key={patient.id} className="bg-blue-50 dark:bg-blue-950/30 border-l-4 border-l-blue-500 border border-border rounded-lg p-4 shadow-sm">
                 <div className="flex items-start justify-between gap-4">
                   <div className="flex items-center gap-3 flex-1 min-w-0">
-                    <div className="flex-shrink-0 w-12 h-12 rounded-lg bg-foreground/10 border border-border flex items-center justify-center font-bold text-base">
+                    <div className="flex-shrink-0 w-12 h-12 rounded-lg bg-blue-100 dark:bg-blue-900/50 border border-blue-200 dark:border-blue-800 flex items-center justify-center font-bold text-base">
                       {patient.tokenNumber}
                     </div>
                     <div className="flex-1 min-w-0">
                       <p className="font-semibold text-foreground text-base mb-1">{patient.name}</p>
-                      <div className="flex items-center gap-2 text-sm text-muted-foreground">
-                        <span>{patient.age} yrs</span>
+                      <div className="flex items-center gap-2 text-sm text-muted-foreground mb-2">
+                        <span>{formatAge(patient.age)}</span>
                         <span>•</span>
                         <span className="font-medium">{getWaitTime(patient.joinedAt)}</span>
                       </div>
+                      <Badge className="bg-blue-500 text-white hover:bg-blue-600 font-medium border-0">
+                        In Progress
+                      </Badge>
                     </div>
                   </div>
                   <PatientActions patient={patient} />
@@ -626,7 +643,7 @@ export default function ImprovedQueueList({
         {waitingPatients.length > 0 && (
           <div className="space-y-3">
             <div className="flex items-center gap-2 px-2">
-              <div className="h-1 w-1 rounded-full bg-muted-foreground"></div>
+              <div className="h-1 w-1 rounded-full bg-amber-500"></div>
               <h4 className="text-sm font-semibold text-foreground uppercase tracking-wide">Waiting ({waitingPatients.length})</h4>
             </div>
             {waitingPatients.map((patient) => (
@@ -638,11 +655,12 @@ export default function ImprovedQueueList({
                     </div>
                     <div className="flex-1 min-w-0">
                       <p className="font-semibold text-foreground text-base mb-1">{patient.name}</p>
-                      <div className="flex items-center gap-2 text-sm text-muted-foreground">
-                        <span>{patient.age} yrs</span>
+                      <div className="flex items-center gap-2 text-sm text-muted-foreground mb-2">
+                        <span>{formatAge(patient.age)}</span>
                         <span>•</span>
                         <span className="font-medium">{getWaitTime(patient.joinedAt)}</span>
                       </div>
+                      <Badge className="bg-amber-500 text-white hover:bg-amber-600 font-medium border-0">Waiting</Badge>
                     </div>
                   </div>
                   <PatientActions patient={patient} />
@@ -675,32 +693,32 @@ export default function ImprovedQueueList({
         <Table>
           <TableHeader>
             <TableRow className="bg-muted/30">
-              <TableHead className="w-20 font-semibold">Token</TableHead>
-              <TableHead className="font-semibold">Name</TableHead>
-              <TableHead className="w-24 font-semibold">Age</TableHead>
-              <TableHead className="hidden xl:table-cell font-semibold">Phone</TableHead>
-              <TableHead className="w-32 font-semibold">Status</TableHead>
-              <TableHead className="w-28 font-semibold">Wait Time</TableHead>
-              <TableHead className="w-36 text-right font-semibold">Actions</TableHead>
+              <TableHead className="w-20 font-semibold pl-6 pr-4 text-center">Token</TableHead>
+              <TableHead className="font-semibold px-4 text-center">Name</TableHead>
+              <TableHead className="w-24 font-semibold px-4 text-center">Age</TableHead>
+              <TableHead className="hidden xl:table-cell font-semibold px-4 text-center">Phone</TableHead>
+              <TableHead className="w-36 font-semibold px-4 text-center">Actions</TableHead>
+              <TableHead className="w-32 font-semibold px-4 text-center">Status</TableHead>
+              <TableHead className="w-28 font-semibold pl-4 pr-6 text-center">Wait Time</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
             {completedPatients.map((patient) => (
               <TableRow key={patient.id} className="opacity-60 hover:opacity-80">
-                <TableCell className="font-bold text-base py-3">{patient.tokenNumber}</TableCell>
-                <TableCell className="font-medium line-through py-3">{patient.name}</TableCell>
-                <TableCell className="text-muted-foreground py-3">{patient.age} yrs</TableCell>
-                <TableCell className="hidden xl:table-cell text-muted-foreground py-3">{patient.phone}</TableCell>
-                <TableCell className="py-3">
-                  <Badge variant="outline" className="bg-muted text-muted-foreground font-medium">Completed</Badge>
+                <TableCell className="font-bold text-base py-3 pl-6 pr-4 text-center">{patient.tokenNumber}</TableCell>
+                <TableCell className="font-medium line-through py-3 px-4 text-center">{patient.name}</TableCell>
+                <TableCell className="text-muted-foreground py-3 px-4 text-center">{formatAge(patient.age)}</TableCell>
+                <TableCell className="hidden xl:table-cell text-muted-foreground py-3 px-4 text-center">{formatPhone(patient.phone)}</TableCell>
+                <TableCell className="py-3 px-4 text-center"></TableCell>
+                <TableCell className="py-3 px-4 text-center">
+                  <Badge className="bg-green-500 text-white font-medium border-0">Completed</Badge>
                 </TableCell>
-                <TableCell className="text-muted-foreground font-medium py-3">{getWaitTime(patient.joinedAt)}</TableCell>
-                <TableCell className="py-3"></TableCell>
+                <TableCell className="text-muted-foreground font-medium py-3 pl-4 pr-6 text-center">{getWaitTime(patient.joinedAt)}</TableCell>
               </TableRow>
             ))}
             {completedPatients.length === 0 && (
               <TableRow>
-                <TableCell colSpan={7} className="h-32 text-center">
+                <TableCell colSpan={7} className="h-32 text-center px-4">
                   <div className="flex flex-col items-center justify-center text-muted-foreground">
                     <svg className="w-12 h-12 mb-2 opacity-50" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
                       <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
@@ -725,7 +743,7 @@ export default function ImprovedQueueList({
               <div className="flex-1 min-w-0">
                 <p className="font-semibold text-foreground text-base mb-1 line-through">{patient.name}</p>
                 <div className="flex items-center gap-2 text-sm text-muted-foreground">
-                  <span>{patient.age} yrs</span>
+                  <span>{formatAge(patient.age)}</span>
                   <span>•</span>
                   <span className="font-medium">{getWaitTime(patient.joinedAt)}</span>
                 </div>
@@ -756,32 +774,32 @@ export default function ImprovedQueueList({
         <Table>
           <TableHeader>
             <TableRow className="bg-muted/30">
-              <TableHead className="w-20 font-semibold">Token</TableHead>
-              <TableHead className="font-semibold">Name</TableHead>
-              <TableHead className="w-24 font-semibold">Age</TableHead>
-              <TableHead className="hidden xl:table-cell font-semibold">Phone</TableHead>
-              <TableHead className="w-32 font-semibold">Status</TableHead>
-              <TableHead className="w-28 font-semibold">Wait Time</TableHead>
-              <TableHead className="w-36 text-right font-semibold">Actions</TableHead>
+              <TableHead className="w-20 font-semibold pl-6 pr-4 text-center">Token</TableHead>
+              <TableHead className="font-semibold px-4 text-center">Name</TableHead>
+              <TableHead className="w-24 font-semibold px-4 text-center">Age</TableHead>
+              <TableHead className="hidden xl:table-cell font-semibold px-4 text-center">Phone</TableHead>
+              <TableHead className="w-36 font-semibold px-4 text-center">Actions</TableHead>
+              <TableHead className="w-32 font-semibold px-4 text-center">Status</TableHead>
+              <TableHead className="w-28 font-semibold pl-4 pr-6 text-center">Wait Time</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
             {cancelledPatients.map((patient) => (
               <TableRow key={patient.id} className="opacity-60 hover:opacity-80">
-                <TableCell className="font-bold text-base py-3">{patient.tokenNumber}</TableCell>
-                <TableCell className="font-medium line-through py-3">{patient.name}</TableCell>
-                <TableCell className="text-muted-foreground py-3">{patient.age} yrs</TableCell>
-                <TableCell className="hidden xl:table-cell text-muted-foreground py-3">{patient.phone}</TableCell>
-                <TableCell className="py-3">
-                  <Badge variant="outline" className="bg-muted text-muted-foreground font-medium">Cancelled</Badge>
+                <TableCell className="font-bold text-base py-3 pl-6 pr-4 text-center">{patient.tokenNumber}</TableCell>
+                <TableCell className="font-medium line-through py-3 px-4 text-center">{patient.name}</TableCell>
+                <TableCell className="text-muted-foreground py-3 px-4 text-center">{formatAge(patient.age)}</TableCell>
+                <TableCell className="hidden xl:table-cell text-muted-foreground py-3 px-4 text-center">{formatPhone(patient.phone)}</TableCell>
+                <TableCell className="py-3 px-4 text-center"></TableCell>
+                <TableCell className="py-3 px-4 text-center">
+                  <Badge className="bg-red-500 text-white font-medium border-0">Cancelled</Badge>
                 </TableCell>
-                <TableCell className="text-muted-foreground font-medium py-3">{getWaitTime(patient.joinedAt)}</TableCell>
-                <TableCell className="py-3"></TableCell>
+                <TableCell className="text-muted-foreground font-medium py-3 pl-4 pr-6 text-center">{getWaitTime(patient.joinedAt)}</TableCell>
               </TableRow>
             ))}
             {cancelledPatients.length === 0 && (
               <TableRow>
-                <TableCell colSpan={7} className="h-32 text-center">
+                <TableCell colSpan={7} className="h-32 text-center px-4">
                   <div className="flex flex-col items-center justify-center text-muted-foreground">
                     <svg className="w-12 h-12 mb-2 opacity-50" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
                       <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
@@ -806,7 +824,7 @@ export default function ImprovedQueueList({
               <div className="flex-1 min-w-0">
                 <p className="font-semibold text-foreground text-base mb-1 line-through">{patient.name}</p>
                 <div className="flex items-center gap-2 text-sm text-muted-foreground">
-                  <span>{patient.age} yrs</span>
+                  <span>{formatAge(patient.age)}</span>
                   <span>•</span>
                   <span className="font-medium">{getWaitTime(patient.joinedAt)}</span>
                 </div>
