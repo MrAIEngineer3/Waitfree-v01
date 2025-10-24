@@ -246,6 +246,8 @@ type UpdatePatientStatusRequest = {
   newStatus?: string;
 };
 
+type PatientStatus = 'waiting' | 'in-progress' | 'completed' | 'cancelled';
+
 type UpdateQueueStatusRequest = {
   clinicId?: string;
   doctorId?: string;
@@ -258,6 +260,12 @@ type SetQueueAutoAdvanceRequest = {
   doctorId?: string;
   queueId?: string;
   enabled?: boolean;
+};
+
+type AdvanceQueueRequest = {
+  clinicId?: string;
+  doctorId?: string;
+  queueId?: string;
 };
 
 type BootstrapClinicAccountRequest = {
@@ -1147,6 +1155,114 @@ const updatePatientStatusHandler = async (data: UpdatePatientStatusRequest, cont
 };
 
 export const updatePatientStatus = createV2Callable(updatePatientStatusHandler);
+
+const createStatusUpdateHandler = (targetStatus: PatientStatus) =>
+  async (data: UpdatePatientStatusRequest, context: CallableCtx) => {
+    return updatePatientStatusHandler({ ...data, newStatus: targetStatus }, context);
+  };
+
+export const callPatient = createV2Callable(createStatusUpdateHandler('in-progress'));
+export const completePatient = createV2Callable(createStatusUpdateHandler('completed'));
+export const cancelPatient = createV2Callable(createStatusUpdateHandler('cancelled'));
+export const uncallPatient = createV2Callable(createStatusUpdateHandler('waiting'));
+
+const advanceQueueHandler = async (data: AdvanceQueueRequest, context: CallableCtx) => {
+  const span = startTiming('advanceQueue', {
+    uid: context.auth?.uid ?? null,
+    clinicId: data?.clinicId,
+    doctorId: data?.doctorId,
+    queueId: data?.queueId
+  });
+
+  try {
+    if (!context.auth) {
+      span.fail({ reason: 'unauthenticated' });
+      throw new functions.https.HttpsError('unauthenticated', 'The function must be called by an authenticated user.');
+    }
+
+    const { clinicId, doctorId, queueId } = data || {};
+    if (!clinicId || !doctorId || !queueId) {
+      span.fail({ reason: 'invalid-argument' });
+      throw new functions.https.HttpsError('invalid-argument', 'clinicId, doctorId, and queueId are required');
+    }
+
+    const db = admin.firestore();
+    const queueRef = db.collection('clinics').doc(clinicId)
+      .collection('doctors').doc(doctorId)
+      .collection('queues').doc(queueId);
+
+    const queueSnap = await queueRef.get();
+    if (!queueSnap.exists) {
+      span.fail({ reason: 'not-found' });
+      throw new functions.https.HttpsError('not-found', 'Queue document not found.');
+    }
+
+    const queueData = queueSnap.data() as { status?: string } | undefined;
+    if (queueData?.status === 'paused' || queueData?.status === 'ended' || queueData?.status === 'closed') {
+      span.fail({ reason: 'failed-precondition', status: queueData.status ?? null });
+      throw new functions.https.HttpsError('failed-precondition', 'Queue is not active.');
+    }
+
+    const patientsCollection = queueRef.collection('patients');
+
+    let completedPatientId: string | null = null;
+    const inProgressSnap = await patientsCollection
+      .where('status', '==', 'in-progress')
+      .orderBy('tokenNumber')
+      .limit(1)
+      .get();
+
+    if (!inProgressSnap.empty) {
+      const docSnap = inProgressSnap.docs[0];
+      completedPatientId = docSnap.id;
+      await updatePatientStatusHandler({ clinicId, doctorId, queueId, patientId: completedPatientId, newStatus: 'completed' }, context);
+    }
+
+    let promotedPatientId: string | null = null;
+    const waitingSnap = await patientsCollection
+      .where('status', '==', 'waiting')
+      .orderBy('tokenNumber')
+      .limit(1)
+      .get();
+
+    if (!waitingSnap.empty) {
+      const docSnap = waitingSnap.docs[0];
+      promotedPatientId = docSnap.id;
+      await updatePatientStatusHandler({ clinicId, doctorId, queueId, patientId: promotedPatientId, newStatus: 'in-progress' }, context);
+    }
+
+    if (!completedPatientId && !promotedPatientId) {
+      span.succeed({ success: false, completedPatientId, promotedPatientId });
+      return {
+        success: false,
+        message: 'No patients to advance',
+        completedPatientId: null,
+        promotedPatientId: null
+      };
+    }
+
+    span.succeed({ success: true, completedPatientId, promotedPatientId });
+    return {
+      success: true,
+      completedPatientId,
+      promotedPatientId
+    };
+  } catch (error) {
+    functions.logger.error('advanceQueue failed', error, {
+      clinicId: data?.clinicId,
+      doctorId: data?.doctorId,
+      queueId: data?.queueId,
+      uid: context.auth?.uid ?? null
+    });
+    span.fail({ error: error instanceof Error ? error.message : String(error) });
+    if (error instanceof functions.https.HttpsError) {
+      throw error;
+    }
+    throw new functions.https.HttpsError('internal', 'Failed to advance queue');
+  }
+};
+
+export const advanceQueue = createV2Callable(advanceQueueHandler);
 
 /**
  * Firebase Callable Function to update a queue's status

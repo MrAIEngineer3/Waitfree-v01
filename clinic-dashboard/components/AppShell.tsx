@@ -1,6 +1,5 @@
 "use client";
 import { Sheet, SheetContent, SheetTrigger } from './ui/sheet';
-import { Separator } from './ui/separator';
 import { signOut } from 'firebase/auth';
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
@@ -11,6 +10,7 @@ import ClinicJoinQR from './ClinicJoinQR';
 import DoctorPicker from './DoctorPicker';
 import DoctorStatusToggle from './DoctorStatusToggle';
 import EnvWarningBanner from './EnvWarningBanner';
+import ModernSidebar from './ModernSidebar';
 import { Badge } from './ui/Badge';
 import { Button } from './ui/Button';
 import { ThemeToggle } from './theme-toggle';
@@ -155,6 +155,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
   const { clinicId, clinicName, doctorId, doctorName, queueStatus } = useClinicContext();
   const [showJoinQr, setShowJoinQr] = useState(false);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
 
   // Close mobile menu when pathname changes
   useEffect(() => {
@@ -199,62 +200,17 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
   };
   return (
     <div className="min-h-screen w-full flex bg-background text-foreground">
-      {/* Sidebar */}
-      <aside className="hidden md:flex md:flex-col w-60 border-r border-border bg-card/80 backdrop-blur-sm">
-        <div className="px-5 py-5 border-b border-border">
-          <div className="text-lg font-semibold tracking-tight flex items-center gap-2">
-            <span className="h-3 w-3 rounded-sm bg-gradient-to-r from-blue-500 to-cyan-400 inline-block" />
-            Waitfree
-          </div>
-        </div>
-        <nav className="flex-1 px-3 py-4 overflow-y-auto">
-          {navSections.map((section, sectionIdx) => (
-            <div key={section.label} className="mb-6">
-              <p className="text-[11px] uppercase tracking-wide text-muted-foreground mb-2 px-3">
-                {section.label}
-              </p>
-              <div className="space-y-1">
-                {section.items.map(item => {
-                  const active = pathname === item.href || (pathname?.startsWith(item.href + '/') ?? false);
-                  return (
-                    <Link
-                      key={item.href}
-                      href={item.href}
-                      onMouseEnter={() => {
-                        void router.prefetch(item.href);
-                      }}
-                      className={`group flex items-center gap-3 rounded-md px-3 py-2 text-sm font-medium transition-colors border ${
-                        active 
-                          ? 'bg-primary text-primary-foreground border-primary shadow-sm' 
-                          : 'text-foreground hover:text-foreground hover:bg-accent border-transparent'
-                      } ${item.isSubItem ? 'pl-4' : ''}`}
-                    >
-                      {item.icon && (
-                        <span className="flex-shrink-0">
-                          {item.icon}
-                        </span>
-                      )}
-                      <span className="flex-1">{item.label}</span>
-                      {item.soon && <span className="text-[10px] px-1.5 py-0.5 rounded bg-muted text-muted-foreground border border-border">Soon</span>}
-                    </Link>
-                  );
-                })}
-              </div>
-              {sectionIdx < navSections.length - 1 && (
-                <Separator className="mt-6" />
-              )}
-            </div>
-          ))}
-        </nav>
-        <div className="px-4 py-4 text-[10px] text-muted-foreground border-t border-border">
-          <p>Build {new Date().getFullYear()}</p>
-        </div>
-      </aside>
+      {/* Modern Sidebar - Desktop Only */}
+      <ModernSidebar 
+        collapsed={sidebarCollapsed} 
+        onToggle={() => setSidebarCollapsed(!sidebarCollapsed)} 
+      />
+      
       {/* Main area */}
       <div className="flex-1 flex flex-col min-w-0">
-        {/* Top Bar */}
-        <header className="sticky top-0 z-30 backdrop-blur supports-[backdrop-filter]:bg-background/70 bg-background/90 border-b border-border">
-          <div className="max-w-7xl mx-auto px-4 py-3 flex items-center justify-between gap-4">
+        {/* Enhanced Top Bar */}
+        <header className="sticky top-0 z-30 backdrop-blur-md supports-[backdrop-filter]:bg-background/80 bg-background/95 border-b border-border shadow-sm">
+          <div className="w-full px-4 lg:px-6 py-3.5 flex items-center justify-between gap-4">
             <div className="flex items-center gap-4 min-w-0 flex-1">
               <div className="md:hidden block">
                 <Sheet open={mobileMenuOpen} onOpenChange={setMobileMenuOpen}>
@@ -426,9 +382,9 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
               </div>
             </div>
           </div>
-          <div className="max-w-7xl mx-auto px-4 pb-2"><EnvWarningBanner /></div>
+          <div className="w-full px-4 lg:px-6 pb-2"><EnvWarningBanner /></div>
         </header>
-        <main className="flex-1 max-w-7xl w-full mx-auto px-4 py-4">
+        <main className="flex-1 w-full px-4 lg:px-6 py-6">
           {children}
         </main>
 

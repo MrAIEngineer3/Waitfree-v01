@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { doc, getDoc } from 'firebase/firestore';
+import { collection, doc, getDoc, getDocs } from 'firebase/firestore';
 import { httpsCallable } from 'firebase/functions';
 import { toast } from 'sonner';
 
@@ -35,6 +35,18 @@ import {
 
 const OFFLINE_NOTIFICATION_PROMPT =
   'You can request a notification when the doctor is back online.';
+
+const createPlaceholderAvailability = (message = 'Fetching the latest status…'): DoctorAvailabilityPayload => ({
+  status: 'UNAVAILABLE',
+  layer: 'placeholder',
+  reasonCode: 'FETCHING',
+  message,
+  computedAt: new Date().toISOString(),
+  nextAvailableAt: null,
+  activeOverride: null,
+  realTimeStatus: null,
+  debug: { source: 'placeholder' },
+});
 
 type DoctorListEntry = {
   id: string;
@@ -172,6 +184,7 @@ export default function JoinForm() {
   );
 
   const initOnceRef = useRef(false);
+  const isMountedRef = useRef(false);
 
   const getCurrentAvailability = () => {
     if (!doctorId) return null;
@@ -446,7 +459,12 @@ export default function JoinForm() {
   };
 
   useEffect(() => {
-    if (initOnceRef.current) return;
+    isMountedRef.current = true;
+    if (initOnceRef.current) {
+      return () => {
+        isMountedRef.current = false;
+      };
+    }
     initOnceRef.current = true;
 
     try {
@@ -480,10 +498,11 @@ export default function JoinForm() {
         return cleaned || null;
       };
 
-      const coercedClinicId = coerceId(rawClinicId);
-      const coercedDoctorId = coerceId(rawDoctorId);
+  const coercedClinicId = coerceId(rawClinicId);
+  const coercedDoctorId = coerceId(rawDoctorId);
+  const doctorIdWasProvided = Boolean(coercedDoctorId);
 
-      setDoctorIdParamProvided(Boolean(coercedDoctorId));
+  setDoctorIdParamProvided(doctorIdWasProvided);
 
       if (!coercedClinicId) {
         setClinicId(null);
@@ -502,7 +521,7 @@ export default function JoinForm() {
         try {
           const clinicRef = doc(db, 'clinics', coercedClinicId);
           const clinicSnapshot = await getDoc(clinicRef);
-          if (clinicSnapshot.exists()) {
+          if (isMountedRef.current && clinicSnapshot.exists()) {
             setClinicData(clinicSnapshot.data() as { name?: string; address?: string; phone?: string } | null);
           }
         } catch (err) {
@@ -510,10 +529,112 @@ export default function JoinForm() {
         }
       };
 
-      const loadAvailability = async () => {
+      const fetchDoctorProfiles = async () => {
+        if (coercedDoctorId) {
+          // Show a placeholder immediately so the UI does not stay on skeletons.
+          setDoctors([
+            {
+              id: coercedDoctorId,
+              name: coercedDoctorId,
+              specialty: 'Doctor',
+              availability: null,
+            },
+          ]);
+          setDoctorsLoading(false);
+
+          setAvailabilityByDoctor((prev) => {
+            if (prev[coercedDoctorId]) return prev;
+            return {
+              ...prev,
+              [coercedDoctorId]: createPlaceholderAvailability(),
+            };
+          });
+
+          try {
+            const doctorRef = doc(db, 'clinics', coercedClinicId, 'doctors', coercedDoctorId);
+            const doctorSnapshot = await getDoc(doctorRef);
+            if (!isMountedRef.current || !doctorSnapshot.exists()) {
+              return;
+            }
+
+            const data = doctorSnapshot.data() as { name?: string | null; specialty?: string | null } | undefined;
+            setDoctors((prev) =>
+              prev.map((entry) =>
+                entry.id === coercedDoctorId
+                  ? {
+                      ...entry,
+                      name: data?.name ?? entry.name ?? coercedDoctorId,
+                      specialty: data?.specialty ?? entry.specialty ?? 'Doctor',
+                    }
+                  : entry
+              )
+            );
+          } catch (err) {
+            console.error('Error fetching doctor profiles:', err);
+          }
+
+          return;
+        }
+
+        setDoctorsLoading(true);
         try {
-          setDoctorsLoading(true);
-          setAvailabilityError(null);
+          const doctorsRef = collection(db, 'clinics', coercedClinicId, 'doctors');
+          const snapshot = await getDocs(doctorsRef);
+          if (!isMountedRef.current) return;
+
+          const list: DoctorListEntry[] = [];
+          snapshot.forEach((docSnap) => {
+            const data = docSnap.data() as { name?: string; specialty?: string } | undefined;
+            list.push({
+              id: docSnap.id,
+              name: data?.name ?? docSnap.id,
+              specialty: data?.specialty ?? 'General Practice',
+              availability: null,
+            });
+          });
+
+          setDoctors(list);
+          setAvailabilityByDoctor((prev) => {
+            const next = { ...prev };
+            list.forEach((entry) => {
+              if (!next[entry.id]) {
+                next[entry.id] = createPlaceholderAvailability();
+              }
+            });
+            return next;
+          });
+          if (isMountedRef.current && !doctorIdWasProvided && list.length === 1) {
+            setDoctorId(list[0].id);
+          }
+        } catch (err) {
+          console.error('Error fetching doctor profiles:', err);
+          if (isMountedRef.current) {
+            setAvailabilityByDoctor((prev) => {
+              if (coercedDoctorId) {
+                return {
+                  ...prev,
+                  [coercedDoctorId]: prev[coercedDoctorId] ?? createPlaceholderAvailability(
+                    'Unable to load live availability. Please try again.'
+                  ),
+                };
+              }
+              return prev;
+            });
+          }
+        } finally {
+          if (isMountedRef.current) {
+            setDoctorsLoading(false);
+          }
+        }
+      };
+
+      const loadAvailability = async () => {
+        let mergedDoctors: DoctorListEntry[] = [];
+
+        try {
+          if (isMountedRef.current) {
+            setAvailabilityError(null);
+          }
 
           const response = await getClinicDoctorAvailability(
             coercedClinicId,
@@ -522,27 +643,8 @@ export default function JoinForm() {
 
           const entries = response.doctors;
 
-          if (entries.length === 0 && coercedDoctorId) {
-            setDoctors([
-              {
-                id: coercedDoctorId,
-                name: coercedDoctorId,
-                specialty: 'Doctor',
-                availability: null,
-              },
-            ]);
-          } else {
-            const mapped: DoctorListEntry[] = entries.map((entry: ClinicDoctorAvailabilityEntry) => ({
-              id: entry.doctorId,
-              name: entry.profile?.name ?? entry.doctorId,
-              specialty: entry.profile?.specialty ?? 'General Practice',
-              availability: entry.availability,
-            }));
-            setDoctors(mapped);
-
-            if (!coercedDoctorId && mapped.length === 1) {
-              setDoctorId(mapped[0].id);
-            }
+          if (!isMountedRef.current) {
+            return;
           }
 
           if (entries.length > 0) {
@@ -551,58 +653,101 @@ export default function JoinForm() {
               return acc;
             }, {});
             setAvailabilityByDoctor((prev) => ({ ...prev, ...availabilityMap }));
+          } else if (coercedDoctorId) {
+            setAvailabilityByDoctor((prev) => ({
+              ...prev,
+              [coercedDoctorId]: createPlaceholderAvailability('Doctor availability is currently offline.'),
+            }));
+          }
+
+          if (!isMountedRef.current) {
+            return;
+          }
+
+          setDoctors((prev) => {
+            const merged = new Map<string, DoctorListEntry>();
+
+            prev.forEach((docEntry) => {
+              merged.set(docEntry.id, { ...docEntry });
+            });
+
+            entries.forEach((entry: ClinicDoctorAvailabilityEntry) => {
+              const existing = merged.get(entry.doctorId);
+              merged.set(entry.doctorId, {
+                id: entry.doctorId,
+                name: entry.profile?.name ?? existing?.name ?? entry.doctorId,
+                specialty: entry.profile?.specialty ?? existing?.specialty ?? 'General Practice',
+                availability: entry.availability,
+              });
+            });
+
+            if (merged.size === 0 && coercedDoctorId) {
+              merged.set(coercedDoctorId, {
+                id: coercedDoctorId,
+                name: coercedDoctorId,
+                specialty: 'Doctor',
+                availability: null,
+              });
+            }
+
+            mergedDoctors = Array.from(merged.values());
+            return mergedDoctors;
+          });
+
+          if (isMountedRef.current && !doctorIdWasProvided && !coercedDoctorId && mergedDoctors.length === 1) {
+            setDoctorId(mergedDoctors[0].id);
           }
         } catch (err) {
           console.error('Error fetching doctor availability:', err);
-          setAvailabilityError(
-            err instanceof Error ? err.message : 'Failed to load doctor availability.'
-          );
-
-          if (!coercedDoctorId) {
-            try {
-              setDoctorsLoading(true);
-              const { collection, getDocs } = await import('firebase/firestore');
-              const snapshot = await getDocs(collection(db, 'clinics', coercedClinicId, 'doctors'));
-              const fallback: DoctorListEntry[] = [];
-              snapshot.forEach((docSnap) => {
-                const data = docSnap.data() as { name?: string; specialty?: string } | undefined;
-                fallback.push({
-                  id: docSnap.id,
-                  name: data?.name ?? docSnap.id,
-                  specialty: data?.specialty ?? 'General Practice',
-                  availability: null,
-                });
+          if (isMountedRef.current) {
+            setAvailabilityError(
+              err instanceof Error ? err.message : 'Failed to load doctor availability.'
+            );
+            setAvailabilityByDoctor((prev) => {
+              const next = { ...prev };
+              const doctorIds =
+                mergedDoctors.length > 0
+                  ? mergedDoctors.map((entry) => entry.id)
+                  : coercedDoctorId
+                    ? [coercedDoctorId]
+                    : Object.keys(prev);
+              doctorIds.forEach((id) => {
+                if (!next[id]) {
+                  next[id] = createPlaceholderAvailability('Unable to load live availability.');
+                }
               });
-              setDoctors(fallback);
-              if (fallback.length === 1) {
-                setDoctorId(fallback[0].id);
-              }
-            } catch (fallbackErr) {
-              console.error('Fallback doctor fetch failed:', fallbackErr);
-            }
+              return next;
+            });
           }
-        } finally {
-          setDoctorsLoading(false);
         }
       };
 
       const loadSchedulingSettings = async () => {
         try {
           const data = await fetchClinicSchedulingSettings(coercedClinicId);
-          setClinicSchedulingSettings(data);
+          if (isMountedRef.current) {
+            setClinicSchedulingSettings(data);
+          }
         } catch (err) {
           console.error('Error loading clinic scheduling settings:', err);
-          setClinicSchedulingSettings(getDefaultClinicSchedulingSettings());
+          if (isMountedRef.current) {
+            setClinicSchedulingSettings(getDefaultClinicSchedulingSettings());
+          }
         }
       };
 
       fetchClinic();
+      fetchDoctorProfiles();
       loadAvailability();
       loadSchedulingSettings();
     } catch (err) {
       console.error('Error reading search params', err);
       setStatus('invalid');
     }
+
+    return () => {
+      isMountedRef.current = false;
+    };
   }, []);
 
   useEffect(() => {

@@ -54,6 +54,38 @@ body {
   --surface-overlay: #ffffff;
   --surface-line: rgba(0,0,0,0.08);
   --radius: 0.625rem;
+  
+  /* Enhanced Typography Scale */
+  --font-size-display: 3rem; /* 48px */
+  --font-size-h1: 2rem; /* 32px */
+  --font-size-h2: 1.5rem; /* 24px */
+  --font-size-h3: 1.25rem; /* 20px */
+  --font-size-body-lg: 1rem; /* 16px */
+  --font-size-body: 0.875rem; /* 14px */
+  --font-size-sm: 0.75rem; /* 12px */
+  --font-size-xs: 0.625rem; /* 10px */
+  
+  /* Line Heights */
+  --line-height-tight: 1.25;
+  --line-height-normal: 1.5;
+  --line-height-relaxed: 1.75;
+  
+  /* Enhanced Spacing Scale (8px base) */
+  --space-xs: 0.25rem; /* 4px */
+  --space-sm: 0.5rem; /* 8px */
+  --space-md: 1rem; /* 16px */
+  --space-lg: 1.5rem; /* 24px */
+  --space-xl: 2rem; /* 32px */
+  --space-2xl: 3rem; /* 48px */
+  --space-3xl: 4rem; /* 64px */
+  
+  /* Modern Shadow System */
+  --shadow-subtle: 0 1px 2px 0 rgb(0 0 0 / 0.05);
+  --shadow-lift: 0 1px 3px 0 rgb(0 0 0 / 0.1), 0 1px 2px -1px rgb(0 0 0 / 0.1);
+  --shadow-float: 0 4px 6px -1px rgb(0 0 0 / 0.1), 0 2px 4px -2px rgb(0 0 0 / 0.1);
+  --shadow-overlay: 0 10px 15px -3px rgb(0 0 0 / 0.1), 0 4px 6px -4px rgb(0 0 0 / 0.1);
+  --shadow-modal: 0 20px 25px -5px rgb(0 0 0 / 0.1), 0 8px 10px -6px rgb(0 0 0 / 0.1);
+  
   --background: oklch(1 0 0);
   --foreground: oklch(0.141 0.005 285.823);
   --card: oklch(1 0 0);
@@ -252,4 +284,82 @@ body {
   body {
     @apply bg-background text-foreground;
   }
+}
+
+/* Enhanced Typography Utilities */
+.text-display { font-size: var(--font-size-display); line-height: var(--line-height-tight); font-weight: 700; }
+.text-h1 { font-size: var(--font-size-h1); line-height: var(--line-height-tight); font-weight: 700; }
+.text-h2 { font-size: var(--font-size-h2); line-height: var(--line-height-normal); font-weight: 600; }
+.text-h3 { font-size: var(--font-size-h3); line-height: var(--line-height-normal); font-weight: 600; }
+.text-body-lg { font-size: var(--font-size-body-lg); line-height: var(--line-height-normal); }
+.text-body { font-size: var(--font-size-body); line-height: var(--line-height-normal); }
+
+/* Enhanced Shadow Utilities */
+.shadow-subtle { box-shadow: var(--shadow-subtle); }
+.shadow-lift { box-shadow: var(--shadow-lift); }
+.shadow-float { box-shadow: var(--shadow-float); }
+.shadow-overlay { box-shadow: var(--shadow-overlay); }
+.shadow-modal { box-shadow: var(--shadow-modal); }
+
+/* Modern Card Hover Effects */
+.card-hover {
+  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+}
+.card-hover:hover {
+  transform: translateY(-2px);
+  box-shadow: var(--shadow-float);
+}
+
+/* Smooth Transitions */
+.transition-smooth {
+  transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.transition-smooth-slow {
+  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+/* Glass Morphism Effect */
+.glass {
+  backdrop-filter: blur(12px);
+  background-color: rgba(255, 255, 255, 0.8);
+}
+
+.dark .glass {
+  background-color: rgba(0, 0, 0, 0.4);
+}
+
+/* Gradient Text */
+.gradient-text {
+  background: linear-gradient(135deg, rgb(59, 130, 246), rgb(6, 182, 212));
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+}
+
+/* Modern Scrollbar */
+.modern-scrollbar::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+.modern-scrollbar::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.modern-scrollbar::-webkit-scrollbar-thumb {
+  background: rgba(0, 0, 0, 0.2);
+  border-radius: 4px;
+}
+
+.dark .modern-scrollbar::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.2);
+}
+
+.modern-scrollbar::-webkit-scrollbar-thumb:hover {
+  background: rgba(0, 0, 0, 0.3);
+}
+
+.dark .modern-scrollbar::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.3);
 }
