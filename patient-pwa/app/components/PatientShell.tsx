@@ -4,6 +4,7 @@ import { usePathname } from 'next/navigation';
 import React from 'react';
 import SiteFooter from './SiteFooter';
 import Logo from '../../components/Logo';
+import { useJoinScanner } from './JoinScannerProvider';
 
 interface PatientShellProps { children: React.ReactNode; }
 
@@ -14,6 +15,7 @@ const nav = [
 
 export default function PatientShell({ children }: PatientShellProps) {
   const pathname = usePathname();
+  const { openScanner } = useJoinScanner();
   return (
     <div className="min-h-screen flex flex-col relative overflow-x-hidden">
       {/* Decorative gradient mesh overlay with reduced spread to avoid horizontal scroll */}
@@ -31,21 +33,20 @@ export default function PatientShell({ children }: PatientShellProps) {
             </Link>
             <nav className="flex items-center gap-1.5">
               {nav.map(item => {
-                const active = pathname === item.href;
-                
-                // Special handling for "Join Queue" when on home page
-                if (item.label === 'Join Queue' && pathname === '/') {
+                if (item.label === 'Join Queue') {
                   return (
                     <button
                       key={item.href}
-                      onClick={() => window.scrollTo({ top: 0, behavior: 'smooth' })}
-                      className={`px-4 py-2 text-sm font-medium rounded-full transition-colors ${active ? 'text-white bg-gray-900' : 'text-gray-600 hover:text-gray-900 hover:bg-gray-200/50'}`}
+                      type="button"
+                      onClick={openScanner}
+                      className="px-4 py-2 text-sm font-medium rounded-full transition-colors text-gray-600 hover:text-gray-900 hover:bg-gray-200/50 focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-gray-900"
                     >
                       {item.label}
                     </button>
                   );
                 }
-                
+
+                const active = pathname === item.href;
                 return (
                   <Link
                     key={item.href}

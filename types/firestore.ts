@@ -125,4 +125,11 @@ export interface PatientDocument {
   status: PatientStatus;
   joinedAt: Timestamp;
   queueId: string; // Reference to parent queue document
+  cancellation?: {
+    cancelledAt?: Timestamp;
+    cancelledBy?: string | null;
+    rejoinedAt?: Timestamp;
+    rejoinedPatientId?: string | null;
+    rejoinedQueueId?: string | null;
+  };
 }

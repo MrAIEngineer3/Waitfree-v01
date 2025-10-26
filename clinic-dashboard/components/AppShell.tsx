@@ -15,7 +15,7 @@ import { Button } from './ui/Button';
 import { ThemeToggle } from './theme-toggle';
 import { Avatar, AvatarFallback, AvatarImage } from './ui/avatar';
 import { auth, db } from '../lib/firebase';
-import { doc, onSnapshot } from 'firebase/firestore';
+import { doc, onSnapshot, type FirestoreError } from 'firebase/firestore';
 import { Separator } from './ui/separator';
 import Logo from './Logo';
 
@@ -171,26 +171,44 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [doctorPhotoURL, setDoctorPhotoURL] = useState<string | null>(null);
 
-  // Fetch doctor photo
+  // Fetch doctor photo while respecting auth changes to avoid permission errors on sign-out
   useEffect(() => {
-    const user = auth.currentUser;
-    if (!user) return;
+    let unsubscribeDoc: (() => void) | null = null;
 
-    const userDocRef = doc(db, 'users', user.uid);
-    const unsubscribe = onSnapshot(
-      userDocRef,
-      (snapshot) => {
-        if (snapshot.exists()) {
-          const data = snapshot.data();
-          setDoctorPhotoURL(data.photoURL || user.photoURL || null);
-        }
-      },
-      (error) => {
-        console.error('Error fetching user profile:', error);
+    const unsubscribeAuth = auth.onAuthStateChanged((user) => {
+      if (unsubscribeDoc) {
+        unsubscribeDoc();
+        unsubscribeDoc = null;
       }
-    );
 
-    return () => unsubscribe();
+      if (!user) {
+        setDoctorPhotoURL(null);
+        return;
+      }
+
+      const userDocRef = doc(db, 'users', user.uid);
+      unsubscribeDoc = onSnapshot(
+        userDocRef,
+        (snapshot) => {
+          if (snapshot.exists()) {
+            const data = snapshot.data();
+            setDoctorPhotoURL(data.photoURL || user.photoURL || null);
+          }
+        },
+        (error: FirestoreError) => {
+          if (error.code !== 'permission-denied') {
+            console.error('Error fetching user profile:', error);
+          }
+        }
+      );
+    });
+
+    return () => {
+      unsubscribeAuth();
+      if (unsubscribeDoc) {
+        unsubscribeDoc();
+      }
+    };
   }, []);
 
   // Close mobile menu when pathname changes

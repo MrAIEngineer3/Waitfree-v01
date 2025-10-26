@@ -6,7 +6,7 @@ import { cn } from '@/lib/utils';
 import { useClinicContext } from './ClinicContext';
 import { useEffect, useState } from 'react';
 import { auth, db } from '../lib/firebase';
-import { doc, onSnapshot } from 'firebase/firestore';
+import { doc, onSnapshot, type FirestoreError } from 'firebase/firestore';
 import SidebarProfile from './SidebarProfile';
 import Logo from './Logo';
 
@@ -146,29 +146,49 @@ export default function ModernSidebar({ collapsed = false, onToggle }: ModernSid
   const { doctorId, doctorName, clinicName } = useClinicContext();
   const [doctorData, setDoctorData] = useState<{ specialty?: string; photoURL?: string }>({});
 
-  // Fetch doctor profile data (specialty, photo)
+  // Fetch doctor profile data (specialty, photo) while keeping listeners in sync with auth state
   useEffect(() => {
-    const user = auth.currentUser;
-    if (!user) return;
+    let unsubscribeDoc: (() => void) | null = null;
 
-    const userDocRef = doc(db, 'users', user.uid);
-    const unsubscribe = onSnapshot(
-      userDocRef,
-      (snapshot) => {
-        if (snapshot.exists()) {
-          const data = snapshot.data();
-          setDoctorData({
-            specialty: data.specialty,
-            photoURL: data.photoURL || user.photoURL,
-          });
-        }
-      },
-      (error) => {
-        console.error('Error fetching user profile:', error);
+    const unsubscribeAuth = auth.onAuthStateChanged((user) => {
+      if (unsubscribeDoc) {
+        unsubscribeDoc();
+        unsubscribeDoc = null;
       }
-    );
 
-    return () => unsubscribe();
+      if (!user) {
+        setDoctorData({});
+        return;
+      }
+
+      const userDocRef = doc(db, 'users', user.uid);
+      unsubscribeDoc = onSnapshot(
+        userDocRef,
+        (snapshot) => {
+          if (snapshot.exists()) {
+            const data = snapshot.data();
+            setDoctorData({
+              specialty: data.specialty,
+              photoURL: data.photoURL || user.photoURL,
+            });
+          } else {
+            setDoctorData({});
+          }
+        },
+        (error: FirestoreError) => {
+          if (error.code !== 'permission-denied') {
+            console.error('Error fetching user profile:', error);
+          }
+        }
+      );
+    });
+
+    return () => {
+      unsubscribeAuth();
+      if (unsubscribeDoc) {
+        unsubscribeDoc();
+      }
+    };
   }, []);
 
   return (

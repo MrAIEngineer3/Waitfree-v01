@@ -220,6 +220,8 @@ const serializeAvailability = (result: DoctorAvailabilityResult) => {
   };
 };
 
+const hashAccessToken = (token: string) => crypto.createHash('sha256').update(String(token)).digest('hex');
+
 type JoinQueueRequest = {
   clinicId?: string;
   doctorId?: string;
@@ -348,6 +350,36 @@ type UpdateClinicSchedulingSettingsRequest = {
   clinicId?: string;
   manualCheckInRequired?: boolean;
   allowOfflineSignups?: boolean;
+};
+
+type PatientCancelTokenRequest = {
+  clinicId?: string;
+  doctorId?: string;
+  queueId?: string;
+  patientId?: string;
+  token?: string;
+};
+
+type PatientCancelTokenResult = {
+  success: boolean;
+  status: PatientStatus;
+  alreadyCancelled?: boolean;
+  message?: string;
+};
+
+type PatientRejoinQueueRequest = PatientCancelTokenRequest;
+
+type PatientRejoinQueueResult = {
+  success: boolean;
+  status: PatientStatus;
+  message?: string;
+  rejoin?: {
+    clinicId: string;
+    doctorId: string;
+    queueId: string;
+    patientId: string;
+    accessToken: string;
+  };
 };
 
 /** DEBUG: Returns runtime flag visibility and Node version */
@@ -1376,6 +1408,302 @@ const updatePatientStatusHandler = async (data: UpdatePatientStatusRequest, cont
 };
 
 export const updatePatientStatus = createV2Callable(updatePatientStatusHandler);
+
+let updatePatientStatusForCancel: typeof updatePatientStatusHandler = updatePatientStatusHandler;
+
+const patientCancelTokenHandler = async (data: PatientCancelTokenRequest, _context: CallableCtx): Promise<PatientCancelTokenResult> => {
+  const span = startTiming('patientCancelToken', {
+    clinicId: data?.clinicId ?? null,
+    doctorId: data?.doctorId ?? null,
+    queueId: data?.queueId ?? null,
+    patientId: data?.patientId ?? null
+  });
+
+  try {
+    const clinicId = sanitizeFirestoreId(data?.clinicId);
+    const doctorId = sanitizeFirestoreId(data?.doctorId);
+    const queueId = sanitizeFirestoreId(data?.queueId);
+    const patientId = sanitizeFirestoreId(data?.patientId);
+    const token = typeof data?.token === 'string' ? data.token.trim() : '';
+
+    if (!clinicId || !doctorId || !queueId || !patientId || !token) {
+      span.fail({ reason: 'invalid-argument' });
+      throw new functions.https.HttpsError('invalid-argument', 'Missing required fields.');
+    }
+
+    if (token.length < 32 || token.length > 512) {
+      span.fail({ reason: 'invalid-token-length', length: token.length });
+      throw new functions.https.HttpsError('invalid-argument', 'Invalid token.');
+    }
+
+    const db = admin.firestore();
+    const patientRef = db
+      .collection('clinics').doc(clinicId)
+      .collection('doctors').doc(doctorId)
+      .collection('queues').doc(queueId)
+      .collection('patients').doc(patientId);
+
+    const patientSnap = await patientRef.get();
+    if (!patientSnap.exists) {
+      span.fail({ reason: 'not-found' });
+      throw new functions.https.HttpsError('not-found', 'Patient not found.');
+    }
+
+    const patientData = patientSnap.data() as Record<string, any> | undefined;
+    const storedHash = patientData?.accessTokenHash;
+    if (!storedHash) {
+      span.fail({ reason: 'missing-access-token-hash' });
+      throw new functions.https.HttpsError('permission-denied', 'Invalid token.');
+    }
+
+    const incomingHash = hashAccessToken(token);
+    if (incomingHash !== storedHash) {
+      span.fail({ reason: 'token-mismatch' });
+      throw new functions.https.HttpsError('permission-denied', 'Invalid token.');
+    }
+
+    if (typeof patientData?.queueId === 'string' && patientData.queueId !== queueId) {
+      span.fail({ reason: 'queue-mismatch' });
+      throw new functions.https.HttpsError('permission-denied', 'Invalid token.');
+    }
+
+    const currentStatus = (patientData?.status as PatientStatus | undefined) ?? 'waiting';
+
+    if (currentStatus === 'cancelled') {
+      const existingCancellation = (patientData?.cancellation ?? {}) as Record<string, any>;
+      if (!existingCancellation?.cancelledAt) {
+        try {
+          await patientRef.set({
+            cancellation: {
+              ...existingCancellation,
+              cancelledAt: FieldValue.serverTimestamp(),
+              cancelledBy: existingCancellation?.cancelledBy ?? 'patient-self'
+            }
+          }, { merge: true });
+        } catch (patchErr) {
+          functions.logger.warn('Failed to backfill cancellation metadata', patchErr, { clinicId, doctorId, queueId, patientId });
+        }
+      }
+
+      span.succeed({ status: 'already-cancelled' });
+      return {
+        success: true,
+        status: 'cancelled',
+        alreadyCancelled: true,
+        message: 'Token already cancelled.'
+      } satisfies PatientCancelTokenResult;
+    }
+
+    if (currentStatus !== 'waiting') {
+      span.fail({ reason: 'status-not-waiting', status: currentStatus });
+      throw new functions.https.HttpsError('failed-precondition', 'Token cannot be cancelled right now.');
+    }
+
+    const syntheticContext = {
+      auth: { uid: `patient-self:${patientId}` } as any
+    } as CallableCtx;
+
+  await updatePatientStatusForCancel({ clinicId, doctorId, queueId, patientId, newStatus: 'cancelled' }, syntheticContext);
+
+    const existingCancellation = (patientData?.cancellation ?? {}) as Record<string, any>;
+    const cancellationPatch: Record<string, unknown> = {
+      cancellation: {
+        ...existingCancellation,
+        cancelledBy: 'patient-self'
+      }
+    };
+    if (!existingCancellation?.cancelledAt) {
+      (cancellationPatch.cancellation as Record<string, unknown>).cancelledAt = FieldValue.serverTimestamp();
+    }
+
+    try {
+      await patientRef.set(cancellationPatch, { merge: true });
+    } catch (patchErr) {
+      functions.logger.warn('Failed to record cancellation metadata', patchErr, { clinicId, doctorId, queueId, patientId });
+    }
+
+    span.succeed({ status: 'cancelled' });
+    return {
+      success: true,
+      status: 'cancelled',
+      message: 'Token cancelled.'
+    } satisfies PatientCancelTokenResult;
+  } catch (error) {
+    functions.logger.error('patientCancelToken failed', error, {
+      clinicId: data?.clinicId ?? null,
+      doctorId: data?.doctorId ?? null,
+      queueId: data?.queueId ?? null,
+      patientId: data?.patientId ?? null
+    });
+    span.fail({ error: error instanceof Error ? error.message : String(error) });
+
+    if (error instanceof functions.https.HttpsError) {
+      throw error;
+    }
+
+    throw new functions.https.HttpsError('internal', 'Failed to cancel token.');
+  }
+};
+
+export const patientCancelToken = createV2Callable(patientCancelTokenHandler);
+
+const patientRejoinQueueHandler = async (data: PatientRejoinQueueRequest, _context: CallableCtx): Promise<PatientRejoinQueueResult> => {
+  const span = startTiming('patientRejoinQueue', {
+    clinicId: data?.clinicId ?? null,
+    doctorId: data?.doctorId ?? null,
+    queueId: data?.queueId ?? null,
+    patientId: data?.patientId ?? null
+  });
+
+  try {
+    const clinicId = sanitizeFirestoreId(data?.clinicId);
+    const doctorId = sanitizeFirestoreId(data?.doctorId);
+    const queueId = sanitizeFirestoreId(data?.queueId);
+    const patientId = sanitizeFirestoreId(data?.patientId);
+    const token = typeof data?.token === 'string' ? data.token.trim() : '';
+
+    if (!clinicId || !doctorId || !queueId || !patientId || !token) {
+      span.fail({ reason: 'invalid-argument' });
+      throw new functions.https.HttpsError('invalid-argument', 'Missing required fields.');
+    }
+
+    const db = admin.firestore();
+    const patientRef = db
+      .collection('clinics').doc(clinicId)
+      .collection('doctors').doc(doctorId)
+      .collection('queues').doc(queueId)
+      .collection('patients').doc(patientId);
+
+    const patientSnap = await patientRef.get();
+    if (!patientSnap.exists) {
+      span.fail({ reason: 'not-found' });
+      throw new functions.https.HttpsError('not-found', 'Patient not found.');
+    }
+
+    const patientData = patientSnap.data() as Record<string, any> | undefined;
+    const storedHash = patientData?.accessTokenHash;
+    if (!storedHash) {
+      span.fail({ reason: 'missing-access-token-hash' });
+      throw new functions.https.HttpsError('permission-denied', 'Invalid token.');
+    }
+
+    const incomingHash = hashAccessToken(token);
+    if (incomingHash !== storedHash) {
+      span.fail({ reason: 'token-mismatch' });
+      throw new functions.https.HttpsError('permission-denied', 'Invalid token.');
+    }
+
+    if (typeof patientData?.queueId === 'string' && patientData.queueId !== queueId) {
+      span.fail({ reason: 'queue-mismatch' });
+      throw new functions.https.HttpsError('permission-denied', 'Invalid token.');
+    }
+
+    const currentStatus = (patientData?.status as PatientStatus | undefined) ?? 'waiting';
+
+    if (currentStatus === 'waiting') {
+      span.succeed({ status: 'already-waiting' });
+      return {
+        success: true,
+        status: 'waiting',
+        message: 'You are already in the queue.'
+      } satisfies PatientRejoinQueueResult;
+    }
+
+    if (currentStatus !== 'cancelled') {
+      span.fail({ reason: 'status-not-cancelled', status: currentStatus });
+      throw new functions.https.HttpsError('failed-precondition', 'Token cannot be rejoined right now.');
+    }
+
+    const name = typeof patientData?.name === 'string' ? patientData.name.trim() : '';
+    if (!name) {
+      span.fail({ reason: 'missing-name' });
+      throw new functions.https.HttpsError('failed-precondition', 'Patient information is incomplete. Please join again from the clinic link.');
+    }
+
+    const ageRaw = patientData?.age;
+    const ageNumber = typeof ageRaw === 'number' ? ageRaw : Number(ageRaw);
+    if (!Number.isFinite(ageNumber) || ageNumber <= 0 || ageNumber > 200) {
+      span.fail({ reason: 'invalid-age', provided: ageRaw });
+      throw new functions.https.HttpsError('failed-precondition', 'Patient information is incomplete. Please join again from the clinic link.');
+    }
+
+    const phoneRaw = typeof patientData?.phone === 'string' ? patientData.phone : '';
+    const normalizedPhone = phoneRaw.replace(/\D+/g, '');
+    if (normalizedPhone.length !== 10) {
+      span.fail({ reason: 'invalid-phone' });
+      throw new functions.https.HttpsError('failed-precondition', 'Patient information is incomplete. Please join again from the clinic link.');
+    }
+
+    const joinResult = await joinQueueHandler({
+      clinicId,
+      doctorId,
+      patientData: {
+        name,
+        age: ageNumber,
+        phone: normalizedPhone
+      }
+    }, {} as CallableCtx);
+
+    const existingCancellation = (patientData?.cancellation ?? {}) as Record<string, any>;
+    const cancellationPatch: Record<string, unknown> = {
+      cancellation: {
+        ...existingCancellation,
+        rejoinedAt: FieldValue.serverTimestamp(),
+        rejoinedPatientId: joinResult.patientId,
+        rejoinedQueueId: joinResult.queueId
+      }
+    };
+    if (!existingCancellation?.cancelledAt) {
+      (cancellationPatch.cancellation as Record<string, unknown>).cancelledAt = FieldValue.serverTimestamp();
+    }
+
+    try {
+      await patientRef.set(cancellationPatch, { merge: true });
+    } catch (patchErr) {
+      functions.logger.warn('Failed to record rejoin metadata', patchErr, { clinicId, doctorId, queueId, patientId });
+    }
+
+    span.succeed({ status: 'waiting', queueId: joinResult.queueId, patientId: joinResult.patientId });
+    return {
+      success: true,
+      status: 'waiting',
+      message: 'Rejoined queue.',
+      rejoin: {
+        clinicId: joinResult.clinicId,
+        doctorId: joinResult.doctorId,
+        queueId: joinResult.queueId,
+        patientId: joinResult.patientId,
+        accessToken: joinResult.accessToken ?? ''
+      }
+    } satisfies PatientRejoinQueueResult;
+  } catch (error) {
+    functions.logger.error('patientRejoinQueue failed', error, {
+      clinicId: data?.clinicId ?? null,
+      doctorId: data?.doctorId ?? null,
+      queueId: data?.queueId ?? null,
+      patientId: data?.patientId ?? null
+    });
+    span.fail({ error: error instanceof Error ? error.message : String(error) });
+
+    if (error instanceof functions.https.HttpsError) {
+      throw error;
+    }
+
+    throw new functions.https.HttpsError('internal', 'Failed to rejoin queue.');
+  }
+};
+
+export const patientRejoinQueue = createV2Callable(patientRejoinQueueHandler);
+
+export const __test__ = {
+  patientCancelTokenHandler,
+  setUpdatePatientStatusForCancel(delegate: typeof updatePatientStatusHandler) {
+    updatePatientStatusForCancel = delegate;
+  },
+  resetDelegates() {
+    updatePatientStatusForCancel = updatePatientStatusHandler;
+  }
+};
 
 const createStatusUpdateHandler = (targetStatus: PatientStatus) =>
   async (data: UpdatePatientStatusRequest, context: CallableCtx) => {

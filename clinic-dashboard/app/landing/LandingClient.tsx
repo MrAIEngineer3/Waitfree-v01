@@ -8,6 +8,7 @@ import { Button } from '../../components/ui/Button';
 import { Card, CardContent } from '../../components/ui/Card';
 import { auth, db } from '../../lib/firebase';
 import Logo from '../../components/Logo';
+import { BentoCard, BentoGrid } from '../../components/ui/bento-grid';
 
 export default function LandingClient() {
   const router = useRouter();
@@ -392,21 +393,22 @@ export default function LandingClient() {
           </div>
 
                     <div className="grid md:grid-cols-2 gap-6 sm:gap-8 max-w-6xl mx-auto">
-                      <Card className="border-2 border-red-100 hover:border-red-200/60 hover:shadow-md hover:-translate-y-0.5 transition-all duration-[800ms] ease-out">
-                        <CardContent className="p-6">
-                          <div className="flex items-center gap-3 mb-6">
-                            <div className="w-10 h-10 sm:w-12 sm:h-12 rounded-full bg-red-100 flex items-center justify-center text-red-600">
-                              <svg className="w-5 h-5 sm:w-6 sm:h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                      <Card className="border border-gray-200/60 bg-white/80 backdrop-blur-sm hover:border-red-200 hover:shadow-sm transition-all duration-300">
+                        <CardContent className="p-8">
+                          <div className="flex items-center gap-3 mb-8">
+                            <div className="w-12 h-12 rounded-2xl bg-red-50 flex items-center justify-center">
+                              <svg className="w-5 h-5 text-red-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                                 <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
                               </svg>
                             </div>
-                            <h3 className="text-lg sm:text-xl font-bold text-gray-900">Common Pain Points</h3>
+                            <h3 className="text-xl font-semibold text-gray-900">Common Pain Points</h3>
                           </div>
-                          <ul className="space-y-4">
+                          <ul className="space-y-5">
                             {['Anxious patients waiting with no updates', 'Staff overwhelmed with constant inquiries', 'No visibility into queue bottlenecks', 'Paper-based systems prone to errors', 'Difficulty coordinating across providers'].map((problem) => (
-                              <li key={problem} className="flex gap-3 text-sm sm:text-base text-gray-700">
-                                <svg className="w-5 h-5 text-red-500 shrink-0 mt-0.5" fill="currentColor" viewBox="0 0 20 20">
-                                  <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.707 7.293a1 1 0 00-1.414 1.414L8.586 10l-1.293 1.293a1 1 0 101.414 1.414L10 11.414l1.293 1.293a1 1 0 001.414-1.414L11.414 10l1.293-1.293a1 1 0 00-1.414-1.414L10 8.586 8.707 7.293z" clipRule="evenodd" />
+                              <li key={problem} className="flex gap-3 text-[15px] text-gray-600 leading-relaxed">
+                                <svg className="w-5 h-5 text-red-400 shrink-0 mt-0.5" fill="currentColor" viewBox="0 0 20 20">
+                                  <circle cx="10" cy="10" r="8" />
+                                  <path fill="white" d="M6 10h8" stroke="white" strokeWidth="1.5" strokeLinecap="round" />
                                 </svg>
                                 <span>{problem}</span>
                               </li>
@@ -414,21 +416,22 @@ export default function LandingClient() {
                           </ul>
                         </CardContent>
                       </Card>
-            <Card className="border-2 border-green-100 bg-gradient-to-br from-green-50/50 to-cyan-50/50 hover:border-green-200/60 hover:shadow-md hover:-translate-y-0.5 transition-all duration-[800ms] ease-out">
-              <CardContent className="p-6">
-                <div className="flex items-center gap-3 mb-6">
-                  <div className="w-10 h-10 sm:w-12 sm:h-12 rounded-full bg-green-100 flex items-center justify-center text-green-600">
-                    <svg className="w-5 h-5 sm:w-6 sm:h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+            <Card className="border border-gray-200/60 bg-gradient-to-br from-emerald-50/40 to-cyan-50/40 backdrop-blur-sm hover:border-emerald-200 hover:shadow-sm transition-all duration-300">
+              <CardContent className="p-8">
+                <div className="flex items-center gap-3 mb-8">
+                  <div className="w-12 h-12 rounded-2xl bg-emerald-100 flex items-center justify-center">
+                    <svg className="w-5 h-5 text-emerald-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
                       <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
                     </svg>
                   </div>
-                  <h3 className="text-lg sm:text-xl font-bold text-gray-900">Waitfree Solutions</h3>
+                  <h3 className="text-xl font-semibold text-gray-900">Waitfree Solutions</h3>
                 </div>
-                <ul className="space-y-4">
+                <ul className="space-y-5">
                   {['Real-time status updates keep patients informed', 'Automated notifications reduce staff burden', 'Live analytics identify and resolve delays', 'Digital-first system eliminates manual errors', 'Unified dashboard syncs entire team'].map((solution) => (
-                    <li key={solution} className="flex gap-3 text-sm sm:text-base text-gray-700">
-                      <svg className="w-5 h-5 text-green-600 shrink-0 mt-0.5" fill="currentColor" viewBox="0 0 20 20">
-                        <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd" />
+                    <li key={solution} className="flex gap-3 text-[15px] text-gray-600 leading-relaxed">
+                      <svg className="w-5 h-5 text-emerald-500 shrink-0 mt-0.5" fill="currentColor" viewBox="0 0 20 20">
+                        <circle cx="10" cy="10" r="8" />
+                        <path fill="white" d="M7 10l2 2 4-4" stroke="white" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
                       </svg>
                       <span>{solution}</span>
                     </li>
@@ -442,60 +445,187 @@ export default function LandingClient() {
         {/* Bento Grid Features */}
         <section id="features" data-animate-section className="mt-24 sm:mt-32">
           <div className={`text-center mb-12 sm:mb-16 transition-all duration-700 ${visibleSections.has('features') ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-12'}`}>
-            <h2 className="text-2xl sm:text-3xl md:text-4xl font-bold tracking-tight text-gray-900">Everything you need</h2>
-            <p className="mt-4 text-base sm:text-lg text-gray-600 max-w-2xl mx-auto">Powerful features designed to transform your clinic operations</p>
+            <h2 className="text-2xl sm:text-3xl md:text-4xl font-bold tracking-tight text-gray-900">Built for modern clinics</h2>
+            <p className="mt-4 text-base sm:text-lg text-gray-600 max-w-2xl mx-auto">Essential features that make patient flow management effortless</p>
           </div>
           
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 sm:gap-6">
-            <Card 
-              className={`sm:col-span-2 lg:col-span-2 h-full flex flex-col hover:shadow-lg hover:-translate-y-0.5 hover:scale-[1.005] transition-all duration-[900ms] ease-out group border border-transparent hover:border-white/40 bg-gradient-to-br from-blue-50/50 to-cyan-50/50 ${visibleSections.has('features') ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-12'}`}
-              style={{ transitionDelay: visibleSections.has('features') ? '100ms' : '0ms' }}
-            >
-              <CardContent className="p-6">
-                <div className="flex items-start gap-4 mb-6">
-                  <div className="w-14 h-14 sm:w-16 sm:h-16 rounded-2xl bg-gradient-to-br from-yellow-500 to-orange-500 flex items-center justify-center text-white group-hover:scale-[1.03] group-hover:rotate-1 transition-all duration-700 ease-out shadow-xl">
-                    <svg className="w-7 h-7 sm:w-8 sm:h-8" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                      <path strokeLinecap="round" strokeLinejoin="round" d="M13 10V3L4 14h7v7l9-11h-7z" />
-                    </svg>
-                  </div>
-                  <div className="flex-1">
-                    <h3 className="text-xl sm:text-2xl font-bold text-gray-900 mb-3">Real-time Updates</h3>
-                    <p className="text-sm sm:text-base text-gray-600 leading-relaxed">Lightning-fast synchronization keeps your entire team aligned. See changes as they happen with zero lag.</p>
-                  </div>
-                </div>
-                <div className="mt-auto pt-6 border-t border-gray-200/50">
-                  <div className="flex items-center gap-2 text-xs sm:text-sm text-gray-500">
-                    <div className="flex-1 h-2 bg-gradient-to-r from-yellow-200 to-orange-200 rounded-full overflow-hidden">
-                      <div className="h-full w-3/4 bg-gradient-to-r from-yellow-500 to-orange-500 animate-[shimmer_2s_ease-in-out_infinite]" />
+          <BentoGrid className={`${visibleSections.has('features') ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-12'}`}>
+            <BentoCard
+              name="Instant Queue Sync"
+              className="col-span-3 lg:col-span-2"
+              background={
+                <div className="absolute inset-0 flex items-center justify-center p-4 sm:p-8">
+                  <div className="relative w-full h-full">
+                    {/* Large grid covering more space */}
+                    <div className="grid grid-cols-3 sm:grid-cols-4 gap-2 sm:gap-4 opacity-70">
+                      {[...Array(12)].map((_, i) => (
+                        <div
+                          key={i}
+                          className="h-12 sm:h-20 rounded-lg bg-gray-950/[.01] border border-gray-950/[.1] hover:bg-gray-950/[.05] dark:bg-gray-50/[.10] dark:border-gray-50/[.1] dark:hover:bg-gray-50/[.15] shadow-sm animate-pulse backdrop-blur-sm"
+                          style={{ animationDelay: `${i * 0.15}s` }}
+                        />
+                      ))}
                     </div>
-                    <span>Live sync</span>
+                    {/* Sync waves overlay */}
+                    <div className="absolute inset-0 flex items-center justify-center">
+                      <div className="relative">
+                        {[1, 2, 3].map((i) => (
+                          <div
+                            key={i}
+                            className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-20 sm:w-32 h-20 sm:h-32 rounded-full border-2 border-emerald-500/30 animate-ping"
+                            style={{ 
+                              animationDelay: `${i * 0.5}s`,
+                              animationDuration: '2s',
+                              scale: i * 0.5
+                            }}
+                          />
+                        ))}
+                        <div className="relative w-12 sm:w-16 h-12 sm:h-16 rounded-full bg-emerald-500/20 border-2 border-emerald-500 flex items-center justify-center">
+                          <svg className="w-6 sm:w-8 h-6 sm:h-8 text-emerald-600 dark:text-emerald-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                            <path strokeLinecap="round" strokeLinejoin="round" d="M13 10V3L4 14h7v7l9-11h-7z" />
+                          </svg>
+                        </div>
+                      </div>
+                    </div>
+                    {/* Live sync indicator - hidden on mobile to prevent overlap */}
+                    <div className="hidden sm:flex absolute bottom-6 right-6 items-center gap-2 text-sm font-medium text-gray-600 dark:text-gray-400 bg-white/80 dark:bg-gray-800/80 px-3 py-1.5 rounded-full backdrop-blur-sm">
+                      <div className="w-2 h-2 rounded-full bg-emerald-500 animate-ping" />
+                      <span>Live Sync Active</span>
+                    </div>
                   </div>
                 </div>
-              </CardContent>
-            </Card>
-
-            {[
-              { icon: (<svg className="w-6 h-6 sm:w-7 sm:h-7" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" /></svg>), gradient: 'from-blue-500 to-cyan-500', title: 'Smart Analytics', body: 'Track key metrics and identify bottlenecks with actionable insights.', span: 'sm:col-span-1' },
-              { icon: (<svg className="w-6 h-6 sm:w-7 sm:h-7" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M14.828 14.828a4 4 0 01-5.656 0M9 10h.01M15 10h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>), gradient: 'from-pink-500 to-rose-500', title: 'Better Experience', body: 'Keep patients informed with transparent wait times and clear updates.', span: 'sm:col-span-1' },
-              { icon: (<svg className="w-6 h-6 sm:w-7 sm:h-7" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" /></svg>), gradient: 'from-green-500 to-emerald-500', title: 'Secure & Private', body: 'Built with privacy-first design and enterprise-grade security.', span: 'sm:col-span-1' },
-              { icon: (<svg className="w-6 h-6 sm:w-7 sm:h-7" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M8 9l3 3-3 3m5 0h3M5 20h14a2 2 0 002-2V6a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" /></svg>), gradient: 'from-purple-500 to-indigo-500', title: 'Easy Integration', body: 'Connect with your existing systems through our flexible API.', span: 'sm:col-span-1 lg:col-span-2' },
-              { icon: (<svg className="w-6 h-6 sm:w-7 sm:h-7" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M13 7h8m0 0v8m0-8l-8 8-4-4-6 6" /></svg>), gradient: 'from-teal-500 to-cyan-500', title: 'Scales with You', body: 'From single clinics to multi-location practices, we grow with you.', span: 'sm:col-span-1' }
-            ].map((card, i) => (
-              <Card 
-                key={card.title} 
-                className={`${card.span} h-full min-h-[200px] sm:min-h-[220px] flex flex-col hover:shadow-md hover:-translate-y-0.5 hover:scale-[1.005] transition-all duration-[900ms] ease-out group border border-transparent hover:border-white/40 ${visibleSections.has('features') ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-12'}`}
-                style={{ transitionDelay: visibleSections.has('features') ? `${200 + i * 100}ms` : '0ms' }}
-              >
-                <CardContent className="p-4">
-                  <div className={`w-12 h-12 sm:w-14 sm:h-14 rounded-xl bg-gradient-to-br ${card.gradient} flex items-center justify-center text-white mb-4 group-hover:scale-[1.03] group-hover:rotate-2 transition-all duration-700 ease-out shadow-lg`}>
-                    {card.icon}
+              }
+              Icon={() => (
+                <div className="w-12 h-12 rounded-2xl bg-gradient-to-br from-amber-500/20 to-orange-500/20 flex items-center justify-center text-amber-600 dark:text-amber-400">
+                  <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M13 10V3L4 14h7v7l9-11h-7z" />
+                  </svg>
+                </div>
+              )}
+              description="Every status change updates across all devices instantly. Your team always sees the same real-time view."
+            />
+            <BentoCard
+              name="WhatsApp Alerts"
+              className="col-span-3 lg:col-span-1"
+              background={
+                <div className="absolute inset-0 flex items-center justify-center">
+                  <div className="relative space-y-3 scale-75 [mask-image:linear-gradient(to_bottom,transparent_0%,#000_30%,#000_70%,transparent_100%)]">
+                    {[1, 2, 3].map((i) => (
+                      <div
+                        key={i}
+                        className="flex items-center gap-2 bg-gray-950/[.01] border border-gray-950/[.1] hover:bg-gray-950/[.05] dark:bg-gray-50/[.10] dark:border-gray-50/[.1] dark:hover:bg-gray-50/[.15] rounded-lg p-4 shadow-sm animate-[slideIn_0.5s_ease-out]"
+                        style={{ animationDelay: `${i * 0.3}s`, animationFillMode: 'backwards' }}
+                      >
+                        <div className="w-8 h-8 rounded-full bg-emerald-500/20 flex items-center justify-center">
+                          <svg className="w-4 h-4 text-emerald-600 dark:text-emerald-400" fill="currentColor" viewBox="0 0 24 24">
+                            <path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51-.173-.008-.371-.01-.57-.01-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347m-5.421 7.403h-.004a9.87 9.87 0 01-5.031-1.378l-.361-.214-3.741.982.998-3.648-.235-.374a9.86 9.86 0 01-1.51-5.26c.001-5.45 4.436-9.884 9.888-9.884 2.64 0 5.122 1.03 6.988 2.898a9.825 9.825 0 012.893 6.994c-.003 5.45-4.437 9.884-9.885 9.884m8.413-18.297A11.815 11.815 0 0012.05 0C5.495 0 .16 5.335.157 11.892c0 2.096.547 4.142 1.588 5.945L.057 24l6.305-1.654a11.882 11.882 0 005.683 1.448h.005c6.554 0 11.89-5.335 11.893-11.893a11.821 11.821 0 00-3.48-8.413Z"/>
+                          </svg>
+                        </div>
+                        <div className="flex-1 h-2 bg-gray-950/[.05] dark:bg-gray-50/[.10] rounded" />
+                      </div>
+                    ))}
                   </div>
-                  <h3 className="text-base sm:text-lg font-semibold text-gray-800 mb-2">{card.title}</h3>
-                  <p className="text-sm text-gray-600 leading-relaxed flex-1">{card.body}</p>
-                </CardContent>
-              </Card>
-            ))}
-          </div>
+                </div>
+              }
+              Icon={() => (
+                <div className="w-12 h-12 rounded-2xl bg-gradient-to-br from-emerald-500/20 to-green-500/20 flex items-center justify-center text-emerald-600 dark:text-emerald-400">
+                  <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M8 10h.01M12 10h.01M16 10h.01M9 16H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-5l-5 5v-5z" />
+                  </svg>
+                </div>
+              )}
+              description="Patients get notified automatically when they join the queue and when it's their turn."
+            />
+            <BentoCard
+              name="Token System"
+              className="col-span-3 lg:col-span-1"
+              background={
+                <div className="absolute inset-0 flex items-center justify-center">
+                  <div className="relative grid grid-cols-2 gap-2 scale-75 [mask-image:linear-gradient(to_bottom,transparent_10%,#000_40%,#000_60%,transparent_90%)]">
+                    {[1, 2, 3, 4, 5, 6].map((i) => (
+                      <div
+                        key={i}
+                        className="w-16 h-16 rounded-xl bg-gray-950/[.01] border-2 border-gray-950/[.1] hover:bg-gray-950/[.05] dark:bg-gray-50/[.10] dark:border-gray-50/[.1] dark:hover:bg-gray-50/[.15] flex items-center justify-center font-bold text-xl text-gray-700 dark:text-gray-300 shadow-sm animate-[fadeIn_0.5s_ease-out]"
+                        style={{ animationDelay: `${i * 0.15}s`, animationFillMode: 'backwards' }}
+                      >
+                        {i}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              }
+              Icon={() => (
+                <div className="w-12 h-12 rounded-2xl bg-gradient-to-br from-blue-500/20 to-cyan-500/20 flex items-center justify-center text-blue-600 dark:text-blue-400">
+                  <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M7 20l4-16m2 16l4-16M6 9h14M4 15h14" />
+                  </svg>
+                </div>
+              )}
+              description="Simple numbered tokens keep the queue organized and easy to follow for staff and patients."
+            />
+            <BentoCard
+              name="Multi-Status Tracking"
+              className="col-span-3 lg:col-span-1"
+              background={
+                <div className="absolute inset-0 flex items-center justify-center">
+                  <div className="relative space-y-2 scale-75 [mask-image:linear-gradient(to_bottom,transparent_10%,#000_30%,#000_70%,transparent_90%)]">
+                    {[
+                      { label: 'Waiting', color: 'bg-amber-500', count: 3 },
+                      { label: 'In Progress', color: 'bg-blue-500', count: 1 },
+                      { label: 'Completed', color: 'bg-green-500', count: 5 },
+                    ].map((status, i) => (
+                      <div
+                        key={i}
+                        className="flex items-center gap-3 bg-gray-950/[.01] border border-gray-950/[.1] hover:bg-gray-950/[.05] dark:bg-gray-50/[.10] dark:border-gray-50/[.1] dark:hover:bg-gray-50/[.15] rounded-lg px-3 py-2.5 shadow-sm animate-[slideInRight_0.5s_ease-out]"
+                        style={{ animationDelay: `${i * 0.2}s`, animationFillMode: 'backwards' }}
+                      >
+                        <div className={`w-3 h-3 rounded-full ${status.color}`} />
+                        <span className="text-xs font-medium text-gray-700 dark:text-gray-300 flex-1">{status.label}</span>
+                        <span className="text-xs font-bold text-gray-900 dark:text-gray-100">{status.count}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              }
+              Icon={() => (
+                <div className="w-12 h-12 rounded-2xl bg-gradient-to-br from-violet-500/20 to-purple-500/20 flex items-center justify-center text-violet-600 dark:text-violet-400">
+                  <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4" />
+                  </svg>
+                </div>
+              )}
+              description="Track patients through waiting, in-progress, completed, and cancelled states effortlessly."
+            />
+            <BentoCard
+              name="Multi-Doctor Support"
+              className="col-span-3 lg:col-span-1"
+              background={
+                <div className="absolute inset-0 flex items-center justify-center">
+                  <div className="relative flex gap-2 scale-75 [mask-image:linear-gradient(to_bottom,transparent_20%,#000_40%,#000_60%,transparent_80%)]">
+                    {[1, 2, 3].map((i) => (
+                      <div
+                        key={i}
+                        className="flex flex-col items-center gap-2 bg-gray-950/[.01] border border-gray-950/[.1] hover:bg-gray-950/[.05] dark:bg-gray-50/[.10] dark:border-gray-50/[.1] dark:hover:bg-gray-50/[.15] rounded-lg p-4 shadow-sm animate-[fadeInUp_0.5s_ease-out]"
+                        style={{ animationDelay: `${i * 0.2}s`, animationFillMode: 'backwards' }}
+                      >
+                        <div className="w-12 h-12 rounded-full bg-gradient-to-br from-blue-500/30 to-purple-500/30" />
+                        <div className="w-16 h-2 bg-gray-950/[.05] dark:bg-gray-50/[.10] rounded" />
+                        <div className="w-12 h-1.5 bg-gray-950/[.05] dark:bg-gray-50/[.10] rounded" />
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              }
+              Icon={() => (
+                <div className="w-12 h-12 rounded-2xl bg-gradient-to-br from-indigo-500/20 to-blue-500/20 flex items-center justify-center text-indigo-600 dark:text-indigo-400">
+                  <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z" />
+                  </svg>
+                </div>
+              )}
+              description="Manage separate queues for multiple doctors in one clinic seamlessly."
+            />
+          </BentoGrid>
         </section>
 
         {/* How it works */}
@@ -546,103 +676,37 @@ export default function LandingClient() {
       </main>
 
       {/* Footer */}
-      <footer className={`relative mt-auto overflow-hidden bg-gradient-to-b from-white/90 to-slate-50/90 backdrop-blur-xl border-t border-white/60 shadow-[0_-20px_60px_-40px_rgba(15,23,42,0.45)] transition-all duration-700 ${mounted ? 'opacity-100' : 'opacity-0'}`} style={{ transitionDelay: '1700ms' }}>
-        <div className="absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-brand-200 to-transparent" aria-hidden="true" />
-
-        <div className="max-w-7xl mx-auto px-4 sm:px-5 py-12 sm:py-16">
-          <div className="relative overflow-hidden rounded-2xl border border-white/40 bg-white/90 shadow-lg p-6 sm:p-8 lg:p-10 flex flex-col lg:flex-row lg:items-center gap-6 lg:gap-10 mb-12">
-            <div className="absolute inset-0 -z-10 bg-gradient-to-r from-brand-100/70 via-cyan-100/50 to-sky-100/60 opacity-90" aria-hidden="true" />
-            <div className="flex-1">
-              <div className="inline-flex items-center gap-2 rounded-full border border-white/60 bg-white/80 px-3 py-1 text-xs font-medium text-brand-700 shadow-sm mb-4">Stay in the loop</div>
-              <h3 className="text-xl sm:text-2xl font-semibold text-gray-900">Monthly product drops, beta invites, and workflow tips.</h3>
-              <p className="mt-2 text-sm sm:text-base text-gray-600 max-w-xl">We only send the essentials. Unsubscribe in a click.</p>
-            </div>
-            <form className="w-full max-w-md flex flex-col sm:flex-row gap-3" onSubmit={(event) => event.preventDefault()}>
-              <label htmlFor="footer-email" className="sr-only">Email address</label>
-              <input
-                id="footer-email"
-                type="email"
-                placeholder="you@clinic.com"
-                className="flex-1 rounded-xl border border-brand-200 bg-white/90 px-4 py-3 sm:py-2.5 lg:h-10 lg:py-0 text-sm text-gray-700 placeholder:text-gray-400 shadow-inner focus:border-brand-400 focus:ring-2 focus:ring-brand-200 sm:max-w-[260px] lg:max-w-[240px]"
-                required
-              />
-              <Button type="submit" size="lg" className="w-full sm:w-auto justify-center sm:h-11 lg:h-10">Notify me</Button>
-            </form>
-            <div className="hidden lg:flex items-center gap-3 text-left">
-              <svg className="w-10 h-10 text-emerald-500" viewBox="0 0 48 48" aria-hidden="true" fill="none" stroke="currentColor" strokeWidth={1.5}>
-                <circle cx="24" cy="24" r="18" opacity="0.2" fill="currentColor" />
-                <path d="M17 24l5 5 9-11" strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.4} />
-              </svg>
-              <div className="text-sm text-gray-600">
-                <span className="font-semibold text-gray-900">Trusted by 120+ clinics</span>
-                <br />Zero-commitment opt-out anytime.
-              </div>
-            </div>
-          </div>
-
-          <div className="grid gap-10 lg:grid-cols-4 text-sm text-gray-600">
-            <div className="space-y-4">
-              <Logo className="text-gray-900" textClassName="text-base" />
-              <p className="leading-relaxed text-gray-600">Waitlist orchestration for high-performing healthcare teams. Measure, iterate, and deliver calmer patient journeys.</p>
-              <div className="flex gap-3">
-                {socialLinks.map((item) => (
-                  <a key={item.label} href={item.href} target="_blank" rel="noopener noreferrer" className="flex h-10 w-10 items-center justify-center rounded-full border border-white/60 bg-white/70 text-gray-500 shadow-sm transition-all duration-200 hover:-translate-y-0.5 hover:text-brand-600 hover:shadow-md focus:outline-none focus:ring-2 focus:ring-brand-300">
-                    <span className="sr-only">{item.label}</span>
-                    {item.icon}
-                  </a>
-                ))}
-              </div>
-            </div>
-
-            {footerNav.map((group) => (
-              <div key={group.title} className="space-y-4">
-                <h4 className="text-sm font-semibold uppercase tracking-wide text-gray-900">{group.title}</h4>
-                <ul className="space-y-2">
-                  {group.links.map((link) => (
-                    <li key={link.label}>
-                      <a href={link.href} className="inline-flex items-center gap-2 text-gray-600 transition-colors duration-200 hover:text-brand-600 focus:outline-none focus:ring-2 focus:ring-brand-300 rounded">
-                        <span className="h-1.5 w-1.5 rounded-full bg-gradient-to-r from-brand-400 to-cyan-400" aria-hidden="true" />
-                        {link.label}
-                      </a>
-                    </li>
-                  ))}
-                </ul>
-              </div>
-            ))}
-
-            <div className="space-y-4">
-              <h4 className="text-sm font-semibold uppercase tracking-wide text-gray-900">Need a demo?</h4>
-              <p className="leading-relaxed text-gray-600">Book a walkthrough with our onboarding specialists to see Waitfree in action.</p>
-              <div className="space-y-2 text-gray-600">
+      <footer className={`mt-auto border-t border-white/50 bg-white/70 backdrop-blur-xl transition-all duration-700 ${mounted ? 'opacity-100' : 'opacity-0'}`} style={{ transitionDelay: '1700ms' }}>
+        <div className="mx-auto max-w-6xl px-6 py-12 space-y-10">
+          <div className="flex flex-col gap-8 md:flex-row md:items-start md:justify-between">
+            <div className="space-y-4 max-w-sm">
+              <Logo className="text-gray-900" />
+              <p className="text-xs leading-relaxed text-gray-600">Building a calmer healthcare access experience – transparent, efficient & human.</p>
+              <div className="space-y-2 text-xs text-gray-600">
                 <div className="flex items-center gap-2">
                   <svg className="h-4 w-4 text-brand-500" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
-                    <path d="M2.94 6.94a1.5 1.5 0 000 2.12l6 6a1.5 1.5 0 002.12 0l6-6a1.5 1.5 0 00-2.12-2.12L10 11.88 5.06 6.94a1.5 1.5 0 00-2.12 0z" />
+                    <path d="M3 4a2 2 0 00-2 2v1.161l8.441 4.221a1.25 1.25 0 001.118 0L19 7.162V6a2 2 0 00-2-2H3z" />
+                    <path d="M19 8.839l-7.77 3.885a2.75 2.75 0 01-2.46 0L1 8.839V14a2 2 0 002 2h14a2 2 0 002-2V8.839z" />
                   </svg>
-                  <span>support@waitfree.app</span>
+                  <span>docsetu.services@gmail.com</span>
                 </div>
                 <div className="flex items-center gap-2">
                   <svg className="h-4 w-4 text-brand-500" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
                     <path fillRule="evenodd" d="M2 4a2 2 0 012-2h2.278a1 1 0 01.948.684l1.105 3.316a1 1 0 01-.502 1.2l-1.357.743a11.037 11.037 0 005.516 5.516l.743-1.357a1 1 0 011.2-.502l3.316 1.105a1 1 0 01.684.949V16a2 2 0 01-2 2h-1C7.82 18 2 12.18 2 5V4z" clipRule="evenodd" />
                   </svg>
-                  <span>(415) 555-0197</span>
+                  <span>+91-8817244374</span>
                 </div>
               </div>
-              <Button variant="secondary" size="sm" className="inline-flex items-center gap-2">
-                <svg className="h-4 w-4" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth={1.5} aria-hidden="true">
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M12.25 4.25l3.5 3.5-8.5 8.5H3.75v-3.5l8.5-8.5z" />
-                </svg>
-                Schedule a call
-              </Button>
             </div>
+            <nav className="flex flex-wrap gap-x-10 gap-y-4 text-[11px] font-medium tracking-wide text-gray-600">
+              <a href="#privacy" className="hover:text-gray-900 transition-colors">Privacy Policy</a>
+              <a href="#terms" className="hover:text-gray-900 transition-colors">Terms of Service</a>
+              <a href="#contact" className="hover:text-gray-900 transition-colors">Contact</a>
+            </nav>
           </div>
-
-          <div className="mt-12 border-t border-white/60 pt-6 text-xs sm:text-sm text-gray-500 flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-            <div>&copy; {new Date().getFullYear()} Waitfree. All rights reserved.</div>
-            <div className="flex flex-wrap gap-4 sm:gap-6">
-              <a href="#privacy" className="hover:text-gray-700 transition-colors focus:outline-none focus:ring-2 focus:ring-brand-300 rounded">Privacy</a>
-              <a href="#terms" className="hover:text-gray-700 transition-colors focus:outline-none focus:ring-2 focus:ring-brand-300 rounded">Terms</a>
-              <a href="#contact" className="hover:text-gray-700 transition-colors focus:outline-none focus:ring-2 focus:ring-brand-300 rounded">Contact</a>
-            </div>
+          <div className="flex flex-col-reverse items-center justify-between gap-4 border-t border-gray-200/70 pt-6 text-[11px] text-gray-500 md:flex-row">
+            <p>&copy; {new Date().getFullYear()} Waitfree Health Technologies Pvt. Ltd. | All Rights Reserved</p>
+            <p className="flex items-center gap-2 font-medium"><span className="relative flex h-2 w-2"><span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-60" /><span className="relative inline-flex h-2 w-2 rounded-full bg-emerald-500" /></span>Realtime</p>
           </div>
         </div>
       </footer>

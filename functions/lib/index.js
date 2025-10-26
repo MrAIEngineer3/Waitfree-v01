@@ -39,7 +39,7 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
 };
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.bootstrapClinicAccount = exports.deleteDoctorScheduleOverride = exports.updateDoctorScheduleOverride = exports.createDoctorScheduleOverride = exports.updateDoctorDefaultRota = exports.requestDoctorOnlineNotification = exports.updateClinicSchedulingSettings = exports.getClinicSchedulingSettings = exports.getClinicDoctorAvailability = exports.setDoctorRealTimeStatus = exports.setQueueAutoAdvance = exports.updateQueueStatus = exports.advanceQueue = exports.uncallPatient = exports.cancelPatient = exports.completePatient = exports.callPatient = exports.updatePatientStatus = exports.getPatientView = exports.manualAddPatient = exports.joinQueue = exports.onPatientStatusChange = exports.onNewPatient = exports.ping = exports.debugGetPatient = exports.debugRecompute = exports.debugPatientPwaBaseUrl = exports.debugRuntimeFlags = void 0;
+exports.bootstrapClinicAccount = exports.deleteDoctorScheduleOverride = exports.updateDoctorScheduleOverride = exports.createDoctorScheduleOverride = exports.updateDoctorDefaultRota = exports.requestDoctorOnlineNotification = exports.updateClinicSchedulingSettings = exports.getClinicSchedulingSettings = exports.getClinicDoctorAvailability = exports.setDoctorRealTimeStatus = exports.setQueueAutoAdvance = exports.updateQueueStatus = exports.advanceQueue = exports.uncallPatient = exports.cancelPatient = exports.completePatient = exports.callPatient = exports.patientRejoinQueue = exports.patientCancelToken = exports.updatePatientStatus = exports.getPatientView = exports.manualAddPatient = exports.joinQueue = exports.onPatientStatusChange = exports.onNewPatient = exports.ping = exports.debugGetPatient = exports.debugRecompute = exports.debugPatientPwaBaseUrl = exports.debugRuntimeFlags = void 0;
 const firestore_1 = require("@google-cloud/firestore");
 // Ensure local .env variables are loaded when running in emulator / local scripts
 const crypto_1 = __importDefault(require("crypto"));
@@ -234,6 +234,7 @@ const serializeAvailability = (result) => {
         debug: result.debug ?? null
     };
 };
+const hashAccessToken = (token) => crypto_1.default.createHash('sha256').update(String(token)).digest('hex');
 /** DEBUG: Returns runtime flag visibility and Node version */
 const debugRuntimeFlagsHandler = async (_data, _ctx) => {
     return {
@@ -1166,6 +1167,253 @@ const updatePatientStatusHandler = async (data, context) => {
     }
 };
 exports.updatePatientStatus = createV2Callable(updatePatientStatusHandler);
+const patientCancelTokenHandler = async (data, _context) => {
+    const span = (0, timing_1.startTiming)('patientCancelToken', {
+        clinicId: data?.clinicId ?? null,
+        doctorId: data?.doctorId ?? null,
+        queueId: data?.queueId ?? null,
+        patientId: data?.patientId ?? null
+    });
+    try {
+        const clinicId = sanitizeFirestoreId(data?.clinicId);
+        const doctorId = sanitizeFirestoreId(data?.doctorId);
+        const queueId = sanitizeFirestoreId(data?.queueId);
+        const patientId = sanitizeFirestoreId(data?.patientId);
+        const token = typeof data?.token === 'string' ? data.token.trim() : '';
+        if (!clinicId || !doctorId || !queueId || !patientId || !token) {
+            span.fail({ reason: 'invalid-argument' });
+            throw new functions.https.HttpsError('invalid-argument', 'Missing required fields.');
+        }
+        if (token.length < 32 || token.length > 512) {
+            span.fail({ reason: 'invalid-token-length', length: token.length });
+            throw new functions.https.HttpsError('invalid-argument', 'Invalid token.');
+        }
+        const db = firebaseAdmin_1.admin.firestore();
+        const patientRef = db
+            .collection('clinics').doc(clinicId)
+            .collection('doctors').doc(doctorId)
+            .collection('queues').doc(queueId)
+            .collection('patients').doc(patientId);
+        const patientSnap = await patientRef.get();
+        if (!patientSnap.exists) {
+            span.fail({ reason: 'not-found' });
+            throw new functions.https.HttpsError('not-found', 'Patient not found.');
+        }
+        const patientData = patientSnap.data();
+        const storedHash = patientData?.accessTokenHash;
+        if (!storedHash) {
+            span.fail({ reason: 'missing-access-token-hash' });
+            throw new functions.https.HttpsError('permission-denied', 'Invalid token.');
+        }
+        const incomingHash = hashAccessToken(token);
+        if (incomingHash !== storedHash) {
+            span.fail({ reason: 'token-mismatch' });
+            throw new functions.https.HttpsError('permission-denied', 'Invalid token.');
+        }
+        if (typeof patientData?.queueId === 'string' && patientData.queueId !== queueId) {
+            span.fail({ reason: 'queue-mismatch' });
+            throw new functions.https.HttpsError('permission-denied', 'Invalid token.');
+        }
+        const currentStatus = patientData?.status ?? 'waiting';
+        if (currentStatus === 'cancelled') {
+            const existingCancellation = (patientData?.cancellation ?? {});
+            if (!existingCancellation?.cancelledAt) {
+                try {
+                    await patientRef.set({
+                        cancellation: {
+                            ...existingCancellation,
+                            cancelledAt: firestore_1.FieldValue.serverTimestamp(),
+                            cancelledBy: existingCancellation?.cancelledBy ?? 'patient-self'
+                        }
+                    }, { merge: true });
+                }
+                catch (patchErr) {
+                    functions.logger.warn('Failed to backfill cancellation metadata', patchErr, { clinicId, doctorId, queueId, patientId });
+                }
+            }
+            span.succeed({ status: 'already-cancelled' });
+            return {
+                success: true,
+                status: 'cancelled',
+                alreadyCancelled: true,
+                message: 'Token already cancelled.'
+            };
+        }
+        if (currentStatus !== 'waiting') {
+            span.fail({ reason: 'status-not-waiting', status: currentStatus });
+            throw new functions.https.HttpsError('failed-precondition', 'Token cannot be cancelled right now.');
+        }
+        const syntheticContext = {
+            auth: { uid: `patient-self:${patientId}` }
+        };
+        await updatePatientStatusHandler({ clinicId, doctorId, queueId, patientId, newStatus: 'cancelled' }, syntheticContext);
+        const existingCancellation = (patientData?.cancellation ?? {});
+        const cancellationPatch = {
+            cancellation: {
+                ...existingCancellation,
+                cancelledBy: 'patient-self'
+            }
+        };
+        if (!existingCancellation?.cancelledAt) {
+            cancellationPatch.cancellation.cancelledAt = firestore_1.FieldValue.serverTimestamp();
+        }
+        try {
+            await patientRef.set(cancellationPatch, { merge: true });
+        }
+        catch (patchErr) {
+            functions.logger.warn('Failed to record cancellation metadata', patchErr, { clinicId, doctorId, queueId, patientId });
+        }
+        span.succeed({ status: 'cancelled' });
+        return {
+            success: true,
+            status: 'cancelled',
+            message: 'Token cancelled.'
+        };
+    }
+    catch (error) {
+        functions.logger.error('patientCancelToken failed', error, {
+            clinicId: data?.clinicId ?? null,
+            doctorId: data?.doctorId ?? null,
+            queueId: data?.queueId ?? null,
+            patientId: data?.patientId ?? null
+        });
+        span.fail({ error: error instanceof Error ? error.message : String(error) });
+        if (error instanceof functions.https.HttpsError) {
+            throw error;
+        }
+        throw new functions.https.HttpsError('internal', 'Failed to cancel token.');
+    }
+};
+exports.patientCancelToken = createV2Callable(patientCancelTokenHandler);
+const patientRejoinQueueHandler = async (data, _context) => {
+    const span = (0, timing_1.startTiming)('patientRejoinQueue', {
+        clinicId: data?.clinicId ?? null,
+        doctorId: data?.doctorId ?? null,
+        queueId: data?.queueId ?? null,
+        patientId: data?.patientId ?? null
+    });
+    try {
+        const clinicId = sanitizeFirestoreId(data?.clinicId);
+        const doctorId = sanitizeFirestoreId(data?.doctorId);
+        const queueId = sanitizeFirestoreId(data?.queueId);
+        const patientId = sanitizeFirestoreId(data?.patientId);
+        const token = typeof data?.token === 'string' ? data.token.trim() : '';
+        if (!clinicId || !doctorId || !queueId || !patientId || !token) {
+            span.fail({ reason: 'invalid-argument' });
+            throw new functions.https.HttpsError('invalid-argument', 'Missing required fields.');
+        }
+        const db = firebaseAdmin_1.admin.firestore();
+        const patientRef = db
+            .collection('clinics').doc(clinicId)
+            .collection('doctors').doc(doctorId)
+            .collection('queues').doc(queueId)
+            .collection('patients').doc(patientId);
+        const patientSnap = await patientRef.get();
+        if (!patientSnap.exists) {
+            span.fail({ reason: 'not-found' });
+            throw new functions.https.HttpsError('not-found', 'Patient not found.');
+        }
+        const patientData = patientSnap.data();
+        const storedHash = patientData?.accessTokenHash;
+        if (!storedHash) {
+            span.fail({ reason: 'missing-access-token-hash' });
+            throw new functions.https.HttpsError('permission-denied', 'Invalid token.');
+        }
+        const incomingHash = hashAccessToken(token);
+        if (incomingHash !== storedHash) {
+            span.fail({ reason: 'token-mismatch' });
+            throw new functions.https.HttpsError('permission-denied', 'Invalid token.');
+        }
+        if (typeof patientData?.queueId === 'string' && patientData.queueId !== queueId) {
+            span.fail({ reason: 'queue-mismatch' });
+            throw new functions.https.HttpsError('permission-denied', 'Invalid token.');
+        }
+        const currentStatus = patientData?.status ?? 'waiting';
+        if (currentStatus === 'waiting') {
+            span.succeed({ status: 'already-waiting' });
+            return {
+                success: true,
+                status: 'waiting',
+                message: 'You are already in the queue.'
+            };
+        }
+        if (currentStatus !== 'cancelled') {
+            span.fail({ reason: 'status-not-cancelled', status: currentStatus });
+            throw new functions.https.HttpsError('failed-precondition', 'Token cannot be rejoined right now.');
+        }
+        const name = typeof patientData?.name === 'string' ? patientData.name.trim() : '';
+        if (!name) {
+            span.fail({ reason: 'missing-name' });
+            throw new functions.https.HttpsError('failed-precondition', 'Patient information is incomplete. Please join again from the clinic link.');
+        }
+        const ageRaw = patientData?.age;
+        const ageNumber = typeof ageRaw === 'number' ? ageRaw : Number(ageRaw);
+        if (!Number.isFinite(ageNumber) || ageNumber <= 0 || ageNumber > 200) {
+            span.fail({ reason: 'invalid-age', provided: ageRaw });
+            throw new functions.https.HttpsError('failed-precondition', 'Patient information is incomplete. Please join again from the clinic link.');
+        }
+        const phoneRaw = typeof patientData?.phone === 'string' ? patientData.phone : '';
+        const normalizedPhone = phoneRaw.replace(/\D+/g, '');
+        if (normalizedPhone.length !== 10) {
+            span.fail({ reason: 'invalid-phone' });
+            throw new functions.https.HttpsError('failed-precondition', 'Patient information is incomplete. Please join again from the clinic link.');
+        }
+        const joinResult = await joinQueueHandler({
+            clinicId,
+            doctorId,
+            patientData: {
+                name,
+                age: ageNumber,
+                phone: normalizedPhone
+            }
+        }, {});
+        const existingCancellation = (patientData?.cancellation ?? {});
+        const cancellationPatch = {
+            cancellation: {
+                ...existingCancellation,
+                rejoinedAt: firestore_1.FieldValue.serverTimestamp(),
+                rejoinedPatientId: joinResult.patientId,
+                rejoinedQueueId: joinResult.queueId
+            }
+        };
+        if (!existingCancellation?.cancelledAt) {
+            cancellationPatch.cancellation.cancelledAt = firestore_1.FieldValue.serverTimestamp();
+        }
+        try {
+            await patientRef.set(cancellationPatch, { merge: true });
+        }
+        catch (patchErr) {
+            functions.logger.warn('Failed to record rejoin metadata', patchErr, { clinicId, doctorId, queueId, patientId });
+        }
+        span.succeed({ status: 'waiting', queueId: joinResult.queueId, patientId: joinResult.patientId });
+        return {
+            success: true,
+            status: 'waiting',
+            message: 'Rejoined queue.',
+            rejoin: {
+                clinicId: joinResult.clinicId,
+                doctorId: joinResult.doctorId,
+                queueId: joinResult.queueId,
+                patientId: joinResult.patientId,
+                accessToken: joinResult.accessToken ?? ''
+            }
+        };
+    }
+    catch (error) {
+        functions.logger.error('patientRejoinQueue failed', error, {
+            clinicId: data?.clinicId ?? null,
+            doctorId: data?.doctorId ?? null,
+            queueId: data?.queueId ?? null,
+            patientId: data?.patientId ?? null
+        });
+        span.fail({ error: error instanceof Error ? error.message : String(error) });
+        if (error instanceof functions.https.HttpsError) {
+            throw error;
+        }
+        throw new functions.https.HttpsError('internal', 'Failed to rejoin queue.');
+    }
+};
+exports.patientRejoinQueue = createV2Callable(patientRejoinQueueHandler);
 const createStatusUpdateHandler = (targetStatus) => async (data, context) => {
     return updatePatientStatusHandler({ ...data, newStatus: targetStatus }, context);
 };

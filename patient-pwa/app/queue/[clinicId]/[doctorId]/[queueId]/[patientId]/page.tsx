@@ -5,10 +5,24 @@ export const dynamic = "force-dynamic";
 import { signInAnonymously } from 'firebase/auth';
 import { doc, onSnapshot, type DocumentData, type Timestamp } from 'firebase/firestore';
 import { httpsCallable } from 'firebase/functions';
-import { useParams } from 'next/navigation';
+import { useParams, useRouter } from 'next/navigation';
 import { useEffect, useRef, useState } from 'react';
+import { toast } from 'sonner';
+import { Button } from '@/components/ui/button';
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogTrigger
+} from '@/components/ui/alert-dialog';
 import { auth, db, functions } from '../../../../../../lib/firebase';
 import { ensurePatientToken } from './tokenStorage';
+import { buildRejoinRedirectUrl } from './rejoinUtils';
 
 interface Patient {
   id: string;
@@ -44,8 +58,39 @@ interface Doctor {
   phone?: string;
 }
 
+interface PatientCancelTokenPayload {
+  clinicId: string;
+  doctorId: string;
+  queueId: string;
+  patientId: string;
+  token: string;
+}
+
+interface PatientCancelTokenResult {
+  success: boolean;
+  status: Patient['status'];
+  alreadyCancelled?: boolean;
+  message?: string;
+}
+
+type PatientRejoinQueuePayload = PatientCancelTokenPayload;
+
+interface PatientRejoinQueueResult {
+  success: boolean;
+  status: Patient['status'];
+  message?: string;
+  rejoin?: {
+    clinicId: string;
+    doctorId: string;
+    queueId: string;
+    patientId: string;
+    accessToken: string;
+  };
+}
+
 export default function QueueStatus() {
   const params = useParams<{ clinicId: string; doctorId: string; queueId: string; patientId: string }>();
+  const router = useRouter();
   const clinicId = params?.clinicId;
   const doctorId = params?.doctorId;
   const queueId = params?.queueId;
@@ -55,6 +100,10 @@ export default function QueueStatus() {
   const [doctor, setDoctor] = useState<Doctor | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [accessToken, setAccessToken] = useState<string | null>(null);
+  const [actionError, setActionError] = useState<string | null>(null);
+  const [actionState, setActionState] = useState<'idle' | 'cancelling' | 'rejoining'>('idle');
+  const [cancelDialogOpen, setCancelDialogOpen] = useState(false);
 
   useEffect(() => {
     // Only run on client side
@@ -112,6 +161,7 @@ export default function QueueStatus() {
               setIsLoading(false);
               return;
             }
+            setAccessToken(storedToken);
 
             // Call the callable functions API to obtain the secure patient view
             interface GetPatientViewPayload {
@@ -228,6 +278,97 @@ export default function QueueStatus() {
     };
   }, [clinicId, doctorId, queueId, patientId]);
 
+  const handleCancelToken = async () => {
+    if (!clinicId || !doctorId || !queueId || !patientId) {
+      setActionError('Missing queue information.');
+      return;
+    }
+    if (!accessToken) {
+      setActionError('Missing access token. Please refresh the page.');
+      return;
+    }
+
+    setActionError(null);
+    setActionState('cancelling');
+
+    try {
+      const cancelFn = httpsCallable<PatientCancelTokenPayload, PatientCancelTokenResult>(functions, 'patientCancelToken');
+      const { data } = await cancelFn({ clinicId, doctorId, queueId, patientId, token: accessToken });
+
+      if (data?.success) {
+        const message = data.alreadyCancelled
+          ? 'Your token was already cancelled.'
+          : data.message ?? 'Your token has been cancelled.';
+        toast.success(message);
+        setActionError(null);
+        setPatient((prev) => (prev ? { ...prev, status: 'cancelled' } : prev));
+      } else {
+        const fallback = data?.message ?? 'Unable to cancel your token. Please try again.';
+        setActionError(fallback);
+        toast.error(fallback);
+      }
+    } catch (err) {
+      const message = (err as { message?: string })?.message ?? 'Unable to cancel your token. Please try again.';
+      setActionError(message);
+      toast.error(message);
+    } finally {
+      setActionState('idle');
+      setCancelDialogOpen(false);
+    }
+  };
+
+  const handleRejoinQueue = async () => {
+    if (!clinicId || !doctorId || !queueId || !patientId) {
+      setActionError('Missing queue information.');
+      return;
+    }
+    if (!accessToken) {
+      setActionError('Missing access token. Please refresh the page.');
+      return;
+    }
+
+    setActionError(null);
+    setActionState('rejoining');
+
+    try {
+      const rejoinFn = httpsCallable<PatientRejoinQueuePayload, PatientRejoinQueueResult>(functions, 'patientRejoinQueue');
+      const { data } = await rejoinFn({ clinicId, doctorId, queueId, patientId, token: accessToken });
+
+      if (data?.success && data.rejoin) {
+        const { clinicId: newClinicId, doctorId: newDoctorId, queueId: newQueueId, patientId: newPatientId, accessToken: newToken } = data.rejoin;
+
+        if (newToken) {
+          try {
+            sessionStorage.setItem(`patientToken:${newPatientId}`, newToken);
+          } catch (storageErr) {
+            console.warn('Failed to store new access token', storageErr);
+          }
+        }
+
+        toast.success('You have rejoined the queue. Redirecting you to your updated token.');
+        const nextUrl = buildRejoinRedirectUrl({
+          clinicId: newClinicId,
+          doctorId: newDoctorId,
+          queueId: newQueueId,
+          patientId: newPatientId,
+          accessToken: newToken
+        });
+        router.push(nextUrl);
+        return;
+      }
+
+      const fallback = data?.message ?? 'Unable to rejoin the queue. Please try again.';
+      setActionError(fallback);
+      toast.error(fallback);
+    } catch (err) {
+      const message = (err as { message?: string })?.message ?? 'Unable to rejoin the queue. Please try again.';
+      setActionError(message);
+      toast.error(message);
+    } finally {
+      setActionState('idle');
+    }
+  };
+
   // Calculate derived values (status-aware)
   let patientsAhead = 0;
   let progressPercentage = 0;
@@ -289,6 +430,11 @@ export default function QueueStatus() {
     // For 'waiting', treat as already 'In Queue' regardless of progress so both 'Joined' and 'In Queue' show as completed.
     return 1;
   })();
+
+  const isCancelling = actionState === 'cancelling';
+  const isRejoining = actionState === 'rejoining';
+  const canCancel = patient?.status === 'waiting' && !!accessToken;
+  const canRejoin = patient?.status === 'cancelled' && !!accessToken;
 
   if (isLoading && !error) {
     return (
@@ -383,9 +529,67 @@ export default function QueueStatus() {
             </div>
           )}
 
-          <button className="w-full bg-gray-200 text-gray-500 py-3 px-6 rounded-xl font-semibold text-sm hover:bg-gray-300 focus:outline-none focus:ring-2 focus:ring-gray-400 focus:ring-offset-2 transition-all shadow-sm disabled:opacity-60 disabled:cursor-not-allowed active:scale-[.985]" disabled title="Cancellation feature is coming soon">
-            Cancel My Token (Soon)
-          </button>
+          {actionError ? (
+            <div className="rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-xs text-destructive">
+              {actionError}
+            </div>
+          ) : null}
+
+          {canCancel ? (
+            <AlertDialog open={cancelDialogOpen} onOpenChange={(open) => !isCancelling && setCancelDialogOpen(open)}>
+              <AlertDialogTrigger asChild>
+                <Button
+                  variant="soft-destructive"
+                  className="w-full"
+                  loading={isCancelling}
+                >
+                  Cancel My Token
+                </Button>
+              </AlertDialogTrigger>
+              <AlertDialogContent>
+                <AlertDialogHeader>
+                  <AlertDialogTitle>Cancel your token?</AlertDialogTitle>
+                  <AlertDialogDescription>
+                    This will remove you from the queue immediately. You can rejoin later, but you will receive a new token number and move to the back of the line.
+                  </AlertDialogDescription>
+                </AlertDialogHeader>
+                <AlertDialogFooter>
+                  <AlertDialogCancel disabled={isCancelling}>Keep My Token</AlertDialogCancel>
+                  <AlertDialogAction
+                    disabled={isCancelling}
+                    onClick={(event) => {
+                      event.preventDefault();
+                      handleCancelToken();
+                    }}
+                  >
+                    {isCancelling ? 'Cancelling…' : 'Yes, cancel token'}
+                  </AlertDialogAction>
+                </AlertDialogFooter>
+              </AlertDialogContent>
+            </AlertDialog>
+          ) : canRejoin ? (
+            <div className="space-y-2">
+              <Button
+                variant="accent"
+                className="w-full"
+                loading={isRejoining}
+                onClick={handleRejoinQueue}
+              >
+                Rejoin Queue
+              </Button>
+              <p className="text-center text-xs text-muted-foreground">
+                You will receive a new token number and join the current end of the queue.
+              </p>
+            </div>
+          ) : (
+            <Button className="w-full" variant="outline" disabled>
+              {patient?.status === 'completed'
+                ? 'Consultation Completed'
+                : patient?.status === 'in-progress'
+                  ? 'Currently Being Served'
+                  : 'Cancellation unavailable'}
+            </Button>
+          )}
 
         </div>
       </main>

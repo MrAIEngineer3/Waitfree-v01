@@ -45,8 +45,8 @@ export default function SupportSettingsPage() {
             <h2 className="text-base font-semibold text-foreground">Contact Support</h2>
             <p className="text-sm text-muted-foreground">Our team typically responds within a few hours.</p>
             <div className="space-y-2 text-sm text-foreground">
-              <div className="break-words">Email: support@waitfree.app</div>
-              <div>WhatsApp: +91 90000 00000</div>
+              <div className="break-words">Email: docsetu.services@gmail.com</div>
+              <div>WhatsApp: +91-8817244374</div>
             </div>
             <Button variant="accent" className="w-full sm:w-auto">Start a conversation</Button>
           </CardContent>
