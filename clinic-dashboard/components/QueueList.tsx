@@ -1,8 +1,8 @@
 'use client';
 
-import { collection, doc, onSnapshot, query, serverTimestamp, setDoc, updateDoc } from 'firebase/firestore';
+import { collection, onSnapshot, query } from 'firebase/firestore';
 import { httpsCallable } from 'firebase/functions';
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { toast } from 'sonner';
 import { db, functions } from '../lib/firebase';
 import { markPhase, queueProfilingEnabled, recordRender, recordSnapshot } from '../lib/profiling';
@@ -204,6 +204,17 @@ export default function QueueList({ clinicId: clinicIdProp, doctorId: doctorIdPr
     };
   };
 
+  const callUpdateQueueStatus = useCallback(
+    async (target: 'paused' | 'active' | 'ended') => {
+      if (!clinicId || !doctorId) {
+        throw new Error('Missing clinic or doctor identifier');
+      }
+      const callable = httpsCallable(functions, 'updateQueueStatus');
+      await callable({ clinicId, doctorId, queueId, newStatus: target });
+    },
+    [clinicId, doctorId, queueId]
+  );
+
   // Wrap existing handlers (only those modifying data)
   const handleNextPatient = guarded(async () => {
     if (queueStatus === 'paused') {
@@ -272,33 +283,16 @@ export default function QueueList({ clinicId: clinicIdProp, doctorId: doctorIdPr
     const phaseLabel = `${renderLabel}:pause`;
     if (queueProfilingEnabled) markPhase(phaseLabel, 'start');
     try {
-      console.log('Toggling queue pause status');
-
-      if (!clinicId || !doctorId) {
-        throw new Error('Missing clinic or doctor identifier');
-      }
-
       const target = queueStatus === 'paused' ? 'active' : 'paused';
-      const queueDocRef = doc(
-        db,
-        'clinics',
-        clinicId!,
-        'doctors',
-        doctorId!,
-        'queues',
-        queueId
-      );
-
-      await updateDoc(queueDocRef, {
-        status: target,
-        updatedAt: serverTimestamp()
-      });
-
-      console.log('Queue status updated successfully via direct write', { queueId, newStatus: target });
+      await callUpdateQueueStatus(target);
       toast.success(`Queue ${target === 'paused' ? 'paused' : 'resumed'}`);
     } catch (error) {
       console.error('Error updating queue status:', error);
-      toast.error('Failed to update queue status. Please try again.');
+      const message =
+        error instanceof Error && error.message === 'Missing clinic or doctor identifier'
+          ? 'Failed to update queue status. Missing clinic or doctor information.'
+          : 'Failed to update queue status. Please try again.';
+      toast.error(message);
     } finally {
       setIsPauseQueueLoading(false);
       if (queueProfilingEnabled) markPhase(phaseLabel, 'end');
@@ -349,21 +343,17 @@ export default function QueueList({ clinicId: clinicIdProp, doctorId: doctorIdPr
       if (!clinicId || !doctorId) {
         throw new Error('Missing clinic or doctor identifier');
       }
-      const queueDocRef = doc(
-        db,
-        'clinics',
-        clinicId!,
-        'doctors',
-        doctorId!,
-        'queues',
-        queueId
-      );
-      await setDoc(queueDocRef, { autoAdvance: checked, updatedAt: serverTimestamp() }, { merge: true });
+      const setQueueAutoAdvanceCallable = httpsCallable(functions, 'setQueueAutoAdvance');
+      await setQueueAutoAdvanceCallable({ clinicId, doctorId, queueId, enabled: checked });
       // optimistic update; real value will flow from queue doc listener too
       setAutoAdvance(checked);
     } catch (e) {
       console.error('Failed to set autoAdvance', e);
-      toast.error('Failed to update auto-advance setting. Please try again.');
+      const message =
+        e instanceof Error && e.message === 'Missing clinic or doctor identifier'
+          ? 'Failed to update auto-advance setting. Missing clinic or doctor information.'
+          : 'Failed to update auto-advance setting. Please try again.';
+      toast.error(message);
     } finally {
       setIsAutoAdvUpdating(false);
       if (queueProfilingEnabled) markPhase(phaseLabel, 'end');
@@ -511,19 +501,31 @@ export default function QueueList({ clinicId: clinicIdProp, doctorId: doctorIdPr
     };
 
     const handleRestart = () => {
+      if (isReadOnly) {
+        toast.error('This queue is read-only for the selected date.');
+        return;
+      }
       if (!clinicId || !doctorId) {
         console.error('Restart queue failed: missing clinic/doctor');
         toast.error('Failed to restart queue. Missing clinic or doctor information.');
         return;
       }
-      const queueDocRef = doc(db, 'clinics', clinicId!, 'doctors', doctorId!, 'queues', queueId);
-      updateDoc(queueDocRef, { status: 'active', updatedAt: serverTimestamp() })
-        .then(() => { 
-          toast.success('Queue restarted and set to Active'); 
+      const phaseLabel = `${renderLabel}:restart`;
+      if (queueProfilingEnabled) markPhase(phaseLabel, 'start');
+      callUpdateQueueStatus('active')
+        .then(() => {
+          toast.success('Queue restarted and set to Active');
         })
-        .catch(e => { 
-          console.error('Restart queue failed', e); 
-          toast.error('Failed to restart queue. Please try again.'); 
+        .catch((error) => {
+          console.error('Restart queue failed', error);
+          const message =
+            error instanceof Error && error.message === 'Missing clinic or doctor identifier'
+              ? 'Failed to restart queue. Missing clinic or doctor information.'
+              : 'Failed to restart queue. Please try again.';
+          toast.error(message);
+        })
+        .finally(() => {
+          if (queueProfilingEnabled) markPhase(phaseLabel, 'end');
         });
     };
 
@@ -536,7 +538,7 @@ export default function QueueList({ clinicId: clinicIdProp, doctorId: doctorIdPr
       window.removeEventListener('endQueue', handleEnd);
       window.removeEventListener('restartQueue', handleRestart);
     };
-  }, [pausedFlag, skipPauseToday, clinicId, doctorId, queueId, handleTogglePauseQueue]);
+  }, [pausedFlag, skipPauseToday, clinicId, doctorId, queueId, handleTogglePauseQueue, callUpdateQueueStatus, isReadOnly, renderLabel]);
 
   return (
   <div className={`space-y-6 w-full px-4 md:px-6 pt-4 md:pt-6 pb-24 md:pb-8 ${compact ? 'queue-compact' : ''}`} aria-live="polite">
@@ -581,25 +583,31 @@ export default function QueueList({ clinicId: clinicIdProp, doctorId: doctorIdPr
           <AlertDialogFooter>
             <AlertDialogCancel onClick={() => { setShowEndModal(false); setEndConfirmText(''); }}>Cancel</AlertDialogCancel>
             <AlertDialogAction
-              onClick={() => {
-                if(endConfirmText !== 'END') return;
-                if (!clinicId || !doctorId) {
-                  console.error('End queue failed: missing clinic/doctor');
-                  toast.error('Failed to end queue. Missing clinic or doctor information.');
+              onClick={async () => {
+                if (endConfirmText !== 'END') return;
+                if (isReadOnly) {
+                  toast.error('This queue is read-only for the selected date.');
                   setShowEndModal(false);
                   setEndConfirmText('');
                   return;
                 }
-                const queueDocRef = doc(db, 'clinics', clinicId!, 'doctors', doctorId!, 'queues', queueId);
-                updateDoc(queueDocRef, { status: 'ended', updatedAt: serverTimestamp() })
-                  .then(()=>{ 
-                    toast.success('Queue ended. You can restart it if needed.'); 
-                  })
-                  .catch(e=>{ 
-                    console.error('End queue failed', e); 
-                    toast.error('Failed to end queue. Please try again.'); 
-                  })
-                  .finally(()=>{ setShowEndModal(false); setEndConfirmText(''); });
+                const phaseLabel = `${renderLabel}:end`;
+                if (queueProfilingEnabled) markPhase(phaseLabel, 'start');
+                try {
+                  await callUpdateQueueStatus('ended');
+                  toast.success('Queue ended. You can restart it if needed.');
+                } catch (error) {
+                  console.error('End queue failed', error);
+                  const message =
+                    error instanceof Error && error.message === 'Missing clinic or doctor identifier'
+                      ? 'Failed to end queue. Missing clinic or doctor information.'
+                      : 'Failed to end queue. Please try again.';
+                  toast.error(message);
+                } finally {
+                  setShowEndModal(false);
+                  setEndConfirmText('');
+                  if (queueProfilingEnabled) markPhase(phaseLabel, 'end');
+                }
               }}
               disabled={endConfirmText !== 'END'}
             >

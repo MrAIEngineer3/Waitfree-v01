@@ -110,6 +110,12 @@ export default function ImprovedQueueList({
   const [uncallPatientName, setUncallPatientName] = useState<string | null>(null);
   const [loadingPatientIds, setLoadingPatientIds] = useState<Set<string>>(new Set());
   const [showAdvanceModal, setShowAdvanceModal] = useState(false);
+  const [statusDialog, setStatusDialog] = useState<null | {
+    mode: 'pause' | 'resume' | 'end' | 'restart';
+    targetStatus: 'paused' | 'active' | 'ended';
+  }>(null);
+  const [statusUpdating, setStatusUpdating] = useState(false);
+  const [endConfirmText, setEndConfirmText] = useState('');
 
   const clinicId = clinicIdProp;
   const doctorId = doctorIdProp;
@@ -118,6 +124,65 @@ export default function ImprovedQueueList({
   const endedFlag = queueStatus === 'ended' || queueStatus === 'closed';
   const isReadOnly = dayKey !== new Date().toISOString().split('T')[0] || endedFlag;
   const queueInactive = queueStatus === 'paused' || endedFlag;
+
+  const updateQueueStatus = async (targetStatus: 'paused' | 'active' | 'ended') => {
+    if (!clinicId || !doctorId || !queueId) {
+      toast.error('Missing clinic or doctor information.');
+      return false;
+    }
+    setStatusUpdating(true);
+    try {
+      const callable = httpsCallable(functions, 'updateQueueStatus');
+      await callable({ clinicId, doctorId, queueId, newStatus: targetStatus });
+      const messageMap: Record<typeof targetStatus, string> = {
+        paused: 'Queue paused. Patients cannot be called until resumed.',
+        active: 'Queue resumed and set to Active.',
+        ended: 'Queue ended. You can restart it if needed.'
+      };
+      toast.success(messageMap[targetStatus] ?? 'Queue updated');
+      return true;
+    } catch (error) {
+      console.error('Failed to update queue status', error);
+      toast.error(getErrorMessage(error, 'Failed to update queue status. Please try again.'));
+      return false;
+    } finally {
+      setStatusUpdating(false);
+    }
+  };
+
+  const handleQueueStatusEvent = (mode: 'pause' | 'resume' | 'end' | 'restart', targetStatus: 'paused' | 'active' | 'ended') => {
+    if (isReadOnly) {
+      toast.error('This queue is read-only for the selected date.');
+      return;
+    }
+    if (!clinicId || !doctorId) {
+      toast.error('Clinic or doctor selection missing.');
+      return;
+    }
+    setStatusDialog({ mode, targetStatus });
+  };
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const handleTogglePause = () => {
+      if (queueStatus === 'paused') {
+        handleQueueStatusEvent('resume', 'active');
+      } else {
+        handleQueueStatusEvent('pause', 'paused');
+      }
+    };
+    const handleEnd = () => handleQueueStatusEvent('end', 'ended');
+    const handleRestart = () => handleQueueStatusEvent('restart', 'active');
+
+    window.addEventListener('togglePauseQueue', handleTogglePause);
+    window.addEventListener('endQueue', handleEnd);
+    window.addEventListener('restartQueue', handleRestart);
+    return () => {
+      window.removeEventListener('togglePauseQueue', handleTogglePause);
+      window.removeEventListener('endQueue', handleEnd);
+      window.removeEventListener('restartQueue', handleRestart);
+    };
+  }, [queueStatus, clinicId, doctorId, queueId, isReadOnly]);
   const handleCallPatient = async (patientId: string) => {
     if (!clinicId || !doctorId || !queueId) return;
     if (queueInactive) {
@@ -494,6 +559,79 @@ export default function ImprovedQueueList({
             <AlertDialogCancel>Cancel</AlertDialogCancel>
             <AlertDialogAction onClick={handleNextPatient} disabled={queueInactive || isNextPatientLoading}>
               {isNextPatientLoading ? 'Calling...' : 'Call Next'}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      <AlertDialog
+        open={statusDialog !== null}
+        onOpenChange={(open) => {
+          if (!open) {
+            setStatusDialog(null);
+            setEndConfirmText('');
+          }
+        }}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>
+              {statusDialog?.mode === 'pause' && 'Pause Today\'s Queue?'}
+              {statusDialog?.mode === 'resume' && 'Resume Queue?'}
+              {statusDialog?.mode === 'end' && 'End Today\'s Queue?'}
+              {statusDialog?.mode === 'restart' && 'Restart Queue?'}
+            </AlertDialogTitle>
+            <AlertDialogDescription>
+              {statusDialog?.mode === 'pause' && 'Pausing stops calling patients until you resume the queue.'}
+              {statusDialog?.mode === 'resume' && 'Resume the queue so you can call and complete patients again.'}
+              {statusDialog?.mode === 'end' && (
+                <>
+                  Ending the queue prevents further calls today. Patients can still join but remain waiting. Type <span className="font-semibold">END</span> to confirm.
+                </>
+              )}
+              {statusDialog?.mode === 'restart' && 'Set the queue status back to Active and continue operations.'}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+
+          {statusDialog?.mode === 'end' && (
+            <div className="space-y-2">
+              <label className="text-xs font-semibold uppercase tracking-wide text-muted-foreground" htmlFor="confirm-end-input">
+                Type END to confirm
+              </label>
+              <input
+                id="confirm-end-input"
+                value={endConfirmText}
+                onChange={(e) => setEndConfirmText(e.target.value)}
+                placeholder="END"
+                className="w-full rounded-md border border-input bg-background text-foreground px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-destructive"
+                autoFocus
+              />
+            </div>
+          )}
+
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={statusUpdating}>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={async () => {
+                if (!statusDialog) return;
+                if (statusDialog.mode === 'end' && endConfirmText !== 'END') return;
+                const ok = await updateQueueStatus(statusDialog.targetStatus);
+                if (ok) {
+                  setStatusDialog(null);
+                  setEndConfirmText('');
+                }
+              }}
+              disabled={statusUpdating || (statusDialog?.mode === 'end' && endConfirmText !== 'END')}
+            >
+              {statusUpdating
+                ? 'Updating...'
+                : statusDialog?.mode === 'pause'
+                  ? 'Pause Queue'
+                  : statusDialog?.mode === 'resume'
+                    ? 'Resume Queue'
+                    : statusDialog?.mode === 'end'
+                      ? 'Confirm End'
+                      : 'Restart Queue'}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>

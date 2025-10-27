@@ -2,7 +2,7 @@
 
 export const dynamic = "force-dynamic";
 
-import { signInAnonymously } from 'firebase/auth';
+import { signInWithCustomToken } from 'firebase/auth';
 import { doc, onSnapshot, type DocumentData, type Timestamp } from 'firebase/firestore';
 import { httpsCallable } from 'firebase/functions';
 import { useParams, useRouter } from 'next/navigation';
@@ -88,6 +88,20 @@ interface PatientRejoinQueueResult {
   };
 }
 
+interface CreatePatientSessionPayload {
+  clinicId: string;
+  doctorId: string;
+  queueId: string;
+  patientId: string;
+  token: string;
+}
+
+interface CreatePatientSessionResult {
+  success: boolean;
+  token: string;
+  patient?: Partial<Patient> | null;
+}
+
 export default function QueueStatus() {
   const params = useParams<{ clinicId: string; doctorId: string; queueId: string; patientId: string }>();
   const router = useRouter();
@@ -136,84 +150,87 @@ export default function QueueStatus() {
           console.warn('Token URL scrub failed (non-fatal):', scrubErr);
         }
 
-        // Ensure we have an authenticated Firebase user (anonymous) so Firestore rules allow patient doc reads.
-        // This fixes: no live updates for patient status (Ready/Completed) and avoids manual reloads.
-        try {
-          if (!auth.currentUser) {
-            await signInAnonymously(auth);
-          }
-        } catch (authErr) {
-          // Proceed even if auth fails; queue + doctor listeners still work. Patient listener may fail without auth per rules.
-          console.warn('Anonymous sign-in failed (patient listener may be restricted by rules):', authErr);
-        }
-
         // Construct direct document paths using URL parameters
         const patientRef = doc(db, 'clinics', clinicId, 'doctors', doctorId, 'queues', queueId, 'patients', patientId);
         const queueRef = doc(db, 'clinics', clinicId, 'doctors', doctorId, 'queues', queueId);
         const doctorRef = doc(db, 'clinics', clinicId, 'doctors', doctorId);
 
-        // Patient: fetch via secure function with token stored in sessionStorage
-        (async () => {
-          try {
-            const storedToken = sessionStorage.getItem(`patientToken:${patientId}`);
-            if (!storedToken) {
-              setError('Missing access token. Please re-join the queue or use the join form.');
-              setIsLoading(false);
-              return;
-            }
-            setAccessToken(storedToken);
+        const storedToken = sessionStorage.getItem(`patientToken:${patientId}`);
+        if (!storedToken) {
+          setError('Missing access token. Please re-join the queue or use the join form.');
+          setIsLoading(false);
+          return;
+        }
+        setAccessToken(storedToken);
 
-            // Call the callable functions API to obtain the secure patient view
-            interface GetPatientViewPayload {
-              clinicId: string;
-              doctorId: string;
-              queueId: string;
-              patientId: string;
-              token: string;
-            }
-            interface GetPatientViewResult {
-              patient?: Patient;
-            }
+        try {
+          const createSessionFn = httpsCallable<CreatePatientSessionPayload, CreatePatientSessionResult>(functions, 'createPatientSession');
+          const sessionResponse = await createSessionFn({ clinicId, doctorId, queueId, patientId, token: storedToken });
+          const customToken = sessionResponse.data?.token;
 
-            const getViewFn = httpsCallable<GetPatientViewPayload, GetPatientViewResult>(functions, 'getPatientView');
-            const { data } = await getViewFn({ clinicId, doctorId, queueId, patientId, token: storedToken });
-
-            if (data?.patient) {
-              setPatient(data.patient);
-
-              // After initial secure fetch, attach real-time listener to patient doc for status updates
-              unsubscribePatient = onSnapshot(patientRef, (snap) => {
-                if (!snap.exists()) return;
-                const raw = snap.data() as DocumentData;
-                const livePatient: Patient = {
-                  id: snap.id,
-                  name: typeof raw.name === 'string' ? raw.name : data.patient!.name,
-                  age: typeof raw.age === 'number' ? raw.age : data.patient!.age,
-                  phone: typeof raw.phone === 'string' ? raw.phone : data.patient!.phone,
-                  tokenNumber: typeof raw.tokenNumber === 'number' ? raw.tokenNumber : data.patient!.tokenNumber,
-                  status: (raw.status as Patient['status']) ?? data.patient!.status,
-                  joinedAt: (raw.joinedAt as Timestamp | Date | undefined) ?? data.patient!.joinedAt,
-                  queueId: typeof raw.queueId === 'string' ? raw.queueId : data.patient!.queueId,
-                  clinicId: typeof raw.clinicId === 'string' ? raw.clinicId : data.patient!.clinicId,
-                  doctorId: typeof raw.doctorId === 'string' ? raw.doctorId : data.patient!.doctorId,
-                };
-                setPatient(livePatient);
-              }, (listenerError) => {
-                console.warn('Patient realtime listener error:', listenerError);
-              });
-            } else {
-              setError('Failed to fetch patient data');
-              setIsLoading(false);
-              return;
-            }
-          } catch (err) {
-            console.error('Error fetching patient via callable function:', err);
-            const message = err instanceof Error ? err.message : 'Error fetching patient data';
-            setError(message);
+          if (!customToken) {
+            setError('Unable to authenticate your session. Please re-join the queue.');
             setIsLoading(false);
             return;
           }
-        })();
+
+          await signInWithCustomToken(auth, customToken);
+        } catch (authErr) {
+          console.error('Failed to establish authenticated patient session', authErr);
+          setError('Unable to authenticate your session. Please re-join the queue.');
+          setIsLoading(false);
+          return;
+        }
+
+        try {
+          interface GetPatientViewPayload {
+            clinicId: string;
+            doctorId: string;
+            queueId: string;
+            patientId: string;
+            token: string;
+          }
+          interface GetPatientViewResult {
+            patient?: Patient;
+          }
+
+          const getViewFn = httpsCallable<GetPatientViewPayload, GetPatientViewResult>(functions, 'getPatientView');
+          const { data } = await getViewFn({ clinicId, doctorId, queueId, patientId, token: storedToken });
+
+          if (data?.patient) {
+            setPatient(data.patient);
+
+            unsubscribePatient = onSnapshot(patientRef, (snap) => {
+              if (!snap.exists()) return;
+              const raw = snap.data() as DocumentData;
+              const livePatient: Patient = {
+                id: snap.id,
+                name: typeof raw.name === 'string' ? raw.name : data.patient!.name,
+                age: typeof raw.age === 'number' ? raw.age : data.patient!.age,
+                phone: typeof raw.phone === 'string' ? raw.phone : data.patient!.phone,
+                tokenNumber: typeof raw.tokenNumber === 'number' ? raw.tokenNumber : data.patient!.tokenNumber,
+                status: (raw.status as Patient['status']) ?? data.patient!.status,
+                joinedAt: (raw.joinedAt as Timestamp | Date | undefined) ?? data.patient!.joinedAt,
+                queueId: typeof raw.queueId === 'string' ? raw.queueId : data.patient!.queueId,
+                clinicId: typeof raw.clinicId === 'string' ? raw.clinicId : data.patient!.clinicId,
+                doctorId: typeof raw.doctorId === 'string' ? raw.doctorId : data.patient!.doctorId,
+              };
+              setPatient(livePatient);
+            }, (listenerError) => {
+              console.warn('Patient realtime listener error:', listenerError);
+            });
+          } else {
+            setError('Failed to fetch patient data');
+            setIsLoading(false);
+            return;
+          }
+        } catch (err) {
+          console.error('Error fetching patient via callable function:', err);
+          const message = err instanceof Error ? err.message : 'Error fetching patient data';
+          setError(message);
+          setIsLoading(false);
+          return;
+        }
 
         // Queue listener
         unsubscribeQueue = onSnapshot(queueRef, (snapshot) => {

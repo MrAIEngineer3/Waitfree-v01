@@ -30,6 +30,10 @@ export function ManualAddPatientDialog({
   const [name, setName] = useState('');
   const [age, setAge] = useState('');
   const [phone, setPhone] = useState('');
+  const [nameTouched, setNameTouched] = useState(false);
+  const [ageTouched, setAgeTouched] = useState(false);
+  const [phoneTouched, setPhoneTouched] = useState(false);
+  const [fieldErrors, setFieldErrors] = useState<{ name?: string; age?: string; phone?: string }>({});
   const [skipNotification, setSkipNotification] = useState(false);
   const [loading, setLoading] = useState(false);
 
@@ -43,6 +47,10 @@ export function ManualAddPatientDialog({
       setName('');
       setAge('');
       setPhone('');
+      setNameTouched(false);
+      setAgeTouched(false);
+      setPhoneTouched(false);
+      setFieldErrors({});
       setSkipNotification(false);
       setLoading(false);
     }
@@ -53,6 +61,79 @@ export function ManualAddPatientDialog({
       setSkipNotification(false);
     }
   }, [phone, skipNotification]);
+
+  const collapseWhitespace = (value: string) => value.replace(/\s+/g, ' ');
+
+  const normalizeName = (value: string): { result?: string; error?: string } => {
+    const trimmed = collapseWhitespace(value.trim());
+    if (!trimmed) {
+      return { error: 'Patient name is required.' };
+    }
+    if (trimmed.length < 2 || trimmed.length > 100) {
+      return { error: 'Name must be between 2 and 100 characters.' };
+    }
+    return { result: trimmed };
+  };
+
+  const normalizeAge = (value: string): { result?: number | null; error?: string } => {
+    const digits = value.replace(/\D+/g, '');
+    if (!digits) {
+      return { result: null };
+    }
+    const parsed = Number.parseInt(digits, 10);
+    if (!Number.isFinite(parsed) || !Number.isInteger(parsed)) {
+      return { error: 'Age must be a whole number.' };
+    }
+    if (parsed < 1 || parsed > 120) {
+      return { error: 'Age must be between 1 and 120.' };
+    }
+    return { result: parsed };
+  };
+
+  const normalizePhone = (value: string): { result?: string | null; error?: string } => {
+    const digits = value.replace(/\D+/g, '');
+    if (!digits) {
+      return { result: null };
+    }
+    if (digits.length === 10) {
+      return { result: `+91${digits}` };
+    }
+    if (digits.length === 12 && digits.startsWith('91')) {
+      return { result: `+${digits}` };
+    }
+    if (digits.length === 13 && digits.startsWith('091')) {
+      return { result: `+${digits.slice(1)}` };
+    }
+    return { error: 'Enter a valid 10-digit Indian mobile number.' };
+  };
+
+  const validateFields = (current: { name: string; age: string; phone: string }) => {
+    const errors: { name?: string; age?: string; phone?: string } = {};
+    const sanitized: { name?: string; age?: number | null; phone?: string | null } = {};
+
+    const nameResult = normalizeName(current.name);
+    if (nameResult.error) {
+      errors.name = nameResult.error;
+    } else {
+      sanitized.name = nameResult.result;
+    }
+
+    const ageResult = normalizeAge(current.age);
+    if (ageResult.error) {
+      errors.age = ageResult.error;
+    } else {
+      sanitized.age = ageResult.result ?? null;
+    }
+
+    const phoneResult = normalizePhone(current.phone);
+    if (phoneResult.error) {
+      errors.phone = phoneResult.error;
+    } else {
+      sanitized.phone = phoneResult.result ?? null;
+    }
+
+    return { errors, sanitized };
+  };
 
   const handleSubmit = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -65,35 +146,25 @@ export function ManualAddPatientDialog({
       return;
     }
 
-    const trimmedName = name.trim();
-    if (!trimmedName) {
-      toast.error('Patient name is required.');
+    const validation = validateFields({ name, age, phone });
+    setFieldErrors(validation.errors);
+    setNameTouched(true);
+    setAgeTouched(true);
+    setPhoneTouched(true);
+
+    if (validation.errors.name || validation.errors.age || validation.errors.phone) {
+      toast.error('Please check the highlighted fields.');
+      if (!validation.sanitized.phone && skipNotification) {
+        setSkipNotification(false);
+      }
       return;
     }
 
-    let ageNumber: number | undefined;
-    const trimmedAge = age.trim();
-    if (trimmedAge.length > 0) {
-      const parsedAge = Number(trimmedAge);
-      if (!Number.isFinite(parsedAge) || parsedAge <= 0 || parsedAge > 200) {
-        toast.error('Age must be a number between 1 and 200.');
-        return;
-      }
-      ageNumber = Math.round(parsedAge);
-    }
+    const sanitizedName = validation.sanitized.name ?? name.trim();
+    const sanitizedAge = validation.sanitized.age ?? null;
+    const sanitizedPhone = validation.sanitized.phone ?? null;
 
-    let normalizedPhone: string | undefined;
-    const trimmedPhone = phone.trim();
-    if (trimmedPhone.length > 0) {
-      const digitsOnly = trimmedPhone.replace(/\D+/g, '');
-      if (digitsOnly.length !== 10) {
-        toast.error('Phone number must contain exactly 10 digits.');
-        return;
-      }
-      normalizedPhone = digitsOnly;
-    }
-
-    if (!normalizedPhone && skipNotification) {
+    if (!sanitizedPhone && skipNotification) {
       setSkipNotification(false);
     }
 
@@ -127,11 +198,11 @@ export function ManualAddPatientDialog({
         doctorId,
         queueId,
         patient: {
-          name: trimmedName,
-          ...(ageNumber != null ? { age: ageNumber } : {}),
-          ...(normalizedPhone ? { phone: normalizedPhone } : {}),
+          name: sanitizedName,
+          ...(sanitizedAge != null ? { age: sanitizedAge } : {}),
+          ...(sanitizedPhone ? { phone: sanitizedPhone } : {}),
         },
-        suppressNotification: skipNotification && !!normalizedPhone,
+        suppressNotification: skipNotification && !!sanitizedPhone,
       };
 
       const { data } = await callable(payload);
@@ -173,10 +244,25 @@ export function ManualAddPatientDialog({
               id="manual-patient-name"
               placeholder="Enter patient name"
               value={name}
-              onChange={(event) => setName(event.target.value)}
+              onChange={(event) => {
+                const value = event.target.value;
+                setName(value);
+                if (nameTouched) {
+                  const { errors } = validateFields({ name: value, age, phone });
+                  setFieldErrors((prev) => ({ ...prev, name: errors.name }));
+                }
+              }}
+              onBlur={() => {
+                setNameTouched(true);
+                const { errors } = validateFields({ name, age, phone });
+                setFieldErrors((prev) => ({ ...prev, name: errors.name }));
+              }}
               autoFocus
               disabled={loading}
             />
+            {nameTouched && fieldErrors.name ? (
+              <p className="text-xs text-destructive">{fieldErrors.name}</p>
+            ) : null}
           </div>
 
           <div className="grid gap-4 sm:grid-cols-2">
@@ -186,10 +272,26 @@ export function ManualAddPatientDialog({
                 id="manual-patient-age"
                 placeholder="e.g. 32"
                 value={age}
-                onChange={(event) => setAge(event.target.value)}
+                onChange={(event) => {
+                  const digits = event.target.value.replace(/\D+/g, '');
+                  const next = digits.slice(0, 3);
+                  setAge(next);
+                  if (ageTouched) {
+                    const { errors } = validateFields({ name, age: next, phone });
+                    setFieldErrors((prev) => ({ ...prev, age: errors.age }));
+                  }
+                }}
+                onBlur={() => {
+                  setAgeTouched(true);
+                  const { errors } = validateFields({ name, age, phone });
+                  setFieldErrors((prev) => ({ ...prev, age: errors.age }));
+                }}
                 inputMode="numeric"
                 disabled={loading}
               />
+              {ageTouched && fieldErrors.age ? (
+                <p className="text-xs text-destructive">{fieldErrors.age}</p>
+              ) : null}
             </div>
             <div className="space-y-1.5">
               <Label htmlFor="manual-patient-phone">Phone (optional)</Label>
@@ -197,11 +299,28 @@ export function ManualAddPatientDialog({
                 id="manual-patient-phone"
                 placeholder="10 digit phone"
                 value={phone}
-                onChange={(event) => setPhone(event.target.value)}
+                onChange={(event) => {
+                  const digits = event.target.value.replace(/\D+/g, '');
+                  const next = digits.slice(0, 12);
+                  setPhone(next);
+                  if (phoneTouched) {
+                    const { errors } = validateFields({ name, age, phone: next });
+                    setFieldErrors((prev) => ({ ...prev, phone: errors.phone }));
+                  }
+                }}
+                onBlur={() => {
+                  setPhoneTouched(true);
+                  const { errors } = validateFields({ name, age, phone });
+                  setFieldErrors((prev) => ({ ...prev, phone: errors.phone }));
+                }}
                 inputMode="tel"
                 disabled={loading}
               />
-              <p className="text-xs text-muted-foreground">Digits only. Leave blank if not available.</p>
+              {phoneTouched && fieldErrors.phone ? (
+                <p className="text-xs text-destructive">{fieldErrors.phone}</p>
+              ) : (
+                <p className="text-xs text-muted-foreground">Digits only. Leave blank if not available.</p>
+              )}
             </div>
           </div>
 
@@ -226,7 +345,7 @@ export function ManualAddPatientDialog({
             <Button
               type="submit"
               loading={loading}
-              disabled={!clinicId || !doctorId || !queueId || !name.trim() || !canModifyQueue}
+              disabled={!clinicId || !doctorId || !queueId || !normalizeName(name).result || !canModifyQueue || loading}
             >
               Add to queue
             </Button>

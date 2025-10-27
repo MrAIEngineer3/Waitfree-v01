@@ -37,6 +37,7 @@ exports.recomputeQueueNotifications = recomputeQueueNotifications;
 const functions = __importStar(require("firebase-functions/v1"));
 const notifier_1 = require("./notifier");
 const firebaseAdmin_1 = require("./firebaseAdmin");
+const notificationPreferences_1 = require("./settings/notificationPreferences");
 const FALLBACK_SERVICE_MIN_MS = 8 * 60 * 1000; // 8 minutes default
 function computeMilestone(status, patientsAhead) {
     if (status === 'in-progress')
@@ -70,6 +71,19 @@ async function recomputeQueueNotifications(params) {
     if (!queueSnap.exists) {
         functions.logger.warn('Queue missing during recompute', params);
         return { skipped: true };
+    }
+    const tokenUpdatesAllowed = await (0, notificationPreferences_1.isNotificationEnabled)({
+        clinicId,
+        channel: 'whatsapp',
+        event: 'tokenUpdates'
+    });
+    if (!tokenUpdatesAllowed) {
+        functions.logger.info('Notification preferences disabled token updates; skipping queue recompute notifications', {
+            clinicId,
+            doctorId,
+            queueId
+        });
+        return { skipped: true, reason: 'token-updates-disabled' };
     }
     const qData = queueSnap.data() || {};
     const avgServiceMs = qData?.metrics?.avgServiceMs;

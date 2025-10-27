@@ -39,6 +39,7 @@ const firebaseAdmin_1 = require("../firebaseAdmin");
 const notificationQueue_1 = require("./notificationQueue");
 const availability_1 = require("./availability");
 const settings_1 = require("./settings");
+const phone_1 = require("../utils/phone");
 const serializeRealTimeStatus = (status) => {
     if (!status) {
         return null;
@@ -83,6 +84,14 @@ const createRequestDoctorOnlineNotificationHandler = (overrides = {}) => {
         const patientName = typeof data?.patientName === 'string' ? data.patientName.trim() : undefined;
         if (!clinicId || !doctorId || !phone) {
             throw new deps.HttpsError('invalid-argument', 'clinicId, doctorId and phone are required');
+        }
+        let normalizedPhone;
+        try {
+            normalizedPhone = (0, phone_1.requireNormalizedPhone)(phone);
+        }
+        catch (error) {
+            const message = error instanceof phone_1.PhoneNormalizationError ? error.message : 'Invalid phone number';
+            throw new deps.HttpsError('invalid-argument', message);
         }
         const doctorRef = firebaseAdmin_1.admin.firestore().collection('clinics').doc(clinicId).collection('doctors').doc(doctorId);
         const doctorSnap = await doctorRef.get();
@@ -138,7 +147,7 @@ const createRequestDoctorOnlineNotificationHandler = (overrides = {}) => {
             const enqueueResult = await deps.enqueueDoctorOnlineNotification({
                 clinicId,
                 doctorId,
-                phone,
+                phone: normalizedPhone,
                 patientName: patientName ?? null,
                 source: context.auth ? 'staff' : 'patient-app',
                 doctorName

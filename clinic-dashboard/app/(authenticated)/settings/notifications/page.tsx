@@ -23,7 +23,7 @@ type EventState = Record<EventKey, boolean>;
 const CHANNEL_TEMPLATE: ChannelState = {
   whatsapp: true,
   sms: false,
-  email: true,
+  email: false,
 };
 
 const EVENT_TEMPLATE: EventState = {
@@ -45,7 +45,7 @@ function createDefaultEvents(): EventState {
 }
 
 function normalizeSettings(doc: NotificationSettingsDoc | null | undefined): NormalizedSettings {
-  return {
+  const normalized: NormalizedSettings = {
     channels: {
       whatsapp: doc?.channels?.whatsapp ?? CHANNEL_TEMPLATE.whatsapp,
       sms: doc?.channels?.sms ?? CHANNEL_TEMPLATE.sms,
@@ -56,6 +56,11 @@ function normalizeSettings(doc: NotificationSettingsDoc | null | undefined): Nor
       appointmentReminders: doc?.events?.appointmentReminders ?? EVENT_TEMPLATE.appointmentReminders,
     },
   };
+
+  normalized.channels.sms = false;
+  normalized.channels.email = false;
+
+  return normalized;
 }
 
 function isEqualChannelState(a: ChannelState, b: ChannelState): boolean {
@@ -66,30 +71,48 @@ function isEqualEventState(a: EventState, b: EventState): boolean {
   return EVENT_KEYS.every((key) => a[key] === b[key]);
 }
 
-function Toggle({ checked, onChange, label, description, icon }: {
+function Toggle({ checked, onChange, label, description, icon, disabled, badge }: {
   checked: boolean;
   onChange: (checked: boolean) => void;
   label: string;
   description?: string;
   icon?: ReactNode;
+  disabled?: boolean;
+  badge?: string;
 }) {
+  const disabledClasses = disabled ? 'opacity-60 cursor-not-allowed bg-muted/50' : '';
   return (
-    <div className="flex items-start gap-4 p-4 rounded-xl border border-border hover:border-primary/50 hover:bg-accent transition-all">
+    <div className={`flex items-start gap-4 p-4 rounded-xl border border-border transition-all ${disabled ? '' : 'hover:border-primary/50 hover:bg-accent'} ${disabledClasses}`}>
       {icon && (
         <div className="w-10 h-10 rounded-lg bg-accent flex items-center justify-center flex-shrink-0">
           {icon}
         </div>
       )}
       <div className="flex-1 min-w-0">
-        <Label htmlFor={`toggle-${label.replace(/\s+/g, '-').toLowerCase()}`} className="text-sm font-semibold text-foreground cursor-pointer">
-          {label}
-        </Label>
+        <div className="flex items-center gap-2 flex-wrap">
+          <Label
+            htmlFor={`toggle-${label.replace(/\s+/g, '-').toLowerCase()}`}
+            className={`text-sm font-semibold ${disabled ? 'text-muted-foreground' : 'text-foreground'} ${disabled ? 'cursor-not-allowed' : 'cursor-pointer'}`}
+          >
+            {label}
+          </Label>
+          {badge && (
+            <span className="text-xs font-semibold uppercase tracking-wide text-muted-foreground border border-border rounded-full px-2 py-0.5">
+              {badge}
+            </span>
+          )}
+        </div>
         {description && <p className="text-xs text-muted-foreground mt-0.5">{description}</p>}
       </div>
       <Switch
         id={`toggle-${label.replace(/\s+/g, '-').toLowerCase()}`}
         checked={checked}
-        onCheckedChange={onChange}
+        onCheckedChange={(value) => {
+          if (!disabled) {
+            onChange(value);
+          }
+        }}
+        disabled={disabled}
         className="data-[state=checked]:bg-primary"
       />
     </div>
@@ -220,6 +243,7 @@ export default function NotificationsSettingsPage() {
           <path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51-.173-.008-.371-.01-.57-.01-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347m-5.421 7.403h-.004a9.87 9.87 0 01-5.031-1.378l-.361-.214-3.741.982.998-3.648-.235-.374a9.86 9.86 0 01-1.51-5.26c.001-5.45 4.436-9.884 9.888-9.884 2.64 0 5.122 1.03 6.988 2.898a9.825 9.825 0 012.893 6.994c-.003 5.45-4.437 9.884-9.885 9.884m8.413-18.297A11.815 11.815 0 0012.05 0C5.495 0 .16 5.335.157 11.892c0 2.096.547 4.142 1.588 5.945L.057 24l6.305-1.654a11.882 11.882 0 005.683 1.448h.005c6.554 0 11.89-5.335 11.893-11.893a11.821 11.821 0 00-3.48-8.413z"/>
         </svg>
       ),
+      disabled: false as const
     },
     {
       key: 'sms' as ChannelKey,
@@ -230,6 +254,8 @@ export default function NotificationsSettingsPage() {
           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 8h10M7 12h4m1 8l-4-4H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-3l-4 4z" />
         </svg>
       ),
+      disabled: true as const,
+      badge: 'Coming soon'
     },
     {
       key: 'email' as ChannelKey,
@@ -240,6 +266,8 @@ export default function NotificationsSettingsPage() {
           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" />
         </svg>
       ),
+      disabled: true as const,
+      badge: 'Coming soon'
     },
   ]), []);
 
@@ -334,10 +362,15 @@ export default function NotificationsSettingsPage() {
                 <Toggle
                   key={option.key}
                   checked={channels[option.key]}
-                  onChange={(checked) => setChannels((prev) => ({ ...prev, [option.key]: checked }))}
+                  onChange={(checked) => {
+                    if (option.disabled) return;
+                    setChannels((prev) => ({ ...prev, [option.key]: checked }));
+                  }}
                   label={option.label}
                   description={option.description}
                   icon={option.icon}
+                  disabled={option.disabled}
+                  badge={option.badge}
                 />
               ))}
             </div>

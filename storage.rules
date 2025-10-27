@@ -1,9 +1,9 @@
 rules_version = '2';
 service firebase.storage {
   match /b/{bucket}/o {
-    // Allow users to manage their own profile images under users/{uid}/...
+  // Allow only the profile owner to manage their own assets
     match /users/{userId}/{allPaths=**} {
-      allow read: if true; // Public can read profile images
+      allow read: if request.auth != null && request.auth.uid == userId;
       allow write: if request.auth != null && request.auth.uid == userId;
     }
 

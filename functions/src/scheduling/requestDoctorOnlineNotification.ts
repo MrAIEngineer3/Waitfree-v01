@@ -4,6 +4,7 @@ import { admin } from '../firebaseAdmin';
 import { enqueueDoctorOnlineNotification, shouldEnqueueForStatus } from './notificationQueue';
 import { resolveDoctorAvailability } from './availability';
 import { loadClinicSchedulingSettings } from './settings';
+import { requireNormalizedPhone, PhoneNormalizationError } from '../utils/phone';
 import type {
   ClinicSchedulingSettings,
   DoctorAvailabilityResult,
@@ -112,6 +113,14 @@ export const createRequestDoctorOnlineNotificationHandler = (
       throw new deps.HttpsError('invalid-argument', 'clinicId, doctorId and phone are required');
     }
 
+    let normalizedPhone: string;
+    try {
+      normalizedPhone = requireNormalizedPhone(phone);
+    } catch (error) {
+      const message = error instanceof PhoneNormalizationError ? error.message : 'Invalid phone number';
+      throw new deps.HttpsError('invalid-argument', message);
+    }
+
     const doctorRef = admin.firestore().collection('clinics').doc(clinicId).collection('doctors').doc(doctorId);
     const doctorSnap = await doctorRef.get();
     if (!doctorSnap.exists) {
@@ -175,7 +184,7 @@ export const createRequestDoctorOnlineNotificationHandler = (
       const enqueueResult = await deps.enqueueDoctorOnlineNotification({
         clinicId,
         doctorId,
-        phone,
+  phone: normalizedPhone,
         patientName: patientName ?? null,
         source: context.auth ? 'staff' : 'patient-app',
         doctorName

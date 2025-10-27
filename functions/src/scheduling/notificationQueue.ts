@@ -1,26 +1,17 @@
 import { createHash } from 'crypto';
+import * as functions from 'firebase-functions/v1';
 import { FieldValue } from 'firebase-admin/firestore';
 import { admin } from '../firebaseAdmin';
 
 import { sendNotification } from '../notifier';
+import { isNotificationEnabled } from '../settings/notificationPreferences';
 import type { ClinicSchedulingSettings, RealTimeStatus } from './types';
+import { requireNormalizedPhone, PhoneNormalizationError } from '../utils/phone';
 
 const db = admin.firestore();
 
 const notificationsCollection = (clinicId: string, doctorId: string) =>
   db.collection('clinics').doc(clinicId).collection('doctors').doc(doctorId).collection('availabilityNotifications');
-
-const formatPhone = (raw: string): string => {
-  let cleaned = raw.trim();
-  cleaned = cleaned.replace(/[^+\d]/g, '');
-  if (!cleaned.startsWith('+')) {
-    if (cleaned.startsWith('0')) {
-      cleaned = cleaned.slice(1);
-    }
-    cleaned = `+91${cleaned}`;
-  }
-  return cleaned;
-};
 
 const computeContactKey = (channel: string, phone: string) => {
   const hash = createHash('sha256');
@@ -57,7 +48,13 @@ export const enqueueDoctorOnlineNotification = async (
   }
 
   const channel = DEFAULT_CHANNEL;
-  const phone = formatPhone(input.phone);
+  let phone: string;
+  try {
+    phone = requireNormalizedPhone(input.phone);
+  } catch (error) {
+    const reason = error instanceof PhoneNormalizationError ? error.message : 'Invalid phone number';
+    throw new Error(reason);
+  }
   const contactKey = computeContactKey(channel, phone);
 
   const colRef = notificationsCollection(clinicId, doctorId);
@@ -122,6 +119,24 @@ export const dispatchDoctorOnlineNotifications = async (
   input: DispatchInput
 ): Promise<DispatchResult> => {
   const { clinicId, doctorId } = input;
+
+  const tokenUpdatesAllowed = await isNotificationEnabled({
+    clinicId,
+    channel: 'whatsapp',
+    event: 'tokenUpdates'
+  });
+
+  if (!tokenUpdatesAllowed) {
+    functions.logger.info(
+      'Doctor online notifications skipped because token updates are disabled in notification preferences',
+      { clinicId, doctorId }
+    );
+    return {
+      notified: 0,
+      attempted: 0
+    };
+  }
+
   const colRef = notificationsCollection(clinicId, doctorId);
   const query = await colRef
     .where('status', '==', 'pending')

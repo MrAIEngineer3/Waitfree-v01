@@ -3,40 +3,77 @@ rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
 
-    // Simplified development rules:
-    // - Any authenticated user can read/write clinic, doctor, queue, and patient documents.
-    // - Public (unauthenticated) read access to high-level clinic & doctor metadata and queue metadata (GET only) is allowed.
-    // WARNING: These rules are NOT suitable for production. Add role-based / field-level restrictions before launch.
+    function userData() {
+      return request.auth != null
+        ? get(/databases/$(database)/documents/users/$(request.auth.uid)).data
+        : null;
+    }
+
+    function hasClinicAccess(clinicId) {
+      let user = userData();
+      return user != null && user.clinicId == clinicId;
+    }
+
+    function hasDoctorAccess(clinicId, doctorId) {
+      let user = userData();
+      return user != null && user.clinicId == clinicId && user.doctorId == doctorId;
+    }
+
+    function isPatientSession() {
+      return request.auth != null && request.auth.token.patient == true;
+    }
+
+    function matchesPatientQueue(clinicId, doctorId, queueId) {
+      return isPatientSession()
+        && request.auth.token.patientClinicId == clinicId
+        && request.auth.token.patientDoctorId == doctorId
+        && request.auth.token.patientQueueId == queueId;
+    }
+
+    function isPatientDocument(clinicId, doctorId, queueId, patientId) {
+      return matchesPatientQueue(clinicId, doctorId, queueId)
+        && request.auth.token.patientId == patientId;
+    }
 
     match /clinics/{clinicId} {
-      allow read: if true;              // Public can read clinic info (incl. name, contactNumber)
-      allow write: if request.auth != null;  // Any authed user can modify during dev
+      allow get: if hasClinicAccess(clinicId) || (isPatientSession() && request.auth.token.patientClinicId == clinicId);
+      allow list: if hasClinicAccess(clinicId);
+      allow create, update, delete: if hasClinicAccess(clinicId);
+
+      match /settings/{settingId} {
+        allow get: if hasClinicAccess(clinicId);
+        allow list: if false;
+        allow create, update, delete: if hasClinicAccess(clinicId);
+      }
 
       match /doctors/{doctorId} {
-  allow read: if true;           // Public doctor info
-  allow write: if request.auth != null; // Allow CRUD from dashboard (dev)
+        allow get: if hasClinicAccess(clinicId) || (isPatientSession() && request.auth.token.patientClinicId == clinicId && request.auth.token.patientDoctorId == doctorId);
+        allow list: if hasClinicAccess(clinicId);
+        allow create, update, delete: if hasClinicAccess(clinicId);
 
         match /scheduling/{configId} {
-          allow read: if true;           // Public can read scheduling/availability info
-          allow write: if request.auth != null; // Auth required to modify scheduling
+          allow get, list: if hasClinicAccess(clinicId);
+          allow create, update, delete: if hasClinicAccess(clinicId);
         }
 
         match /queues/{queueId} {
-          allow get: if true;          // Public can fetch queue metadata (e.g., current token)
-          allow read, write: if request.auth != null; // All other queue ops require auth
+          allow get: if hasClinicAccess(clinicId) || matchesPatientQueue(clinicId, doctorId, queueId);
+          allow list: if hasClinicAccess(clinicId);
+          allow create, update, delete: if hasDoctorAccess(clinicId, doctorId);
 
           match /patients/{patientId} {
-            allow read, write: if request.auth != null; // Auth required for any patient access (broad during dev)
+            allow get: if hasDoctorAccess(clinicId, doctorId) || isPatientDocument(clinicId, doctorId, queueId, patientId);
+            allow list: if hasDoctorAccess(clinicId, doctorId);
+            allow create, update, delete: if hasDoctorAccess(clinicId, doctorId);
           }
         }
       }
     }
 
-    // User profile docs: allow user to manage their own document. No staff/admin concept here.
     match /users/{userId} {
       allow create, update: if request.auth != null && request.auth.uid == userId;
       allow get: if request.auth != null && request.auth.uid == userId;
-      allow list: if false; // Prevent enumeration
+      allow list: if false;
     }
   }
 }

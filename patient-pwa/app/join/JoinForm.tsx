@@ -2,7 +2,6 @@
 
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { collection, doc, getDoc, getDocs } from 'firebase/firestore';
 import { httpsCallable } from 'firebase/functions';
 import { toast } from 'sonner';
 
@@ -16,10 +15,11 @@ import { Separator } from '@/components/ui/separator';
 import { Skeleton } from '@/components/ui/skeleton';
 import { cn } from '@/lib/utils';
 
-import { db, functions } from '../../lib/firebase';
+import { functions } from '../../lib/firebase';
 import {
   getClinicDoctorAvailability,
   type ClinicDoctorAvailabilityEntry,
+  type ClinicSummary,
   type DoctorAvailabilityPayload,
 } from '../../lib/availability';
 import {
@@ -90,6 +90,85 @@ const AVAILABILITY_TONE_BADGE: Record<
   positive: { badgeVariant: 'success' },
   warning: { badgeVariant: 'warning' },
   neutral: { badgeVariant: 'secondary', badgeClassName: 'text-muted-foreground bg-muted/40' },
+};
+
+type PatientFieldErrors = {
+  name?: string;
+  age?: string;
+  phone?: string;
+};
+
+const collapseWhitespace = (value: string) => value.replace(/\s+/g, ' ');
+
+const normalizeName = (value: string): { result?: string; error?: string } => {
+  const trimmed = collapseWhitespace(value.trim());
+  if (!trimmed) {
+    return { error: 'Please enter your full name.' };
+  }
+  if (trimmed.length < 2 || trimmed.length > 100) {
+    return { error: 'Name must be between 2 and 100 characters.' };
+  }
+  return { result: trimmed };
+};
+
+const normalizeAge = (value: string, required: boolean): { result?: number | null; error?: string } => {
+  const digits = value.replace(/\D+/g, '');
+  if (!digits) {
+    return required ? { error: 'Please enter your age.' } : { result: null };
+  }
+  const parsed = Number.parseInt(digits, 10);
+  if (!Number.isFinite(parsed) || !Number.isInteger(parsed)) {
+    return { error: 'Please enter a whole number for age.' };
+  }
+  if (parsed < 1 || parsed > 120) {
+    return { error: 'Age must be between 1 and 120.' };
+  }
+  return { result: parsed };
+};
+
+const normalizePhone = (value: string, required: boolean): { result?: string | null; error?: string } => {
+  const digits = value.replace(/\D+/g, '');
+  if (!digits) {
+    return required ? { error: 'Please enter a phone number.' } : { result: null };
+  }
+  if (digits.length === 10) {
+    return { result: `+91${digits}` };
+  }
+  if (digits.length === 12 && digits.startsWith('91')) {
+    return { result: `+${digits}` };
+  }
+  return { error: 'Enter a valid 10-digit Indian mobile number.' };
+};
+
+const validatePatientFields = (
+  fields: { name: string; age: string; phone: string },
+  options: { requireAge?: boolean; requirePhone?: boolean }
+): { errors: PatientFieldErrors; sanitized: { name?: string; age?: number | null; phone?: string | null } } => {
+  const errors: PatientFieldErrors = {};
+  const sanitized: { name?: string; age?: number | null; phone?: string | null } = {};
+
+  const nameResult = normalizeName(fields.name);
+  if (nameResult.error) {
+    errors.name = nameResult.error;
+  } else {
+    sanitized.name = nameResult.result;
+  }
+
+  const ageResult = normalizeAge(fields.age, options.requireAge !== false);
+  if (ageResult.error) {
+    errors.age = ageResult.error;
+  } else {
+    sanitized.age = ageResult.result ?? null;
+  }
+
+  const phoneResult = normalizePhone(fields.phone, options.requirePhone !== false);
+  if (phoneResult.error) {
+    errors.phone = phoneResult.error;
+  } else {
+    sanitized.phone = phoneResult.result ?? null;
+  }
+
+  return { errors, sanitized };
 };
 
 function formatNextAvailability(iso: string | null | undefined) {
@@ -165,9 +244,12 @@ export default function JoinForm() {
   const [name, setName] = useState('');
   const [age, setAge] = useState('');
   const [phone, setPhone] = useState('');
+  const [nameTouched, setNameTouched] = useState(false);
+  const [ageTouched, setAgeTouched] = useState(false);
   const [phoneTouched, setPhoneTouched] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState('');
+  const [fieldErrors, setFieldErrors] = useState<PatientFieldErrors>({});
 
   const [clinicId, setClinicId] = useState<string | null>(null);
   const [doctorId, setDoctorId] = useState<string | null>(null);
@@ -178,7 +260,7 @@ export default function JoinForm() {
   const [availabilityByDoctor, setAvailabilityByDoctor] = useState<Record<string, DoctorAvailabilityPayload>>({});
   const [notifyStates, setNotifyStates] = useState<Record<string, NotifyState>>({});
   const [status, setStatus] = useState<'loading' | 'valid' | 'invalid'>('loading');
-  const [clinicData, setClinicData] = useState<{ name?: string; address?: string; phone?: string } | null>(null);
+  const [clinicData, setClinicData] = useState<ClinicSummary | null>(null);
   const [clinicSchedulingSettings, setClinicSchedulingSettings] = useState<ClinicSchedulingSettings>(() =>
     getDefaultClinicSchedulingSettings()
   );
@@ -249,20 +331,18 @@ export default function JoinForm() {
     event.preventDefault();
     setError('');
 
-    if (!name.trim() || !age.trim()) {
-      setError('Please fill in all fields');
-      return;
-    }
+    const validation = validatePatientFields(
+      { name, age, phone },
+      { requireAge: true, requirePhone: true }
+    );
+    setFieldErrors(validation.errors);
+    setNameTouched(true);
+    setAgeTouched(true);
+    setPhoneTouched(true);
 
-    const normalizedDigits = phone.replace(/\D+/g, '');
-    if (normalizedDigits.length !== 10) {
-      setPhoneTouched(true);
-      return;
-    }
-
-    const ageNumber = Number.parseInt(age, 10);
-    if (!Number.isFinite(ageNumber) || ageNumber <= 0 || ageNumber > 200) {
-      setError('Please enter a valid age');
+    if (validation.errors.name || validation.errors.age || validation.errors.phone) {
+      setError('Please fix the highlighted fields.');
+      toast.error('Please check the highlighted fields.');
       return;
     }
 
@@ -309,9 +389,9 @@ export default function JoinForm() {
         clinicId,
         doctorId,
         patientData: {
-          name: name.trim(),
-          age: ageNumber,
-          phone: normalizedDigits,
+          name: validation.sanitized.name ?? name.trim(),
+          age: validation.sanitized.age ?? Number.parseInt(age, 10),
+          phone: validation.sanitized.phone ?? phone.replace(/\D+/g, ''),
         },
       });
 
@@ -375,9 +455,14 @@ export default function JoinForm() {
       return;
     }
 
-    const normalizedDigits = phone.replace(/\D+/g, '');
-    if (normalizedDigits.length !== 10) {
-      setPhoneTouched(true);
+    const validation = validatePatientFields(
+      { name, age, phone },
+      { requireAge: false, requirePhone: true }
+    );
+    setFieldErrors((prev) => ({ ...prev, phone: validation.errors.phone }));
+    setPhoneTouched(true);
+    if (validation.errors.phone) {
+      toast.error(validation.errors.phone);
       return;
     }
 
@@ -392,7 +477,7 @@ export default function JoinForm() {
       const { data } = await notifyFn({
         clinicId,
         doctorId,
-        phone: normalizedDigits,
+        phone: validation.sanitized.phone ?? phone.replace(/\D+/g, ''),
         patientName: name.trim() || undefined,
       });
 
@@ -516,120 +601,32 @@ export default function JoinForm() {
       setDoctorId(coercedDoctorId ?? null);
       setClinicSchedulingSettings(getDefaultClinicSchedulingSettings());
       setStatus('valid');
-
-      const fetchClinic = async () => {
-        try {
-          const clinicRef = doc(db, 'clinics', coercedClinicId);
-          const clinicSnapshot = await getDoc(clinicRef);
-          if (isMountedRef.current && clinicSnapshot.exists()) {
-            setClinicData(clinicSnapshot.data() as { name?: string; address?: string; phone?: string } | null);
-          }
-        } catch (err) {
-          console.error('Error fetching clinic:', err);
-        }
-      };
-
-      const fetchDoctorProfiles = async () => {
-        if (coercedDoctorId) {
-          // Show a placeholder immediately so the UI does not stay on skeletons.
-          setDoctors([
-            {
-              id: coercedDoctorId,
-              name: coercedDoctorId,
-              specialty: 'Doctor',
-              availability: null,
-            },
-          ]);
-          setDoctorsLoading(false);
-
-          setAvailabilityByDoctor((prev) => {
-            if (prev[coercedDoctorId]) return prev;
-            return {
-              ...prev,
-              [coercedDoctorId]: createPlaceholderAvailability(),
-            };
-          });
-
-          try {
-            const doctorRef = doc(db, 'clinics', coercedClinicId, 'doctors', coercedDoctorId);
-            const doctorSnapshot = await getDoc(doctorRef);
-            if (!isMountedRef.current || !doctorSnapshot.exists()) {
-              return;
-            }
-
-            const data = doctorSnapshot.data() as { name?: string | null; specialty?: string | null } | undefined;
-            setDoctors((prev) =>
-              prev.map((entry) =>
-                entry.id === coercedDoctorId
-                  ? {
-                      ...entry,
-                      name: data?.name ?? entry.name ?? coercedDoctorId,
-                      specialty: data?.specialty ?? entry.specialty ?? 'Doctor',
-                    }
-                  : entry
-              )
-            );
-          } catch (err) {
-            console.error('Error fetching doctor profiles:', err);
-          }
-
-          return;
-        }
-
+      setClinicData(null);
+      if (coercedDoctorId) {
+        setDoctors([
+          {
+            id: coercedDoctorId,
+            name: coercedDoctorId,
+            specialty: 'Doctor',
+            availability: null,
+          },
+        ]);
+        setDoctorsLoading(false);
+        setAvailabilityByDoctor({
+          [coercedDoctorId]: createPlaceholderAvailability(),
+        });
+      } else {
+        setDoctors([]);
         setDoctorsLoading(true);
-        try {
-          const doctorsRef = collection(db, 'clinics', coercedClinicId, 'doctors');
-          const snapshot = await getDocs(doctorsRef);
-          if (!isMountedRef.current) return;
-
-          const list: DoctorListEntry[] = [];
-          snapshot.forEach((docSnap) => {
-            const data = docSnap.data() as { name?: string; specialty?: string } | undefined;
-            list.push({
-              id: docSnap.id,
-              name: data?.name ?? docSnap.id,
-              specialty: data?.specialty ?? 'General Practice',
-              availability: null,
-            });
-          });
-
-          setDoctors(list);
-          setAvailabilityByDoctor((prev) => {
-            const next = { ...prev };
-            list.forEach((entry) => {
-              if (!next[entry.id]) {
-                next[entry.id] = createPlaceholderAvailability();
-              }
-            });
-            return next;
-          });
-          if (isMountedRef.current && !doctorIdWasProvided && list.length === 1) {
-            setDoctorId(list[0].id);
-          }
-        } catch (err) {
-          console.error('Error fetching doctor profiles:', err);
-          if (isMountedRef.current) {
-            setAvailabilityByDoctor((prev) => {
-              if (coercedDoctorId) {
-                return {
-                  ...prev,
-                  [coercedDoctorId]: prev[coercedDoctorId] ?? createPlaceholderAvailability(
-                    'Unable to load live availability. Please try again.'
-                  ),
-                };
-              }
-              return prev;
-            });
-          }
-        } finally {
-          if (isMountedRef.current) {
-            setDoctorsLoading(false);
-          }
-        }
-      };
+        setAvailabilityByDoctor({});
+      }
 
       const loadAvailability = async () => {
         let mergedDoctors: DoctorListEntry[] = [];
+
+        if (isMountedRef.current && !coercedDoctorId) {
+          setDoctorsLoading(true);
+        }
 
         try {
           if (isMountedRef.current) {
@@ -641,17 +638,20 @@ export default function JoinForm() {
             coercedDoctorId ? [coercedDoctorId] : undefined
           );
 
-          const entries = response.doctors;
-
           if (!isMountedRef.current) {
             return;
           }
 
+          setClinicData(response.clinic ?? null);
+
+          const entries = response.doctors;
+
+          const availabilityMap = entries.reduce<Record<string, DoctorAvailabilityPayload>>((acc, entry) => {
+            acc[entry.doctorId] = entry.availability;
+            return acc;
+          }, {});
+
           if (entries.length > 0) {
-            const availabilityMap = entries.reduce<Record<string, DoctorAvailabilityPayload>>((acc, entry) => {
-              acc[entry.doctorId] = entry.availability;
-              return acc;
-            }, {});
             setAvailabilityByDoctor((prev) => ({ ...prev, ...availabilityMap }));
           } else if (coercedDoctorId) {
             setAvailabilityByDoctor((prev) => ({
@@ -664,38 +664,51 @@ export default function JoinForm() {
             return;
           }
 
-          setDoctors((prev) => {
-            const merged = new Map<string, DoctorListEntry>();
+          const resolvedDoctors: DoctorListEntry[] = entries.map((entry: ClinicDoctorAvailabilityEntry) => ({
+            id: entry.doctorId,
+            name: entry.profile?.name ?? entry.doctorId,
+            specialty: entry.profile?.specialty ?? 'General Practice',
+            availability: entry.availability,
+          }));
 
-            prev.forEach((docEntry) => {
-              merged.set(docEntry.id, { ...docEntry });
-            });
-
-            entries.forEach((entry: ClinicDoctorAvailabilityEntry) => {
-              const existing = merged.get(entry.doctorId);
-              merged.set(entry.doctorId, {
-                id: entry.doctorId,
-                name: entry.profile?.name ?? existing?.name ?? entry.doctorId,
-                specialty: entry.profile?.specialty ?? existing?.specialty ?? 'General Practice',
-                availability: entry.availability,
-              });
-            });
-
-            if (merged.size === 0 && coercedDoctorId) {
-              merged.set(coercedDoctorId, {
+          if (resolvedDoctors.length > 0) {
+            mergedDoctors = resolvedDoctors;
+            setDoctors(resolvedDoctors);
+          } else if (coercedDoctorId) {
+            mergedDoctors = [
+              {
                 id: coercedDoctorId,
                 name: coercedDoctorId,
                 specialty: 'Doctor',
-                availability: null,
-              });
-            }
+                availability: availabilityMap[coercedDoctorId] ?? null,
+              },
+            ];
+            setDoctors(mergedDoctors);
+          } else {
+            mergedDoctors = [];
+            setDoctors([]);
+          }
 
-            mergedDoctors = Array.from(merged.values());
-            return mergedDoctors;
-          });
+          if (isMountedRef.current) {
+            setDoctorId((current) => {
+              if (current) {
+                return current;
+              }
 
-          if (isMountedRef.current && !doctorIdWasProvided && !coercedDoctorId && mergedDoctors.length === 1) {
-            setDoctorId(mergedDoctors[0].id);
+              if (coercedDoctorId) {
+                return coercedDoctorId;
+              }
+
+              if (!doctorIdWasProvided && !coercedDoctorId && resolvedDoctors.length === 1) {
+                return resolvedDoctors[0].id;
+              }
+
+              if (!doctorIdWasProvided && !coercedDoctorId && mergedDoctors.length === 1) {
+                return mergedDoctors[0].id;
+              }
+
+              return current;
+            });
           }
         } catch (err) {
           console.error('Error fetching doctor availability:', err);
@@ -720,6 +733,10 @@ export default function JoinForm() {
             });
           }
         }
+
+        if (isMountedRef.current) {
+          setDoctorsLoading(false);
+        }
       };
 
       const loadSchedulingSettings = async () => {
@@ -736,8 +753,6 @@ export default function JoinForm() {
         }
       };
 
-      fetchClinic();
-      fetchDoctorProfiles();
       loadAvailability();
       loadSchedulingSettings();
     } catch (err) {
@@ -1036,9 +1051,24 @@ export default function JoinForm() {
                   autoComplete="name"
                   autoCapitalize="words"
                   value={name}
-                  onChange={(event) => setName(event.target.value)}
+                  onChange={(event) => {
+                    const value = event.target.value;
+                    setName(value);
+                    if (nameTouched) {
+                      const { errors } = validatePatientFields({ name: value, age, phone }, { requireAge: true, requirePhone: true });
+                      setFieldErrors((prev) => ({ ...prev, name: errors.name }));
+                    }
+                  }}
+                  onBlur={() => {
+                    setNameTouched(true);
+                    const { errors } = validatePatientFields({ name, age, phone }, { requireAge: true, requirePhone: true });
+                    setFieldErrors((prev) => ({ ...prev, name: errors.name }));
+                  }}
                   disabled={isLoading}
                 />
+                {nameTouched && fieldErrors.name ? (
+                  <p className="text-xs text-destructive">{fieldErrors.name}</p>
+                ) : null}
               </div>
 
               <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
@@ -1053,10 +1083,25 @@ export default function JoinForm() {
                     onChange={(event) => {
                       const digits = event.target.value.replace(/\D+/g, '');
                       setAge(digits.slice(0, 3));
+                      if (ageTouched) {
+                        const { errors } = validatePatientFields(
+                          { name, age: digits.slice(0, 3), phone },
+                          { requireAge: true, requirePhone: true }
+                        );
+                        setFieldErrors((prev) => ({ ...prev, age: errors.age }));
+                      }
+                    }}
+                    onBlur={() => {
+                      setAgeTouched(true);
+                      const { errors } = validatePatientFields({ name, age, phone }, { requireAge: true, requirePhone: true });
+                      setFieldErrors((prev) => ({ ...prev, age: errors.age }));
                     }}
                     disabled={isLoading}
                     maxLength={3}
                   />
+                  {ageTouched && fieldErrors.age ? (
+                    <p className="text-xs text-destructive">{fieldErrors.age}</p>
+                  ) : null}
                 </div>
 
                 <div className="space-y-2">
@@ -1071,19 +1116,30 @@ export default function JoinForm() {
                     onChange={(event) => {
                       const digits = event.target.value.replace(/\D+/g, '');
                       setPhone(digits.slice(0, 10));
+                      if (phoneTouched) {
+                        const { errors } = validatePatientFields(
+                          { name, age, phone: digits.slice(0, 10) },
+                          { requireAge: true, requirePhone: true }
+                        );
+                        setFieldErrors((prev) => ({ ...prev, phone: errors.phone }));
+                      }
                     }}
-                    onBlur={() => setPhoneTouched(true)}
+                    onBlur={() => {
+                      setPhoneTouched(true);
+                      const { errors } = validatePatientFields({ name, age, phone }, { requireAge: true, requirePhone: true });
+                      setFieldErrors((prev) => ({ ...prev, phone: errors.phone }));
+                    }}
                     disabled={isLoading}
                     maxLength={10}
-                    aria-invalid={phoneTouched && phone.replace(/\D+/g, '').length !== 10}
+                    aria-invalid={Boolean(phoneTouched && fieldErrors.phone)}
                     className={cn(
-                      phoneTouched && phone.replace(/\D+/g, '').length !== 10
+                      phoneTouched && fieldErrors.phone
                         ? 'border-destructive/70 focus-visible:ring-destructive'
                         : undefined
                     )}
                   />
-                  {phoneTouched && phone.replace(/\D+/g, '').length !== 10 ? (
-                    <p className="text-xs text-destructive">Please enter a valid 10-digit phone number.</p>
+                  {phoneTouched && fieldErrors.phone ? (
+                    <p className="text-xs text-destructive">{fieldErrors.phone}</p>
                   ) : null}
                 </div>
               </div>

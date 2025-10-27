@@ -34,12 +34,12 @@ var __importStar = (this && this.__importStar) || (function () {
 })();
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.sendNotification = sendNotification;
-exports.setStaffClaim = setStaffClaim;
 // Load local env for emulator
 const functions = __importStar(require("firebase-functions/v1"));
 require("./loadEnv");
 const firebaseAdmin_1 = require("./firebaseAdmin");
 const firestore_1 = require("firebase-admin/firestore");
+const phone_1 = require("./utils/phone");
 let twilioFactory = null;
 function resolveTwilioFactory() {
     if (twilioFactory) {
@@ -53,20 +53,6 @@ function resolveTwilioFactory() {
         functions.logger.debug('Twilio SDK unavailable or not installed', err);
         return null;
     }
-}
-// Phone number validation and formatting for WhatsApp
-function formatWhatsAppNumber(phone) {
-    // Remove all non-digit characters except +
-    let cleaned = phone.replace(/[^\d+]/g, '');
-    // If it doesn't start with +, assume Indian number and add +91
-    if (!cleaned.startsWith('+')) {
-        // Remove leading 0 if present (common in Indian numbers)
-        if (cleaned.startsWith('0')) {
-            cleaned = cleaned.substring(1);
-        }
-        cleaned = '+91' + cleaned;
-    }
-    return cleaned;
 }
 // Resolve Patient PWA base URL from environment variables
 function getPatientPwaBaseUrl() {
@@ -140,7 +126,19 @@ function getTwilioClient() {
 async function sendNotification(opts) {
     try {
         const messageContent = createWhatsAppMessage(opts.type, opts.payload);
-        const formattedPhone = formatWhatsAppNumber(opts.to);
+        let formattedPhone;
+        try {
+            formattedPhone = (0, phone_1.requireNormalizedPhone)(opts.to);
+        }
+        catch (error) {
+            const message = error instanceof phone_1.PhoneNormalizationError ? error.message : 'Invalid phone number';
+            functions.logger.warn('Notifier: skipping send due to invalid phone', {
+                to: opts.to,
+                type: opts.type,
+                message
+            });
+            return { ok: false, error: message };
+        }
         functions.logger.info('Notifier: sending', {
             to: opts.to,
             formatted: formattedPhone,
@@ -206,16 +204,5 @@ async function sendNotification(opts) {
         return { ok: false, error: String(err) };
     }
 }
-// Optional admin helper for programmatic staff claim setting. Keep here so functions can reuse it if needed.
-async function setStaffClaim(uid, isStaff) {
-    try {
-        await firebaseAdmin_1.admin.auth().setCustomUserClaims(uid, { staff: isStaff });
-        return { success: true };
-    }
-    catch (err) {
-        functions.logger.error('setStaffClaim error', err);
-        throw err;
-    }
-}
-exports.default = { sendNotification, setStaffClaim };
+exports.default = { sendNotification };
 //# sourceMappingURL=notifier.js.map

@@ -114,17 +114,8 @@ New real-time wait time calculator:
 1. ✅ Created `ImprovedQueueList.tsx` with all functionality
 2. ✅ Updated `DashboardImpl.tsx` import
 3. ✅ No breaking changes (same props interface)
-4. ⏳ Can keep old `QueueList.tsx` as backup
-5. ⏳ After validation, can remove old component
-
-### Rollback Strategy
-If issues arise:
-```tsx
-// In DashboardImpl.tsx, simply change:
-import ImprovedQueueList from './ImprovedQueueList';
-// back to:
-import QueueList from './QueueList';
-```
+4. ✅ Removed legacy `QueueList.tsx` (no longer present)
+5. ✅ Documented removal in repo notes
 
 ## Validation Checklist
 
@@ -189,7 +180,7 @@ import QueueList from './QueueList';
 1. **Created**: `ImprovedQueueList.tsx` (600+ lines)
 2. **Modified**: `DashboardImpl.tsx` (updated import)
 3. **Created**: `dropdown-menu.tsx` (shadcn component)
-4. **Preserved**: `QueueList.tsx` (backup, not deleted)
+4. **Removed**: `QueueList.tsx` legacy component
 
 ---
 

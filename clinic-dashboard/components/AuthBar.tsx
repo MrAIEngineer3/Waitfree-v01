@@ -1,31 +1,12 @@
 "use client";
 
 import { createUserWithEmailAndPassword, onAuthStateChanged, signInWithEmailAndPassword, signOut, User } from 'firebase/auth';
-import type { DocumentReference } from 'firebase/firestore';
 import { doc, getDoc, setDoc } from 'firebase/firestore';
+import { httpsCallable } from 'firebase/functions';
 import { useEffect, useState } from 'react';
-import { auth, db } from '../lib/firebase';
+import { auth, db, functions } from '../lib/firebase';
 import { Input } from './ui/Input';
 import { Button } from './ui/Button';
-
-// Helper to ensure demo entities exist
-async function ensureDemoClinicStructure() {
-  const today = new Date().toISOString().split('T')[0];
-  const clinicRef = doc(db, 'clinics', 'demo-clinic');
-  const doctorRef = doc(db, 'clinics', 'demo-clinic', 'doctors', 'demo-doctor');
-  const queueRef = doc(db, 'clinics', 'demo-clinic', 'doctors', 'demo-doctor', 'queues', today);
-  const maybeCreate = async (
-  ref: DocumentReference,
-    data: Record<string, unknown>,
-    label: string
-  ) => {
-    const snap = await getDoc(ref);
-    if (!snap.exists()) { await setDoc(ref, data); console.log('Created', label); }
-  };
-  await maybeCreate(clinicRef, { name: 'Demo Clinic', createdAt: new Date().toISOString() }, 'clinic');
-  await maybeCreate(doctorRef, { name: 'Demo Doctor', specialty: 'General', clinicId: 'demo-clinic', createdAt: new Date().toISOString() }, 'doctor');
-  await maybeCreate(queueRef, { status: 'active', currentToken: 0, totalPatients: 0, completedPatients: 0, createdAt: new Date().toISOString() }, 'queue');
-}
 
 export default function AuthBar() {
   const [user, setUser] = useState<User | null>(null);
@@ -73,13 +54,22 @@ export default function AuthBar() {
       const demoEmail = `demo+${Date.now()}@example.com`;
       const demoPassword = 'DemoPass!123';
       const cred = await createUserWithEmailAndPassword(auth, demoEmail, demoPassword);
-      await ensureDemoClinicStructure();
+      const bootstrap = httpsCallable(functions, 'bootstrapClinicAccount');
+      const response = await bootstrap({
+        clinicName: 'Demo Clinic',
+        doctorName: 'Demo Doctor',
+        specialty: 'General'
+      });
+      const result = response.data as { success?: boolean; clinicId?: string; doctorId?: string };
+      if (!result?.success) {
+        throw new Error('Demo bootstrap failed');
+      }
       await setDoc(doc(db, 'users', cred.user.uid), {
         email: demoEmail,
-        clinicId: 'demo-clinic',
-        doctorId: 'demo-doctor',
+        clinicId: result.clinicId,
+        doctorId: result.doctorId,
         createdAt: new Date().toISOString()
-      });
+      }, { merge: true });
       setSuccess(`Created demo user ${demoEmail}`);
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : 'Failed to create demo account');

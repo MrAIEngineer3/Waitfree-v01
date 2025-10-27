@@ -2,7 +2,7 @@
 
 import { onAuthStateChanged } from 'firebase/auth';
 import type { Timestamp, Unsubscribe } from 'firebase/firestore';
-import { doc, onSnapshot, serverTimestamp, updateDoc } from 'firebase/firestore';
+import { doc, onSnapshot } from 'firebase/firestore';
 import { httpsCallable } from 'firebase/functions';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { toast } from 'sonner';
@@ -200,8 +200,8 @@ export default function DashboardImpl() {
     setIsAutoAdvUpdating(true);
     
     try {
-      const queueRef = doc(db, 'clinics', clinicId, 'doctors', doctorId, 'queues', selectedDate);
-      await updateDoc(queueRef, { autoAdvance: enabled, updatedAt: serverTimestamp() });
+      const setQueueAutoAdvanceCallable = httpsCallable(functions, 'setQueueAutoAdvance');
+      await setQueueAutoAdvanceCallable({ clinicId, doctorId, queueId: selectedDate, enabled });
       toast.success(enabled ? 'Auto-advance enabled' : 'Auto-advance disabled');
     } catch (error) {
       console.error('Error toggling auto-advance:', error);

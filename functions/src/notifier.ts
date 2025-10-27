@@ -3,6 +3,7 @@ import * as functions from 'firebase-functions/v1';
 import './loadEnv';
 import { admin } from './firebaseAdmin';
 import { Timestamp } from 'firebase-admin/firestore';
+import { requireNormalizedPhone, PhoneNormalizationError } from './utils/phone';
 
 // Import Twilio for WhatsApp integration
 type TwilioModule = typeof import('twilio');
@@ -30,23 +31,6 @@ interface NotifyOpts {
   to: string; // phone number or identifier
   type: NotifyType;
   payload?: Record<string, any>;
-}
-
-// Phone number validation and formatting for WhatsApp
-function formatWhatsAppNumber(phone: string): string {
-  // Remove all non-digit characters except +
-  let cleaned = phone.replace(/[^\d+]/g, '');
-  
-  // If it doesn't start with +, assume Indian number and add +91
-  if (!cleaned.startsWith('+')) {
-    // Remove leading 0 if present (common in Indian numbers)
-    if (cleaned.startsWith('0')) {
-      cleaned = cleaned.substring(1);
-    }
-    cleaned = '+91' + cleaned;
-  }
-  
-  return cleaned;
 }
 
 // Resolve Patient PWA base URL from environment variables
@@ -130,7 +114,18 @@ function getTwilioClient() {
 export async function sendNotification(opts: NotifyOpts) {
   try {
     const messageContent = createWhatsAppMessage(opts.type, opts.payload);
-    const formattedPhone = formatWhatsAppNumber(opts.to);
+    let formattedPhone: string;
+    try {
+      formattedPhone = requireNormalizedPhone(opts.to);
+    } catch (error) {
+      const message = error instanceof PhoneNormalizationError ? error.message : 'Invalid phone number';
+      functions.logger.warn('Notifier: skipping send due to invalid phone', {
+        to: opts.to,
+        type: opts.type,
+        message
+      });
+      return { ok: false, error: message };
+    }
     
     functions.logger.info('Notifier: sending', { 
       to: opts.to, 
@@ -201,15 +196,4 @@ export async function sendNotification(opts: NotifyOpts) {
   }
 }
 
-// Optional admin helper for programmatic staff claim setting. Keep here so functions can reuse it if needed.
-export async function setStaffClaim(uid: string, isStaff: boolean) {
-  try {
-    await admin.auth().setCustomUserClaims(uid, { staff: isStaff });
-    return { success: true };
-  } catch (err) {
-    functions.logger.error('setStaffClaim error', err);
-    throw err;
-  }
-}
-
-export default { sendNotification, setStaffClaim };
+export default { sendNotification };

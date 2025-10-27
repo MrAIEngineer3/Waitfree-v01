@@ -12,6 +12,7 @@ import { admin } from './firebaseAdmin';
 // Import functions for local use
 import { recomputeQueueNotifications } from './notificationEngine';
 import { sendNotification } from './notifier';
+import { isNotificationEnabled } from './settings/notificationPreferences';
 import {
   createDoctorScheduleOverride as applyCreateScheduleOverride,
   deleteDoctorScheduleOverride as applyDeleteScheduleOverride,
@@ -26,6 +27,8 @@ import { resolveDoctorAvailability, resolveManyDoctorAvailability } from './sche
 import { loadClinicSchedulingSettings, saveClinicSchedulingSettings } from './scheduling/settings';
 import type { DoctorAvailabilityResult, ScheduleOverride } from './scheduling/types';
 import { startTiming } from './utils/timing';
+import { requireNormalizedPhone, PhoneNormalizationError } from './utils/phone';
+import { sanitizePatientInput, PatientValidationError } from './utils/patient';
 import { createRequestDoctorOnlineNotificationHandler } from './scheduling/requestDoctorOnlineNotification';
 
 // Export functions from other files to make them deployable
@@ -220,6 +223,233 @@ const serializeAvailability = (result: DoctorAvailabilityResult) => {
   };
 };
 
+type UserAccess = {
+  primaryClinicId: string | null;
+  primaryDoctorId: string | null;
+  additionalClinicIds: string[];
+  doctorAssignments: Record<string, string[]>;
+  roles: string[];
+};
+
+const userAccessCache = new Map<string, Promise<UserAccess>>();
+
+const toTrimmedString = (value: unknown): string | null => {
+  if (typeof value !== 'string') {
+    return null;
+  }
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : null;
+};
+
+const toStringArray = (value: unknown): string[] => {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  return value
+    .map((entry) => (typeof entry === 'string' ? entry.trim() : ''))
+    .filter((entry) => entry.length > 0);
+};
+
+const toDoctorAssignments = (value: unknown): Record<string, string[]> => {
+  if (typeof value !== 'object' || value === null) {
+    return {};
+  }
+  const result: Record<string, string[]> = {};
+  for (const [key, rawList] of Object.entries(value)) {
+    const clinicId = String(key).trim();
+    if (!clinicId) {
+      continue;
+    }
+    const doctorIds = toStringArray(rawList);
+    if (doctorIds.length > 0) {
+      result[clinicId] = doctorIds;
+    }
+  }
+  return result;
+};
+
+const mergeUniqueIds = (...lists: string[][]): string[] => {
+  const set = new Set<string>();
+  for (const list of lists) {
+    for (const entry of list) {
+      if (entry) {
+        set.add(entry);
+      }
+    }
+  }
+  return Array.from(set);
+};
+
+const loadUserAccess = async (uid: string): Promise<UserAccess> => {
+  const cached = userAccessCache.get(uid);
+  if (cached) {
+    return cached;
+  }
+
+  const promise = (async (): Promise<UserAccess> => {
+    try {
+      const snap = await admin.firestore().collection('users').doc(uid).get();
+      const data = (snap.exists ? snap.data() : undefined) || {};
+      const primaryClinicId = toTrimmedString((data as Record<string, unknown>)['clinicId']);
+      const primaryDoctorId = toTrimmedString((data as Record<string, unknown>)['doctorId']);
+
+      const additionalClinicIds = mergeUniqueIds(
+        toStringArray((data as Record<string, unknown>)['clinicIds']),
+        toStringArray((data as Record<string, unknown>)['staffClinicIds']),
+        toStringArray((data as Record<string, unknown>)['managedClinics']),
+        toStringArray((data as Record<string, unknown>)['additionalClinicIds'])
+      );
+
+      const doctorAssignmentsRaw = {
+        ...(typeof (data as Record<string, unknown>)['doctorAssignments'] === 'object'
+          ? ((data as Record<string, unknown>)['doctorAssignments'] as Record<string, unknown>)
+          : {}),
+        ...(typeof (data as Record<string, unknown>)['staffDoctorIds'] === 'object'
+          ? ((data as Record<string, unknown>)['staffDoctorIds'] as Record<string, unknown>)
+          : {})
+      };
+
+      const doctorAssignments = toDoctorAssignments(doctorAssignmentsRaw);
+
+      const roles = mergeUniqueIds(toStringArray((data as Record<string, unknown>)['roles']));
+
+      return {
+        primaryClinicId,
+        primaryDoctorId,
+        additionalClinicIds,
+        doctorAssignments,
+        roles
+      };
+    } catch (error) {
+      userAccessCache.delete(uid);
+      throw error;
+    }
+  })();
+
+  userAccessCache.set(uid, promise);
+  return promise;
+};
+
+const collectClinicIds = (access: UserAccess): Set<string> => {
+  const ids = new Set<string>();
+  if (access.primaryClinicId) {
+    ids.add(access.primaryClinicId);
+  }
+  for (const value of access.additionalClinicIds) {
+    ids.add(value);
+  }
+  for (const clinicId of Object.keys(access.doctorAssignments)) {
+    ids.add(clinicId);
+  }
+  return ids;
+};
+
+const hasClinicAccess = (access: UserAccess, clinicId: string): boolean => {
+  if (!clinicId) {
+    return false;
+  }
+  return collectClinicIds(access).has(clinicId);
+};
+
+const hasDoctorAccess = (access: UserAccess, clinicId: string, doctorId: string): boolean => {
+  if (!clinicId || !doctorId) {
+    return false;
+  }
+  if (access.primaryClinicId === clinicId && access.primaryDoctorId === doctorId) {
+    return true;
+  }
+  const assignments = access.doctorAssignments[clinicId] || [];
+  if (assignments.includes(doctorId)) {
+    return true;
+  }
+  return false;
+};
+
+const isPatientAuthContext = (auth: CallableCtx['auth']): boolean => {
+  return Boolean(auth?.token && (auth.token as Record<string, unknown>)?.['patient'] === true);
+};
+
+const isSyntheticPatientUid = (uid: string | undefined | null): boolean => {
+  if (typeof uid !== 'string') {
+    return false;
+  }
+  return uid.startsWith('patient-self:') || uid.startsWith('patient_');
+};
+
+const ensurePatientAuthMatches = (
+  auth: NonNullable<CallableCtx['auth']>,
+  clinicId: string,
+  doctorId: string,
+  queueId?: string | null,
+  patientId?: string | null
+) => {
+  const token = auth.token as Record<string, unknown>;
+  if (token?.['patientClinicId'] !== clinicId) {
+    throw new functions.https.HttpsError('permission-denied', 'Patient token does not match clinic');
+  }
+  if (token?.['patientDoctorId'] !== doctorId) {
+    throw new functions.https.HttpsError('permission-denied', 'Patient token does not match doctor');
+  }
+  if (queueId && token?.['patientQueueId'] !== queueId) {
+    throw new functions.https.HttpsError('permission-denied', 'Patient token does not match queue');
+  }
+  if (patientId && token?.['patientId'] !== patientId) {
+    throw new functions.https.HttpsError('permission-denied', 'Patient token does not match patient');
+  }
+};
+
+interface EnsureStaffAccessOptions {
+  clinicId: string;
+  doctorId?: string;
+  action: string;
+  allowClinicAdminWithoutDoctor?: boolean;
+}
+
+const ensureStaffAccess = async (
+  context: CallableCtx,
+  options: EnsureStaffAccessOptions
+): Promise<void> => {
+  if (!context.auth) {
+    throw new functions.https.HttpsError('unauthenticated', 'Authentication required');
+  }
+  if (isPatientAuthContext(context.auth)) {
+    throw new functions.https.HttpsError('permission-denied', 'Patient session cannot perform this action');
+  }
+
+  const access = await loadUserAccess(context.auth.uid);
+  if (!hasClinicAccess(access, options.clinicId)) {
+    throw new functions.https.HttpsError('permission-denied', `Not authorized to ${options.action}`);
+  }
+  if (options.doctorId) {
+    const doctorAllowed =
+      hasDoctorAccess(access, options.clinicId, options.doctorId) ||
+      (options.allowClinicAdminWithoutDoctor === true && access.roles.includes('clinic-admin'));
+    if (!doctorAllowed) {
+      throw new functions.https.HttpsError('permission-denied', `Not authorized to ${options.action} for this doctor`);
+    }
+  }
+};
+
+const debugEndpointsEnabled = () => {
+  return process.env.ENABLE_DEBUG_ENDPOINTS === 'true' || process.env.FUNCTIONS_EMULATOR === 'true';
+};
+
+const ensureDebugAccess = async (
+  context: CallableCtx,
+  options: EnsureStaffAccessOptions | null,
+  requireAuth = true
+) => {
+  if (!debugEndpointsEnabled()) {
+    throw new functions.https.HttpsError('permission-denied', 'Debug endpoint disabled');
+  }
+  if (requireAuth && !context.auth) {
+    throw new functions.https.HttpsError('unauthenticated', 'Authentication required');
+  }
+  if (options) {
+    await ensureStaffAccess(context, options);
+  }
+};
+
 const hashAccessToken = (token: string) => crypto.createHash('sha256').update(String(token)).digest('hex');
 
 type JoinQueueRequest = {
@@ -382,8 +612,23 @@ type PatientRejoinQueueResult = {
   };
 };
 
+type CreatePatientSessionRequest = {
+  clinicId?: string;
+  doctorId?: string;
+  queueId?: string;
+  patientId?: string;
+  token?: string;
+};
+
+type CreatePatientSessionResponse = {
+  success: boolean;
+  token: string;
+  patient?: Record<string, unknown> | null;
+};
+
 /** DEBUG: Returns runtime flag visibility and Node version */
 const debugRuntimeFlagsHandler = async (_data: unknown, _ctx: CallableCtx) => {
+  await ensureDebugAccess(_ctx, null, false);
   return {
     phase1Enabled: true,
     rawPhase1: 'hardcoded:true',
@@ -396,6 +641,7 @@ export const debugRuntimeFlags = createV2Callable(debugRuntimeFlagsHandler);
 
 /** DEBUG: Show resolved Patient PWA base URL */
 const debugPatientPwaBaseUrlHandler = async (_data: unknown, _ctx: CallableCtx) => {
+  await ensureDebugAccess(_ctx, null, false);
   try {
     const envValRaw = process.env.PATIENT_PWA_BASE_URL;
     const envVal = envValRaw && envValRaw.trim().length > 0 ? envValRaw.trim() : null;
@@ -413,6 +659,12 @@ const debugRecomputeHandler = async (data: any, _ctx: CallableCtx) => {
   if (!clinicId || !doctorId || !queueId) {
     throw new functions.https.HttpsError('invalid-argument', 'clinicId, doctorId, queueId required');
   }
+
+  await ensureDebugAccess(_ctx, {
+    clinicId,
+    doctorId,
+    action: 'debug recompute queue'
+  });
 
   // Log environment variables for debugging
   functions.logger.info('Environment Variables Check', {
@@ -433,6 +685,13 @@ const debugGetPatientHandler = async (data: any, _ctx: CallableCtx) => {
   if (!clinicId || !doctorId || !queueId || !patientId) {
     throw new functions.https.HttpsError('invalid-argument', 'clinicId, doctorId, queueId, patientId required');
   }
+
+  await ensureDebugAccess(_ctx, {
+    clinicId,
+    doctorId,
+    action: 'debug get patient'
+  });
+
   const snap = await admin.firestore().collection('clinics').doc(clinicId)
     .collection('doctors').doc(doctorId)
     .collection('queues').doc(queueId)
@@ -442,8 +701,7 @@ const debugGetPatientHandler = async (data: any, _ctx: CallableCtx) => {
 };
 export const debugGetPatient = createV2Callable(debugGetPatientHandler);
 
-// NOTE: Staff privilege logic removed for simplification.
-// Any authenticated user may perform queue and patient management actions.
+// NOTE: Staff privilege checks are enforced via ensureStaffAccess for protected operations.
 
 // Simple HTTPS callable function example
 const pingHandler = async (data: unknown, context: CallableCtx) => {
@@ -530,12 +788,27 @@ export const onPatientStatusChange = regionalFunctions.firestore
           const p = patientSnapLatest.data() as any;
           const already = p?.notifications?.now === true;
           if (!already) {
-            await patientRef.set({ notifications: { ...(p?.notifications || {}), now: true } }, { merge: true });
-            await sendNotification({
-              to: p?.phone || 'unknown',
-              type: 'now',
-              payload: { name: p?.name, tokenNumber: p?.tokenNumber, clinicId: context.params.clinicId, doctorId: context.params.doctorId }
+            const canSend = await isNotificationEnabled({
+              clinicId: context.params.clinicId,
+              channel: 'whatsapp',
+              event: 'tokenUpdates'
             });
+
+            if (!canSend) {
+              functions.logger.info('Skipping now notification because clinic disabled token updates', {
+                clinicId: context.params.clinicId,
+                doctorId: context.params.doctorId,
+                queueId: context.params.queueId,
+                patientId: context.params.patientId
+              });
+            } else {
+              await patientRef.set({ notifications: { ...(p?.notifications || {}), now: true } }, { merge: true });
+              await sendNotification({
+                to: p?.phone || 'unknown',
+                type: 'now',
+                payload: { name: p?.name, tokenNumber: p?.tokenNumber, clinicId: context.params.clinicId, doctorId: context.params.doctorId }
+              });
+            }
           } else {
             functions.logger.info('Now notification already sent for patient', { patientId: context.params.patientId });
           }
@@ -585,12 +858,28 @@ const joinQueueHandler = async (data: JoinQueueRequest, _context: CallableCtx) =
       );
     }
 
-    if (!patientData.name || !patientData.age || !patientData.phone) {
-      throw new functions.https.HttpsError(
-        'invalid-argument',
-        'Patient data must include name, age, and phone.'
-      );
+    let normalizedPatient;
+    try {
+      normalizedPatient = sanitizePatientInput(patientData, { requirePhone: true });
+    } catch (error) {
+      const message = error instanceof PatientValidationError ? error.message : 'Invalid patient data';
+      throw new functions.https.HttpsError('invalid-argument', message);
     }
+
+    const normalizedName = normalizedPatient.name;
+    const ageValue = normalizedPatient.age;
+    const phoneValue = normalizedPatient.phone;
+
+    if (ageValue == null) {
+      throw new functions.https.HttpsError('invalid-argument', 'Patient age is required');
+    }
+
+    if (!phoneValue) {
+      throw new functions.https.HttpsError('invalid-argument', 'Patient phone is required');
+    }
+
+    const normalizedAge = ageValue;
+    const normalizedPhone = phoneValue;
 
     const availability = await resolveDoctorAvailability({
       clinicId,
@@ -656,9 +945,9 @@ const joinQueueHandler = async (data: JoinQueueRequest, _context: CallableCtx) =
 
       newPatientData = {
         id: '', // Will be set after document creation
-        name: patientData.name,
-        age: patientData.age,
-        phone: patientData.phone,
+        name: normalizedName,
+        age: normalizedAge,
+        phone: normalizedPhone,
         tokenNumber: newTokenNumber,
         status: 'waiting',
         joinedAt: FieldValue.serverTimestamp(),
@@ -675,30 +964,45 @@ const joinQueueHandler = async (data: JoinQueueRequest, _context: CallableCtx) =
 
     // Send "joined" notification (non-blocking)
     try {
-      // Mark the patient's notifications.joined flag (so emulator/debug shows it) and emit a debug notification
-      try {
-        await admin.firestore().collection('clinics').doc(clinicId)
-          .collection('doctors').doc(doctorId)
-          .collection('queues').doc(today)
-          .collection('patients').doc(newPatientData.id)
-          .set({ notifications: { joined: true } }, { merge: true });
-      } catch (e) {
-        functions.logger.warn('Failed to mark joined notification on patient doc', e);
-      }
+      const canSendJoined = await isNotificationEnabled({
+        clinicId,
+        channel: 'whatsapp',
+        event: 'tokenUpdates'
+      });
 
-      await sendNotification({
-        to: newPatientData.phone,
-        type: 'joined',
-        payload: {
-          name: newPatientData.name,
-          tokenNumber: newPatientData.tokenNumber,
+      if (!canSendJoined) {
+        functions.logger.info('Skipping joined notification because clinic disabled token updates', {
           clinicId,
           doctorId,
           queueId: today,
-          patientId: newPatientData.id,
-          accessToken: rawAccessToken
+          patientId: newPatientData.id
+        });
+      } else {
+        // Mark the patient's notifications.joined flag (so emulator/debug shows it) and emit a debug notification
+        try {
+          await admin.firestore().collection('clinics').doc(clinicId)
+            .collection('doctors').doc(doctorId)
+            .collection('queues').doc(today)
+            .collection('patients').doc(newPatientData.id)
+            .set({ notifications: { joined: true } }, { merge: true });
+        } catch (e) {
+          functions.logger.warn('Failed to mark joined notification on patient doc', e);
         }
-      });
+
+        await sendNotification({
+          to: normalizedPhone,
+          type: 'joined',
+          payload: {
+            name: newPatientData.name,
+            tokenNumber: newPatientData.tokenNumber,
+            clinicId,
+            doctorId,
+            queueId: today,
+            patientId: newPatientData.id,
+            accessToken: rawAccessToken
+          }
+        });
+      }
     } catch (notifyErr) {
       functions.logger.warn('Failed to send joined notification (continuing):', notifyErr);
     }
@@ -757,35 +1061,31 @@ const manualAddPatientHandler = async (data: ManualAddPatientRequest, context: C
       throw new functions.https.HttpsError('invalid-argument', 'clinicId, doctorId, and queueId are required');
     }
 
+    await ensureStaffAccess(context, {
+      clinicId,
+      doctorId,
+      action: 'manually add patient'
+    });
+
     const patientInput = data?.patient ?? {};
-    const rawName = typeof patientInput.name === 'string' ? patientInput.name.trim() : '';
-    if (!rawName) {
-      span.fail({ reason: 'invalid-name' });
-      throw new functions.https.HttpsError('invalid-argument', 'Patient name is required');
+    let sanitizedPatient: { name: string; age: number | null; phone: string | null };
+    try {
+      sanitizedPatient = sanitizePatientInput(patientInput, { requirePhone: false, requireAge: false });
+    } catch (error) {
+      if (error instanceof PatientValidationError) {
+        span.fail({ reason: error.code });
+        throw new functions.https.HttpsError('invalid-argument', error.message);
+      }
+      span.fail({
+        reason: 'invalid-patient',
+        message: error instanceof Error ? error.message : String(error)
+      });
+      throw new functions.https.HttpsError('invalid-argument', 'Invalid patient data');
     }
 
-    let age: number | null = null;
-    if (patientInput.age != null) {
-      const parsedAge = Number(patientInput.age);
-      if (!Number.isFinite(parsedAge) || parsedAge <= 0 || parsedAge > 200) {
-        span.fail({ reason: 'invalid-age', provided: patientInput.age });
-        throw new functions.https.HttpsError('invalid-argument', 'Patient age must be between 1 and 200');
-      }
-      age = Math.round(parsedAge);
-    }
-
-    let phone: string | null = null;
-    if (typeof patientInput.phone === 'string') {
-      const trimmedPhone = patientInput.phone.trim();
-      if (trimmedPhone.length > 0) {
-        const digitsOnly = trimmedPhone.replace(/\D+/g, '');
-        if (digitsOnly.length !== 10) {
-          span.fail({ reason: 'invalid-phone', providedLength: digitsOnly.length });
-          throw new functions.https.HttpsError('invalid-argument', 'Phone number must contain exactly 10 digits');
-        }
-        phone = digitsOnly;
-      }
-    }
+    const rawName = sanitizedPatient.name;
+    const age = sanitizedPatient.age;
+    let phone: string | null = sanitizedPatient.phone;
 
     const suppressNotification = data?.suppressNotification === true;
 
@@ -863,23 +1163,38 @@ const manualAddPatientHandler = async (data: ManualAddPatientRequest, context: C
     const patientDocRef = queueRef.collection('patients').doc(newPatientId);
 
     if (phone && !suppressNotification) {
-      try {
-        await patientDocRef.set({ notifications: { joined: true } }, { merge: true });
-        await sendNotification({
-          to: phone,
-          type: 'joined',
-          payload: {
-            name: rawName,
-            tokenNumber: newTokenNumber,
-            clinicId,
-            doctorId,
-            queueId,
-            patientId: newPatientId,
-            accessToken: rawAccessToken
-          }
+      const canSendJoined = await isNotificationEnabled({
+        clinicId,
+        channel: 'whatsapp',
+        event: 'tokenUpdates'
+      });
+
+      if (!canSendJoined) {
+        functions.logger.info('Skipping manual joined notification because clinic disabled token updates', {
+          clinicId,
+          doctorId,
+          queueId,
+          patientId: newPatientId
         });
-      } catch (notifyErr) {
-        functions.logger.warn('Failed to send manual joined notification', notifyErr);
+      } else {
+        try {
+          await patientDocRef.set({ notifications: { joined: true } }, { merge: true });
+          await sendNotification({
+            to: phone,
+            type: 'joined',
+            payload: {
+              name: rawName,
+              tokenNumber: newTokenNumber,
+              clinicId,
+              doctorId,
+              queueId,
+              patientId: newPatientId,
+              accessToken: rawAccessToken
+            }
+          });
+        } catch (notifyErr) {
+          functions.logger.warn('Failed to send manual joined notification', notifyErr);
+        }
       }
     } else if (suppressNotification) {
       try {
@@ -979,6 +1294,69 @@ const getPatientViewHandler = async (data: GetPatientViewRequest, _context: Call
 
 export const getPatientView = createV2Callable(getPatientViewHandler);
 
+const createPatientSessionHandler = async (data: CreatePatientSessionRequest, _context: CallableCtx): Promise<CreatePatientSessionResponse> => {
+  try {
+    const { clinicId, doctorId, queueId, patientId, token } = data || {};
+
+    if (!clinicId || !doctorId || !queueId || !patientId || !token) {
+      throw new functions.https.HttpsError('invalid-argument', 'Missing required fields: clinicId, doctorId, queueId, patientId, token');
+    }
+
+    const db = admin.firestore();
+    const patientRef = db.collection('clinics').doc(clinicId)
+      .collection('doctors').doc(doctorId)
+      .collection('queues').doc(queueId)
+      .collection('patients').doc(patientId);
+
+    const patientSnap = await patientRef.get();
+    if (!patientSnap.exists) {
+      throw new functions.https.HttpsError('not-found', 'Patient not found');
+    }
+
+    const patientData = patientSnap.data() as Record<string, unknown> | undefined;
+    const storedHash = patientData?.accessTokenHash;
+    if (!storedHash) {
+      throw new functions.https.HttpsError('permission-denied', 'Access token not configured for this patient');
+    }
+
+    const tokenHash = hashAccessToken(token);
+    if (tokenHash !== storedHash) {
+      throw new functions.https.HttpsError('permission-denied', 'Invalid token');
+    }
+
+    if (typeof patientData?.queueId === 'string' && patientData.queueId !== queueId) {
+      throw new functions.https.HttpsError('permission-denied', 'Invalid token');
+    }
+
+    const patientUid = `patient_${tokenHash}`;
+    const customToken = await admin.auth().createCustomToken(patientUid, {
+      patient: true,
+      patientClinicId: clinicId,
+      patientDoctorId: doctorId,
+      patientQueueId: queueId,
+      patientId,
+      patientTokenHash: tokenHash
+    });
+
+    const safePatient: Record<string, unknown> = { ...(patientData ?? {}), id: patientId };
+    delete safePatient.accessTokenHash;
+
+    return {
+      success: true,
+      token: customToken,
+      patient: safePatient
+    } satisfies CreatePatientSessionResponse;
+  } catch (error) {
+    functions.logger.error('Error in createPatientSession function:', error);
+    if (error instanceof functions.https.HttpsError) {
+      throw error;
+    }
+    throw new functions.https.HttpsError('internal', 'Internal server error');
+  }
+};
+
+export const createPatientSession = createV2Callable(createPatientSessionHandler);
+
 /**
  * Firebase Callable Function to update a patient's status in the queue
  * Requires authentication and handles queue metadata updates when patients are completed
@@ -1006,8 +1384,6 @@ const updatePatientStatusHandler = async (data: UpdatePatientStatusRequest, cont
       spanClosed = true;
       throw new functions.https.HttpsError('unauthenticated', 'The function must be called by an authenticated user.');
     }
-    // Simplified: any authenticated user can proceed.
-    functions.logger.debug('updatePatientStatus auth check (simplified mode)', { uid: context.auth.uid });
 
     // Extract and validate required fields
     const { clinicId, doctorId, queueId, patientId, newStatus } = data;
@@ -1030,6 +1406,37 @@ const updatePatientStatusHandler = async (data: UpdatePatientStatusRequest, cont
         'invalid-argument',
         `Invalid status. Must be one of: ${validStatuses.join(', ')}`
       );
+    }
+
+    const auth = context.auth;
+    const isPatientToken = isPatientAuthContext(auth);
+    const syntheticPatient = isSyntheticPatientUid(auth?.uid);
+
+    if (isPatientToken) {
+      ensurePatientAuthMatches(auth, clinicId, doctorId, queueId, patientId);
+      if (newStatus !== 'cancelled') {
+        span.fail({ reason: 'patient-status-not-allowed', requested: newStatus });
+        spanClosed = true;
+        throw new functions.https.HttpsError('permission-denied', 'Patients can only cancel their own queue entry');
+      }
+    } else if (syntheticPatient) {
+      const uidSuffix = auth?.uid?.split(':')[1] ?? null;
+      if (!uidSuffix || uidSuffix !== patientId) {
+        span.fail({ reason: 'patient-synthetic-mismatch', uid: auth?.uid ?? null });
+        spanClosed = true;
+        throw new functions.https.HttpsError('permission-denied', 'Patient identity does not match request');
+      }
+      if (newStatus !== 'cancelled') {
+        span.fail({ reason: 'patient-synthetic-status', requested: newStatus });
+        spanClosed = true;
+        throw new functions.https.HttpsError('permission-denied', 'Patients can only cancel their own queue entry');
+      }
+    } else {
+      await ensureStaffAccess(context, {
+        clinicId,
+        doctorId,
+        action: 'update patient status'
+      });
     }
 
     // Define database references
@@ -1270,19 +1677,35 @@ const updatePatientStatusHandler = async (data: UpdatePatientStatusRequest, cont
               patientId
             });
             try {
-              await patientSnap.ref.set({ notifications: { ...(latest?.notifications || {}), completed: true } }, { merge: true });
-              await sendNotification({
-                to: latest?.phone || 'unknown',
-                type: 'completed',
-                payload: {
-                  name: latest?.name,
-                  tokenNumber: latest?.tokenNumber,
-                  clinicId, doctorId, queueId,
-                  serviceDurationMs: serviceDurationMs || null
-                }
+              const canSendCompleted = await isNotificationEnabled({
+                clinicId,
+                channel: 'whatsapp',
+                event: 'tokenUpdates'
               });
-              functions.logger.debug('Phase1 sent completed notification', { patientId });
-              completedSpan.succeed({});
+
+              if (!canSendCompleted) {
+                functions.logger.info('Skipping completed notification because clinic disabled token updates', {
+                  clinicId,
+                  doctorId,
+                  queueId,
+                  patientId
+                });
+                completedSpan.succeed({ skipped: 'disabled-by-preferences' });
+              } else {
+                await patientSnap.ref.set({ notifications: { ...(latest?.notifications || {}), completed: true } }, { merge: true });
+                await sendNotification({
+                  to: latest?.phone || 'unknown',
+                  type: 'completed',
+                  payload: {
+                    name: latest?.name,
+                    tokenNumber: latest?.tokenNumber,
+                    clinicId, doctorId, queueId,
+                    serviceDurationMs: serviceDurationMs || null
+                  }
+                });
+                functions.logger.debug('Phase1 sent completed notification', { patientId });
+                completedSpan.succeed({});
+              }
             } catch (e) {
               completedSpan.fail({ error: e instanceof Error ? e.message : String(e) });
               functions.logger.warn('Failed to send completed notification', e);
@@ -1307,16 +1730,31 @@ const updatePatientStatusHandler = async (data: UpdatePatientStatusRequest, cont
     // Legacy staged notification logic removed (engine handles position). Only handle cancellation explicitly.
     if (newStatus === 'cancelled') {
       try {
-        await sendNotification({
-          to: updatedPatientData?.phone,
-          type: 'cancelled',
-          payload: {
-            name: updatedPatientData?.name,
-            tokenNumber: updatedPatientData?.tokenNumber,
-            clinicId, doctorId, queueId,
-            message: 'Your queue entry has been cancelled. If this was a mistake, please contact the clinic to rejoin.'
-          }
+        const canSendCancelled = await isNotificationEnabled({
+          clinicId,
+          channel: 'whatsapp',
+          event: 'tokenUpdates'
         });
+
+        if (!canSendCancelled) {
+          functions.logger.info('Skipping cancellation notification because clinic disabled token updates', {
+            clinicId,
+            doctorId,
+            queueId,
+            patientId
+          });
+        } else {
+          await sendNotification({
+            to: updatedPatientData?.phone,
+            type: 'cancelled',
+            payload: {
+              name: updatedPatientData?.name,
+              tokenNumber: updatedPatientData?.tokenNumber,
+              clinicId, doctorId, queueId,
+              message: 'Your queue entry has been cancelled. If this was a mistake, please contact the clinic to rejoin.'
+            }
+          });
+        }
       } catch (e) {
         functions.logger.warn('Failed to send cancellation notification', e);
       }
@@ -1614,23 +2052,24 @@ const patientRejoinQueueHandler = async (data: PatientRejoinQueueRequest, _conte
       throw new functions.https.HttpsError('failed-precondition', 'Token cannot be rejoined right now.');
     }
 
-    const name = typeof patientData?.name === 'string' ? patientData.name.trim() : '';
-    if (!name) {
-      span.fail({ reason: 'missing-name' });
+    let sanitizedPatient;
+    try {
+      sanitizedPatient = sanitizePatientInput(
+        {
+          name: patientData?.name,
+          age: patientData?.age,
+          phone: patientData?.phone
+        },
+        { requirePhone: true }
+      );
+    } catch (error) {
+      const reason = error instanceof PatientValidationError ? error.code : 'invalid-patient';
+      span.fail({ reason });
       throw new functions.https.HttpsError('failed-precondition', 'Patient information is incomplete. Please join again from the clinic link.');
     }
 
-    const ageRaw = patientData?.age;
-    const ageNumber = typeof ageRaw === 'number' ? ageRaw : Number(ageRaw);
-    if (!Number.isFinite(ageNumber) || ageNumber <= 0 || ageNumber > 200) {
-      span.fail({ reason: 'invalid-age', provided: ageRaw });
-      throw new functions.https.HttpsError('failed-precondition', 'Patient information is incomplete. Please join again from the clinic link.');
-    }
-
-    const phoneRaw = typeof patientData?.phone === 'string' ? patientData.phone : '';
-    const normalizedPhone = phoneRaw.replace(/\D+/g, '');
-    if (normalizedPhone.length !== 10) {
-      span.fail({ reason: 'invalid-phone' });
+    if (sanitizedPatient.age == null || !sanitizedPatient.phone) {
+      span.fail({ reason: 'invalid-patient' });
       throw new functions.https.HttpsError('failed-precondition', 'Patient information is incomplete. Please join again from the clinic link.');
     }
 
@@ -1638,9 +2077,9 @@ const patientRejoinQueueHandler = async (data: PatientRejoinQueueRequest, _conte
       clinicId,
       doctorId,
       patientData: {
-        name,
-        age: ageNumber,
-        phone: normalizedPhone
+        name: sanitizedPatient.name,
+        age: sanitizedPatient.age,
+        phone: sanitizedPatient.phone
       }
     }, {} as CallableCtx);
 
@@ -1702,6 +2141,12 @@ export const __test__ = {
   },
   resetDelegates() {
     updatePatientStatusForCancel = updatePatientStatusHandler;
+  },
+  ensureStaffAccess,
+  ensureDebugAccess,
+  loadUserAccess,
+  clearUserAccessCache() {
+    userAccessCache.clear();
   }
 };
 
@@ -1734,6 +2179,12 @@ const advanceQueueHandler = async (data: AdvanceQueueRequest, context: CallableC
       span.fail({ reason: 'invalid-argument' });
       throw new functions.https.HttpsError('invalid-argument', 'clinicId, doctorId, and queueId are required');
     }
+
+    await ensureStaffAccess(context, {
+      clinicId,
+      doctorId,
+      action: 'advance queue'
+    });
 
     const db = admin.firestore();
     const queueRef = db.collection('clinics').doc(clinicId)
@@ -1835,8 +2286,6 @@ const updateQueueStatusHandler = async (data: UpdateQueueStatusRequest, _context
       span.fail({ reason: 'unauthenticated' });
       throw new functions.https.HttpsError('unauthenticated', 'The function must be called by an authenticated user.');
     }
-    // Simplified: any authenticated user can proceed.
-    functions.logger.debug('updateQueueStatus auth check (simplified mode)', { uid: _context.auth.uid });
 
     // Extract and validate required fields
     const { clinicId, doctorId, queueId, newStatus } = data;
@@ -1856,6 +2305,12 @@ const updateQueueStatusHandler = async (data: UpdateQueueStatusRequest, _context
         `Invalid status. Must be one of: ${validStatuses.join(', ')}`
       );
     }
+
+    await ensureStaffAccess(_context, {
+      clinicId,
+      doctorId,
+      action: 'update queue status'
+    });
 
     // Define database reference
     const db = admin.firestore();
@@ -1925,6 +2380,11 @@ const setQueueAutoAdvanceHandler = async (data: SetQueueAutoAdvanceRequest, _con
       span.fail({ reason: 'invalid-argument' });
       throw new functions.https.HttpsError('invalid-argument', 'clinicId, doctorId, queueId, enabled(boolean) required');
     }
+    await ensureStaffAccess(_context, {
+      clinicId,
+      doctorId,
+      action: 'update queue auto-advance'
+    });
     const ref = admin.firestore().collection('clinics').doc(clinicId)
       .collection('doctors').doc(doctorId)
       .collection('queues').doc(queueId);
@@ -1955,6 +2415,13 @@ const setRealTimeStatusHandler = async (data: SetRealTimeStatusRequest, context:
   const doctorId = typeof data?.doctorId === 'string' ? data.doctorId.trim() : '';
 
   try {
+    await ensureStaffAccess(context, {
+      clinicId,
+      doctorId,
+      action: 'update doctor real-time status',
+      allowClinicAdminWithoutDoctor: true
+    });
+
     const result = await applySetDoctorRealTimeStatus({
       clinicId,
       doctorId,
@@ -2018,6 +2485,23 @@ const getClinicDoctorAvailabilityHandler = async (data: GetClinicDoctorAvailabil
   if (!clinicSnap.exists) {
     throw new functions.https.HttpsError('not-found', 'Clinic not found');
   }
+
+  const pickString = (value: unknown): string | null => {
+    if (typeof value !== 'string') {
+      return null;
+    }
+    const trimmed = value.trim();
+    return trimmed.length > 0 ? trimmed : null;
+  };
+
+  const clinicSnapshotData = (clinicSnap.data() ?? {}) as Record<string, unknown>;
+  const clinicSummary = {
+    name: pickString(clinicSnapshotData['name']),
+    address: pickString(clinicSnapshotData['address']),
+    phone: pickString(clinicSnapshotData['phone'])
+  };
+  const clinicInfo =
+    clinicSummary.name || clinicSummary.address || clinicSummary.phone ? clinicSummary : null;
 
   const doctorsCollection = clinicRef.collection('doctors');
   const doctorMetadata = new Map<string, Record<string, unknown> | null>();
@@ -2089,6 +2573,7 @@ const getClinicDoctorAvailabilityHandler = async (data: GetClinicDoctorAvailabil
 
   return {
     clinicId,
+    clinic: clinicInfo,
     count: doctors.length,
     doctors,
     requestedDoctorIds: providedDoctorIds ? targetDoctorIds : undefined
@@ -2129,6 +2614,12 @@ const updateClinicSchedulingSettingsHandler = async (
     throw new functions.https.HttpsError('invalid-argument', 'clinicId is required');
   }
 
+  await ensureStaffAccess(context, {
+    clinicId,
+    action: 'update clinic scheduling settings',
+    allowClinicAdminWithoutDoctor: true
+  });
+
   const settings = await saveClinicSchedulingSettings(clinicId, {
     manualCheckInRequired: data?.manualCheckInRequired,
     allowOfflineSignups: data?.allowOfflineSignups
@@ -2164,6 +2655,13 @@ const updateDefaultRotaHandler = async (data: UpdateDefaultRotaRequest, context:
   const week = (data?.week as Record<string, { start: string; end: string; label?: string | null }> | undefined) ?? {};
 
   try {
+    await ensureStaffAccess(context, {
+      clinicId,
+      doctorId,
+      action: 'update default rota',
+      allowClinicAdminWithoutDoctor: true
+    });
+
     const rota = await applyUpdateDoctorDefaultRota({
       clinicId,
       doctorId,
@@ -2205,6 +2703,13 @@ const createOverrideHandler = async (data: CreateOverrideRequest, context: Calla
   }
 
   try {
+    await ensureStaffAccess(context, {
+      clinicId: payload.clinicId,
+      doctorId: payload.doctorId,
+      action: 'create schedule override',
+      allowClinicAdminWithoutDoctor: true
+    });
+
     const result = await applyCreateScheduleOverride(payload);
     return {
       success: true,
@@ -2241,6 +2746,13 @@ const updateOverrideHandler = async (data: CreateOverrideRequest, context: Calla
   }
 
   try {
+    await ensureStaffAccess(context, {
+      clinicId: payload.clinicId,
+      doctorId: payload.doctorId,
+      action: 'update schedule override',
+      allowClinicAdminWithoutDoctor: true
+    });
+
     const result = await applyUpdateScheduleOverride(payload);
     return {
       success: true,
@@ -2264,6 +2776,13 @@ const deleteOverrideHandler = async (data: { clinicId?: string; doctorId?: strin
   const overrideId = typeof data?.overrideId === 'string' ? data.overrideId.trim() : '';
 
   try {
+    await ensureStaffAccess(context, {
+      clinicId,
+      doctorId,
+      action: 'delete schedule override',
+      allowClinicAdminWithoutDoctor: true
+    });
+
     const result = await applyDeleteScheduleOverride({ clinicId, doctorId, overrideId });
     return { success: result.deleted };
   } catch (error) {

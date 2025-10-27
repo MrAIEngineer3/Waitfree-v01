@@ -33,22 +33,22 @@ export default function LoginPage() {
   }
 
   return (
-    <div className="max-w-md mx-auto py-14 px-4 space-y-8 w-full">
-      <header className="text-center space-y-3">
-        <div className="flex justify-center mb-4">
-          <div className="h-14 w-14 rounded-full bg-gradient-to-r from-blue-500 to-cyan-400 flex items-center justify-center shadow-lg">
-            <svg className="w-7 h-7 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+    <div className="max-w-md mx-auto py-8 sm:py-14 px-2 sm:px-6 space-y-6 sm:space-y-8 w-full">
+      <header className="text-center space-y-2 sm:space-y-3">
+        <div className="flex justify-center mb-3 sm:mb-4">
+          <div className="h-12 w-12 sm:h-14 sm:w-14 rounded-full bg-gradient-to-r from-blue-500 to-cyan-400 flex items-center justify-center shadow-lg">
+            <svg className="w-6 h-6 sm:w-7 sm:h-7 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 16l-4-4m0 0l4-4m-4 4h14m-5 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h7a3 3 0 013 3v1" />
             </svg>
           </div>
         </div>
-        <h1 className="text-3xl font-bold tracking-tight text-foreground">Welcome Back</h1>
-        <p className="text-sm text-muted-foreground">Sign in to access your clinic dashboard</p>
+        <h1 className="text-2xl sm:text-3xl font-bold tracking-tight text-foreground">Welcome Back</h1>
+        <p className="text-sm text-muted-foreground px-2">Sign in to access your clinic dashboard</p>
       </header>
 
       <Card padding="lg" variant="outline" className="space-y-6 shadow-sm">
-        <form onSubmit={handleLogin} className="space-y-5">
-          <div className="space-y-2">
+        <form onSubmit={handleLogin} className="space-y-5 sm:space-y-6">
+          <div className="space-y-2.5 sm:space-y-2">
             <Label htmlFor="email" className="text-sm font-semibold text-foreground">
               Email Address
             </Label>
@@ -59,10 +59,10 @@ export default function LoginPage() {
               onChange={e=>setEmail(e.target.value)} 
               placeholder="you@clinic.com" 
               required 
-              className="h-10"
+              className="h-12 sm:h-11 text-base sm:text-sm"
             />
           </div>
-          <div className="space-y-2">
+          <div className="space-y-2.5 sm:space-y-2">
             <Label htmlFor="password" className="text-sm font-semibold text-foreground">
               Password
             </Label>
@@ -74,7 +74,7 @@ export default function LoginPage() {
               placeholder="••••••••" 
               required 
               minLength={6}
-              className="h-10"
+              className="h-12 sm:h-11 text-base sm:text-sm"
             />
           </div>
           {error && (
@@ -85,7 +85,7 @@ export default function LoginPage() {
               <span>{error}</span>
             </div>
           )}
-          <Button type="submit" className="w-full h-11" loading={loading}>
+          <Button type="submit" className="w-full h-12 sm:h-11 text-base sm:text-sm" loading={loading}>
             {!loading && (
               <svg className="w-5 h-5 mr-2" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 16l-4-4m0 0l4-4m-4 4h14m-5 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h7a3 3 0 013 3v1" />
@@ -97,7 +97,7 @@ export default function LoginPage() {
         
         <Separator className="my-4" />
         
-        <div className="text-center text-sm text-muted-foreground">
+        <div className="text-center text-sm text-muted-foreground px-2">
           <span className="mr-1">New to Waitfree?</span>
           <Link href="/auth/signup" className="text-blue-600 hover:text-blue-700 dark:text-blue-400 dark:hover:text-blue-300 hover:underline font-semibold transition-colors">
             Create your clinic
