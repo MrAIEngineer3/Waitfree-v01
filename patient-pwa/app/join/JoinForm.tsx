@@ -14,6 +14,7 @@ import { ScrollArea } from '@/components/ui/scroll-area';
 import { Separator } from '@/components/ui/separator';
 import { Skeleton } from '@/components/ui/skeleton';
 import { cn } from '@/lib/utils';
+import { formatClinicShareCode, normalizeClinicShareCode, parseClinicIdentifierFromQuery, parseClinicIdentifierFromText } from '@/lib/clinicIdentifier';
 
 import { functions } from '../../lib/firebase';
 import {
@@ -252,6 +253,7 @@ export default function JoinForm() {
   const [fieldErrors, setFieldErrors] = useState<PatientFieldErrors>({});
 
   const [clinicId, setClinicId] = useState<string | null>(null);
+  const [clinicShareCode, setClinicShareCode] = useState<string | null>(null);
   const [doctorId, setDoctorId] = useState<string | null>(null);
   const [doctorIdParamProvided, setDoctorIdParamProvided] = useState(false);
   const [doctors, setDoctors] = useState<DoctorListEntry[]>([]);
@@ -264,6 +266,7 @@ export default function JoinForm() {
   const [clinicSchedulingSettings, setClinicSchedulingSettings] = useState<ClinicSchedulingSettings>(() =>
     getDefaultClinicSchedulingSettings()
   );
+  const formattedClinicShareCode = useMemo(() => formatClinicShareCode(clinicShareCode), [clinicShareCode]);
 
   const initOnceRef = useRef(false);
   const isMountedRef = useRef(false);
@@ -553,16 +556,37 @@ export default function JoinForm() {
     initOnceRef.current = true;
 
     try {
-      let rawClinicId = '';
-      let rawDoctorId = '';
+      let rawClinicIdParam = '';
+      let rawClinicCodeParam = '';
+      let rawDoctorIdParam = '';
+      let parsedFromQuery: ReturnType<typeof parseClinicIdentifierFromQuery> = null;
 
       if (typeof window !== 'undefined') {
         const params = new URLSearchParams(window.location.search);
-        rawClinicId = params.get('clinicId') || params.get('c') || '';
-        rawDoctorId = params.get('doctorId') || params.get('d') || '';
+        parsedFromQuery = parseClinicIdentifierFromQuery(params);
+        rawClinicIdParam = params.get('clinicId') || params.get('c') || '';
+        rawClinicCodeParam = params.get('code') || params.get('clinicCode') || params.get('shareCode') || '';
+        rawDoctorIdParam = params.get('doctorId') || params.get('d') || '';
       }
 
-      const coerceId = (value: string | null | undefined): string | null => {
+      const parsedFromClinicParam = rawClinicIdParam
+        ? parseClinicIdentifierFromText(rawClinicIdParam)
+        : null;
+      const parsedFromCodeParam = rawClinicCodeParam ? parseClinicIdentifierFromText(rawClinicCodeParam) : null;
+
+      const shareCodeCandidates = [
+        normalizeClinicShareCode(rawClinicCodeParam),
+        parsedFromQuery?.shareCode ?? null,
+        parsedFromClinicParam?.shareCode ?? null,
+        parsedFromCodeParam?.shareCode ?? null,
+      ];
+
+      const resolvedShareCode = shareCodeCandidates.find((candidate): candidate is string => typeof candidate === 'string' && candidate.length > 0) ?? null;
+
+      const effectiveClinicIdentifier = resolvedShareCode ?? null;
+      const effectiveShareCode = resolvedShareCode;
+
+      const coerceFirestoreId = (value: string | null | undefined): string | null => {
         if (!value) return null;
         const str = `${value}`.trim();
         if (!str) return null;
@@ -583,21 +607,22 @@ export default function JoinForm() {
         return cleaned || null;
       };
 
-  const coercedClinicId = coerceId(rawClinicId);
-  const coercedDoctorId = coerceId(rawDoctorId);
-  const doctorIdWasProvided = Boolean(coercedDoctorId);
+      const coercedDoctorId = coerceFirestoreId(rawDoctorIdParam);
+      const doctorIdWasProvided = Boolean(coercedDoctorId);
 
-  setDoctorIdParamProvided(doctorIdWasProvided);
+      setDoctorIdParamProvided(doctorIdWasProvided);
 
-      if (!coercedClinicId) {
+      if (!effectiveClinicIdentifier) {
         setClinicId(null);
+        setClinicShareCode(null);
         setDoctorId(coercedDoctorId ?? null);
         setClinicSchedulingSettings(getDefaultClinicSchedulingSettings());
         setStatus('invalid');
         return;
       }
 
-      setClinicId(coercedClinicId);
+    setClinicId(effectiveClinicIdentifier);
+    setClinicShareCode(effectiveShareCode);
       setDoctorId(coercedDoctorId ?? null);
       setClinicSchedulingSettings(getDefaultClinicSchedulingSettings());
       setStatus('valid');
@@ -634,7 +659,7 @@ export default function JoinForm() {
           }
 
           const response = await getClinicDoctorAvailability(
-            coercedClinicId,
+            effectiveClinicIdentifier,
             coercedDoctorId ? [coercedDoctorId] : undefined
           );
 
@@ -741,7 +766,7 @@ export default function JoinForm() {
 
       const loadSchedulingSettings = async () => {
         try {
-          const data = await fetchClinicSchedulingSettings(coercedClinicId);
+          const data = await fetchClinicSchedulingSettings(effectiveClinicIdentifier);
           if (isMountedRef.current) {
             setClinicSchedulingSettings(data);
           }
@@ -814,7 +839,7 @@ export default function JoinForm() {
             </div>
             <CardTitle>Invalid Clinic Link</CardTitle>
             <CardDescription>
-              The clinic link appears to be invalid. Please scan the QR code again or contact the clinic for
+              The clinic code or link appears to be invalid. Please scan the QR code again or contact the clinic for
               assistance.
             </CardDescription>
           </CardHeader>
@@ -845,6 +870,11 @@ export default function JoinForm() {
               {clinicData?.name?.trim() || 'Clinic'}
             </CardTitle>
             <CardDescription className="font-medium">Virtual Queue System</CardDescription>
+            {formattedClinicShareCode ? (
+              <p className="text-xs font-medium text-muted-foreground">
+                Clinic code: <span className="font-mono tracking-wider text-foreground">{formattedClinicShareCode}</span>
+              </p>
+            ) : null}
           </CardHeader>
 
           <Separator className="bg-border/60" />

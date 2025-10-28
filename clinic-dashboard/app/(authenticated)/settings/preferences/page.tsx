@@ -2,24 +2,25 @@
 import { Button } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
 import { Separator } from '@/components/ui/separator';
-import { useState } from 'react';
+import { useTheme } from 'next-themes';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
 
 type LanguageOption = 'en' | 'hi';
 type ThemeOption = 'light' | 'dark' | 'system';
 
 // Modern Radio Button Component
-function RadioOption({ 
-  checked, 
-  onChange, 
-  label, 
+function RadioOption({
+  checked,
+  onChange,
+  label,
   description,
-  icon 
-}: { 
-  checked: boolean; 
-  onChange: () => void; 
-  label: string; 
+  icon,
+}: {
+  checked: boolean;
+  onChange: () => void;
+  label: string;
   description?: string;
-  icon?: React.ReactNode;
+  icon?: ReactNode;
 }) {
   return (
     <button
@@ -73,18 +74,91 @@ function RadioOption({
 }
 
 export default function PreferencesSettingsPage() {
+  const { theme: activeTheme, resolvedTheme, setTheme: applyTheme } = useTheme();
   const [language, setLanguage] = useState<LanguageOption>('en');
-  const [theme, setTheme] = useState<ThemeOption>('system');
+  const [selectedTheme, setSelectedTheme] = useState<ThemeOption>('system');
   const [saving, setSaving] = useState(false);
   const [success, setSuccess] = useState(false);
+  const [isThemeDirty, setIsThemeDirty] = useState(false);
+  const [mounted, setMounted] = useState(false);
+  const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const successTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => {
+    setMounted(true);
+    return () => {
+      if (saveTimerRef.current) {
+        clearTimeout(saveTimerRef.current);
+        saveTimerRef.current = null;
+      }
+      if (successTimerRef.current) {
+        clearTimeout(successTimerRef.current);
+        successTimerRef.current = null;
+      }
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!mounted || isThemeDirty) {
+      return;
+    }
+
+    if (activeTheme === 'light' || activeTheme === 'dark' || activeTheme === 'system') {
+      setSelectedTheme(activeTheme);
+      return;
+    }
+
+    if (resolvedTheme === 'light' || resolvedTheme === 'dark') {
+      setSelectedTheme(resolvedTheme);
+    }
+  }, [activeTheme, resolvedTheme, isThemeDirty, mounted]);
+
+  const clearSuccessTimer = () => {
+    if (successTimerRef.current) {
+      clearTimeout(successTimerRef.current);
+      successTimerRef.current = null;
+    }
+  };
+
+  const handleThemeSelect = (value: ThemeOption) => {
+    clearSuccessTimer();
+    setSuccess(false);
+    setSelectedTheme(value);
+    if (activeTheme === 'light' || activeTheme === 'dark' || activeTheme === 'system') {
+      const matchesActive = value === 'system' ? activeTheme === 'system' : activeTheme === value;
+      setIsThemeDirty(!matchesActive);
+    } else {
+      setIsThemeDirty(true);
+    }
+    if (saveTimerRef.current) {
+      clearTimeout(saveTimerRef.current);
+      saveTimerRef.current = null;
+    }
+    if (saving) {
+      setSaving(false);
+    }
+  };
 
   const handleSave = () => {
+    clearSuccessTimer();
+    if (saveTimerRef.current) {
+      clearTimeout(saveTimerRef.current);
+      saveTimerRef.current = null;
+    }
     setSaving(true);
-    setTimeout(() => {
+    const targetTheme = selectedTheme === 'light' || selectedTheme === 'dark' ? selectedTheme : 'system';
+    applyTheme(targetTheme);
+    setIsThemeDirty(false);
+
+    saveTimerRef.current = setTimeout(() => {
       setSaving(false);
       setSuccess(true);
-      setTimeout(() => setSuccess(false), 3000);
-    }, 1000);
+      successTimerRef.current = setTimeout(() => {
+        setSuccess(false);
+        successTimerRef.current = null;
+      }, 3000);
+      saveTimerRef.current = null;
+    }, 400);
   };
 
   return (
@@ -123,7 +197,11 @@ export default function PreferencesSettingsPage() {
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               <RadioOption
                 checked={language === 'en'}
-                onChange={() => setLanguage('en')}
+                onChange={() => {
+                  clearSuccessTimer();
+                  setLanguage('en');
+                  setSuccess(false);
+                }}
                 label="English"
                 description="Default language"
                 icon={
@@ -134,7 +212,11 @@ export default function PreferencesSettingsPage() {
               />
               <RadioOption
                 checked={language === 'hi'}
-                onChange={() => setLanguage('hi')}
+                onChange={() => {
+                  clearSuccessTimer();
+                  setLanguage('hi');
+                  setSuccess(false);
+                }}
                 label="हिंदी (Hindi)"
                 description="भारतीय भाषा"
                 icon={
@@ -163,8 +245,8 @@ export default function PreferencesSettingsPage() {
             </div>
             <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
               <RadioOption
-                checked={theme === 'light'}
-                onChange={() => setTheme('light')}
+                checked={selectedTheme === 'light'}
+                onChange={() => handleThemeSelect('light')}
                 label="Light"
                 description="Bright and clear"
                 icon={
@@ -174,8 +256,8 @@ export default function PreferencesSettingsPage() {
                 }
               />
               <RadioOption
-                checked={theme === 'dark'}
-                onChange={() => setTheme('dark')}
+                checked={selectedTheme === 'dark'}
+                onChange={() => handleThemeSelect('dark')}
                 label="Dark"
                 description="Easy on the eyes"
                 icon={
@@ -185,8 +267,8 @@ export default function PreferencesSettingsPage() {
                 }
               />
               <RadioOption
-                checked={theme === 'system'}
-                onChange={() => setTheme('system')}
+                checked={selectedTheme === 'system'}
+                onChange={() => handleThemeSelect('system')}
                 label="System"
                 description="Auto adjust"
                 icon={
@@ -256,8 +338,9 @@ export default function PreferencesSettingsPage() {
               variant="outline"
               className="w-full sm:w-auto"
               onClick={() => {
+                clearSuccessTimer();
                 setLanguage('en');
-                setTheme('system');
+                handleThemeSelect('system');
               }}
             >
               Reset to Default

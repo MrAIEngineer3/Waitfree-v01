@@ -4,15 +4,16 @@ import QRCode from 'react-qr-code';
 
 type Props = {
   clinicId: string;
+  clinicShareCode?: string | null;
   className?: string;
 };
 
 /**
  * Renders a QR code that links patients to the PWA join page.
- * URL shape (Phase 1): `${BASE}/join?clinicId=${clinicId}`
+ * URL shape: `${BASE}/join?code=${shareCode}&clinicId=${clinicId}`
  * Optional doctorId can be supported later if we roll out per-doctor codes.
  */
-export default function ClinicJoinQR({ clinicId, className }: Props) {
+export default function ClinicJoinQR({ clinicId, clinicShareCode, className }: Props) {
   // Resolve Patient PWA base URL with safe fallbacks:
   // 1) Explicit env var (recommended for production)
   // 2) Runtime inference from current origin when not on localhost
@@ -39,12 +40,31 @@ export default function ClinicJoinQR({ clinicId, className }: Props) {
     // Dev default
     return 'http://localhost:3002';
   }, []);
+  const shareCodeParam = useMemo(() => {
+    if (!clinicShareCode) return null;
+    const compact = clinicShareCode.replace(/\s+/g, '');
+    if (!compact) return null;
+    return compact.toUpperCase();
+  }, [clinicShareCode]);
+
+  const shareCodeDisplay = useMemo(() => {
+    if (!shareCodeParam) return null;
+    const upper = shareCodeParam;
+    if (upper.includes('-')) {
+      return upper;
+    }
+    return upper.match(/.{1,4}/g)?.join(' ') ?? upper;
+  }, [shareCodeParam]);
+
   const url = useMemo(() => {
     const u = new URL(base + '/join');
+    if (shareCodeParam) {
+      u.searchParams.set('code', shareCodeParam);
+    }
     u.searchParams.set('clinicId', clinicId);
     // Phase 1: do not include doctorId
     return u.toString();
-  }, [base, clinicId]);
+  }, [base, clinicId, shareCodeParam]);
 
   const svgWrapperRef = useRef<HTMLDivElement>(null);
 
@@ -80,7 +100,8 @@ export default function ClinicJoinQR({ clinicId, className }: Props) {
         const pngUrl = canvas.toDataURL('image/png');
         const a = document.createElement('a');
         a.href = pngUrl;
-        a.download = `waitfree-join-${clinicId}.png`;
+  const filenameId = shareCodeParam ?? clinicId;
+  a.download = `waitfree-join-${filenameId}.png`;
         document.body.appendChild(a);
         a.click();
         document.body.removeChild(a);
@@ -102,6 +123,10 @@ export default function ClinicJoinQR({ clinicId, className }: Props) {
     const w = window.open('', '_blank', 'width=600,height=800');
     if (!w) return;
     const title = 'WaitFree Patient Join QR';
+    const metaBlock = shareCodeDisplay
+      ? `<div class="meta">Clinic Code: ${shareCodeDisplay}</div>`
+      : `<div class="meta">Clinic ID: ${clinicId}</div>`;
+
     const doc = `<!doctype html>
       <html>
         <head>
@@ -112,6 +137,7 @@ export default function ClinicJoinQR({ clinicId, className }: Props) {
             .card { max-width: 640px; margin: 0 auto; text-align: center; }
             .qr { margin: 16px auto; width: 320px; height: 320px; }
             .meta { color: #555; font-size: 14px; }
+            .meta--secondary { color: #777; font-size: 12px; margin-top: 4px; }
             .link { word-break: break-all; font-size: 12px; color: #333; }
             @media print { .no-print { display: none; } }
           </style>
@@ -119,7 +145,7 @@ export default function ClinicJoinQR({ clinicId, className }: Props) {
         <body>
           <div class="card">
             <h1 style="margin:0 0 8px">Scan to Join Queue</h1>
-            <div class="meta">Clinic ID: ${clinicId}</div>
+            ${metaBlock}
             <img class="qr" alt="Clinic Join QR" src="${svgDataUrl}" />
             <div class="link">${url}</div>
             <div class="no-print" style="margin-top:16px;color:#777">Use your browser's print dialog to print or save as PDF.</div>
@@ -146,12 +172,25 @@ export default function ClinicJoinQR({ clinicId, className }: Props) {
           <div className="text-[11px] text-muted-foreground break-all text-center max-w-full">
             {url}
           </div>
+          {shareCodeDisplay ? (
+            <div className="text-xs font-semibold text-foreground text-center">
+              Clinic code: <span className="font-mono tracking-widest">{shareCodeDisplay}</span>
+            </div>
+          ) : (
+            <div className="text-xs font-semibold text-foreground text-center">
+              Clinic ID: <span className="font-mono">{clinicId}</span>
+            </div>
+          )}
           <div className="flex gap-2 flex-wrap justify-center">
             <button onClick={copyLink} className="h-8 px-3 text-xs font-medium text-foreground bg-background hover:bg-accent border border-border rounded-lg shadow-sm">Copy link</button>
             <button onClick={downloadPng} className="h-8 px-3 text-xs font-medium text-foreground bg-background hover:bg-accent border border-border rounded-lg shadow-sm">Download PNG</button>
             <button onClick={printQR} className="h-8 px-3 text-xs font-medium text-white bg-blue-600 hover:bg-blue-700 dark:bg-blue-500 dark:hover:bg-blue-600 rounded-lg shadow-sm">Print</button>
           </div>
-          <div className="text-[11px] text-muted-foreground text-center">No scanner? Open the patient app and enter Clinic ID: <span className="font-mono">{clinicId}</span></div>
+          <div className="text-[11px] text-muted-foreground text-center">
+            No scanner? Open the patient app and enter {shareCodeDisplay ? 'clinic code' : 'clinic ID'}:
+            {' '}
+            <span className="font-mono">{shareCodeDisplay ?? clinicId}</span>
+          </div>
         </div>
       </div>
     </div>

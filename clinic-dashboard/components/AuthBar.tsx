@@ -60,7 +60,7 @@ export default function AuthBar() {
         doctorName: 'Demo Doctor',
         specialty: 'General'
       });
-      const result = response.data as { success?: boolean; clinicId?: string; doctorId?: string };
+  const result = response.data as { success?: boolean; clinicId?: string; doctorId?: string; clinicShareCode?: string };
       if (!result?.success) {
         throw new Error('Demo bootstrap failed');
       }
@@ -113,7 +113,7 @@ export default function AuthBar() {
           </div>
           {mode === 'signup' && (
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 mb-2">
-              <Input value={clinicId} onChange={e=>setClinicId(e.target.value)} placeholder="Clinic ID (optional)" className="col-span-2" />
+              <Input value={clinicId} onChange={e=>setClinicId(e.target.value)} placeholder="Clinic code (optional)" className="col-span-2" />
               <Input value={doctorId} onChange={e=>setDoctorId(e.target.value)} placeholder="Doctor ID (optional)" />
             </div>
           )}

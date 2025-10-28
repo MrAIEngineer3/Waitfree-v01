@@ -6,6 +6,7 @@ import QrScanner from "qr-scanner";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
+import { buildJoinHref, parseClinicIdentifierFromText } from "@/lib/clinicIdentifier";
 
 interface JoinScannerContextValue {
   openScanner: () => void;
@@ -14,38 +15,6 @@ interface JoinScannerContextValue {
 }
 
 const JoinScannerContext = createContext<JoinScannerContextValue | null>(null);
-
-function extractClinicId(rawText: string): string | null {
-  const raw = rawText.trim();
-  if (!raw) return null;
-
-  try {
-    const url = new URL(raw);
-    const fromQuery = url.searchParams.get("clinicId") ?? url.searchParams.get("c");
-    if (fromQuery && /^[a-z0-9-]+$/i.test(fromQuery)) {
-      return fromQuery;
-    }
-  } catch {
-    // Not a URL; fall through to other parsing strategies
-  }
-
-  if (/^[a-z0-9-]{3,}$/i.test(raw)) {
-    return raw;
-  }
-
-  try {
-    const queryIndex = raw.indexOf("?");
-    const params = new URLSearchParams(queryIndex >= 0 ? raw.slice(queryIndex + 1) : raw);
-    const fromParams = params.get("clinicId") ?? params.get("c");
-    if (fromParams && /^[a-z0-9-]+$/i.test(fromParams)) {
-      return fromParams;
-    }
-  } catch {
-    // Ignore parsing errors and fall through to returning null
-  }
-
-  return null;
-}
 
 interface QRScannerOverlayProps {
   onScan: (text: string) => void;
@@ -307,9 +276,9 @@ export function JoinScannerProvider({ children }: { children: React.ReactNode })
   const handleScan = useCallback(
     (text: string) => {
       closeScanner();
-      const clinicId = extractClinicId(text);
-      if (clinicId) {
-        router.push(`/join?clinicId=${encodeURIComponent(clinicId)}`);
+  const parsed = parseClinicIdentifierFromText(text, { preferSlugOnAmbiguous: true });
+      if (parsed) {
+        router.push(buildJoinHref(parsed));
         return;
       }
 
@@ -327,7 +296,7 @@ export function JoinScannerProvider({ children }: { children: React.ReactNode })
         // Ignore URL parsing failure and show fallback toast below
       }
 
-      toast.error("We couldn't read the clinic information from that QR code. Please try again.");
+  toast.error("We couldn't read the clinic code from that QR code. Please try again.");
     },
     [closeScanner, router]
   );

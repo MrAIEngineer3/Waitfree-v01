@@ -60,7 +60,7 @@ export default function OnboardingPage() {
         clinicPhone: clinicPhone || undefined
       });
 
-      const result = response.data as { success?: boolean; clinicId?: string; doctorId?: string };
+  const result = response.data as { success?: boolean; clinicId?: string; doctorId?: string; clinicShareCode?: string };
       if (!result?.success) {
         throw new Error('Failed to create clinic structures');
       }

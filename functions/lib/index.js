@@ -190,6 +190,250 @@ const sanitizeFirestoreId = (value) => {
     }
     return /^[A-Za-z0-9-_.~]+$/.test(trimmed) ? trimmed : null;
 };
+const CLINIC_SHARE_CODES_COLLECTION = 'clinicShareCodes';
+const SHARE_CODE_CACHE_TTL_MS = 5 * 60 * 1000;
+const clinicShareCodeCache = new Map();
+const SHARE_CODE_GENERATION_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+const SHARE_CODE_GROUP_LENGTH = 4;
+const SHARE_CODE_GROUP_COUNT = 2;
+const SHARE_CODE_MAX_ATTEMPTS = 20;
+const isShareCodeDocActive = (doc) => {
+    if (!doc) {
+        return false;
+    }
+    const status = typeof doc.status === 'string' ? doc.status.toLowerCase() : 'active';
+    const disabled = doc.disabled === true;
+    return !disabled && status !== 'disabled' && status !== 'revoked';
+};
+const generateClinicShareCodeCandidate = () => {
+    const requiredChars = SHARE_CODE_GROUP_LENGTH * SHARE_CODE_GROUP_COUNT;
+    const random = crypto_1.default.randomBytes(requiredChars);
+    let raw = '';
+    for (let i = 0; i < requiredChars; i += 1) {
+        const index = random[i] % SHARE_CODE_GENERATION_ALPHABET.length;
+        raw += SHARE_CODE_GENERATION_ALPHABET[index];
+    }
+    const groups = [];
+    for (let groupIndex = 0; groupIndex < SHARE_CODE_GROUP_COUNT; groupIndex += 1) {
+        const start = groupIndex * SHARE_CODE_GROUP_LENGTH;
+        groups.push(raw.slice(start, start + SHARE_CODE_GROUP_LENGTH));
+    }
+    return groups.join('-');
+};
+const isAlreadyExistsError = (error) => {
+    if (!error || typeof error !== 'object') {
+        return false;
+    }
+    const code = error.code;
+    if (code === 6 || code === 'already-exists') {
+        return true;
+    }
+    const message = error instanceof Error ? error.message : String(error.message ?? '');
+    return /\balready exists\b/i.test(message);
+};
+const ensureClinicShareCode = async (clinicId) => {
+    const db = firebaseAdmin_1.admin.firestore();
+    const shareCodes = db.collection(CLINIC_SHARE_CODES_COLLECTION);
+    const canonicalSnap = await shareCodes.where('canonicalClinicId', '==', clinicId).limit(10).get();
+    const canonicalDoc = canonicalSnap.docs.find((docSnap) => isShareCodeDocActive(docSnap.data()));
+    if (canonicalDoc) {
+        const shareCode = canonicalDoc.id;
+        clinicShareCodeCache.set(shareCode, {
+            promise: Promise.resolve({
+                clinicId,
+                shareCode,
+                requestedId: shareCode,
+                resolution: 'share-code'
+            }),
+            expiresAt: Date.now() + SHARE_CODE_CACHE_TTL_MS
+        });
+        return shareCode;
+    }
+    const legacySnap = await shareCodes.where('clinicId', '==', clinicId).limit(10).get();
+    const legacyDoc = legacySnap.docs.find((docSnap) => isShareCodeDocActive(docSnap.data()));
+    if (legacyDoc) {
+        const legacyRef = shareCodes.doc(legacyDoc.id);
+        await legacyRef.set({
+            canonicalClinicId: clinicId,
+            disabled: false,
+            status: 'active',
+            updatedAt: firestore_1.FieldValue.serverTimestamp()
+        }, { merge: true });
+        const shareCode = legacyDoc.id;
+        clinicShareCodeCache.set(shareCode, {
+            promise: Promise.resolve({
+                clinicId,
+                shareCode,
+                requestedId: shareCode,
+                resolution: 'share-code'
+            }),
+            expiresAt: Date.now() + SHARE_CODE_CACHE_TTL_MS
+        });
+        return shareCode;
+    }
+    for (let attempt = 0; attempt < SHARE_CODE_MAX_ATTEMPTS; attempt += 1) {
+        const candidate = generateClinicShareCodeCandidate();
+        const docRef = shareCodes.doc(candidate);
+        try {
+            await docRef.create({
+                clinicId,
+                canonicalClinicId: clinicId,
+                status: 'active',
+                disabled: false,
+                createdAt: firestore_1.FieldValue.serverTimestamp(),
+                updatedAt: firestore_1.FieldValue.serverTimestamp(),
+                issuedAt: firestore_1.FieldValue.serverTimestamp(),
+                issuedBy: 'bootstrapClinicAccount'
+            });
+            clinicShareCodeCache.set(candidate, {
+                promise: Promise.resolve({
+                    clinicId,
+                    shareCode: candidate,
+                    requestedId: candidate,
+                    resolution: 'share-code'
+                }),
+                expiresAt: Date.now() + SHARE_CODE_CACHE_TTL_MS
+            });
+            return candidate;
+        }
+        catch (error) {
+            if (isAlreadyExistsError(error)) {
+                continue;
+            }
+            functions.logger.error('Failed to allocate clinic share code', {
+                clinicId,
+                attempt,
+                error: error instanceof Error ? { message: error.message, stack: error.stack } : error
+            });
+            throw new functions.https.HttpsError('internal', 'Failed to allocate clinic share code');
+        }
+    }
+    throw new functions.https.HttpsError('resource-exhausted', 'Unable to allocate a clinic share code');
+};
+const normalizeClinicShareCode = (value) => {
+    if (typeof value !== 'string') {
+        return null;
+    }
+    const trimmed = value.trim();
+    if (!trimmed) {
+        return null;
+    }
+    const compact = trimmed.replace(/\s+/g, '');
+    const normalized = compact.toUpperCase();
+    if (!/^[A-Z0-9-]{3,16}$/.test(normalized)) {
+        return null;
+    }
+    return normalized;
+};
+const loadClinicByShareCode = (shareCode) => {
+    const existing = clinicShareCodeCache.get(shareCode);
+    const now = Date.now();
+    if (existing && existing.expiresAt > now) {
+        return existing.promise;
+    }
+    const promise = (async () => {
+        const snapshot = await firebaseAdmin_1.admin.firestore()
+            .collection(CLINIC_SHARE_CODES_COLLECTION)
+            .doc(shareCode)
+            .get();
+        if (!snapshot.exists) {
+            return null;
+        }
+        const data = snapshot.data();
+        const candidateId = typeof data?.canonicalClinicId === 'string' ? data.canonicalClinicId :
+            typeof data?.clinicId === 'string' ? data.clinicId :
+                null;
+        const sanitizedClinicId = sanitizeFirestoreId(candidateId);
+        if (!sanitizedClinicId) {
+            functions.logger.error('Share code record missing valid clinicId', {
+                shareCode,
+                data: data ?? null
+            });
+            return null;
+        }
+        const status = typeof data?.status === 'string' ? data.status.toLowerCase() : 'active';
+        const disabled = data?.disabled === true;
+        if (disabled || ['revoked', 'disabled'].includes(status)) {
+            throw new functions.https.HttpsError('failed-precondition', 'Clinic code is inactive. Please contact the clinic for a new code.');
+        }
+        return {
+            clinicId: sanitizedClinicId,
+            shareCode,
+            resolution: 'share-code',
+            requestedId: shareCode
+        };
+    })().catch((error) => {
+        clinicShareCodeCache.delete(shareCode);
+        throw error;
+    });
+    clinicShareCodeCache.set(shareCode, {
+        promise,
+        expiresAt: now + SHARE_CODE_CACHE_TTL_MS
+    });
+    return promise;
+};
+const resolveClinicIdentifier = async (value, options = {}) => {
+    const fieldName = options.fieldName ?? 'clinicId';
+    const requestedId = typeof value === 'string' ? value.trim() : '';
+    if (!requestedId) {
+        throw new functions.https.HttpsError('invalid-argument', `${fieldName} is required`);
+    }
+    const shareCodeNormalized = options.allowShareCodeLookup === false ? null : normalizeClinicShareCode(requestedId);
+    if (shareCodeNormalized) {
+        try {
+            const resolved = await loadClinicByShareCode(shareCodeNormalized);
+            if (resolved) {
+                if (shareCodeNormalized !== requestedId.toUpperCase()) {
+                    functions.logger.debug('Clinic share code normalized', {
+                        requestedId,
+                        shareCodeNormalized,
+                        clinicId: resolved.clinicId
+                    });
+                }
+                return { ...resolved, requestedId };
+            }
+        }
+        catch (error) {
+            if (error instanceof functions.https.HttpsError) {
+                throw error;
+            }
+            functions.logger.error('Share code lookup failed', {
+                requestedId,
+                shareCodeNormalized,
+                error: error instanceof Error ? { message: error.message, stack: error.stack } : String(error)
+            });
+            throw new functions.https.HttpsError('internal', 'Failed to resolve clinic code');
+        }
+        if (options.allowSlugFallback === false) {
+            throw new functions.https.HttpsError('not-found', 'Clinic code not recognized');
+        }
+        const fallbackSlug = sanitizeFirestoreId(requestedId);
+        if (fallbackSlug) {
+            functions.logger.debug('Clinic share code not found, falling back to slug', {
+                requestedId,
+                shareCodeNormalized,
+                fallbackSlug
+            });
+            return {
+                clinicId: fallbackSlug,
+                resolution: 'canonical',
+                shareCode: null,
+                requestedId
+            };
+        }
+        throw new functions.https.HttpsError('not-found', 'Clinic code not recognized');
+    }
+    const sanitized = sanitizeFirestoreId(requestedId);
+    if (!sanitized) {
+        throw new functions.https.HttpsError('invalid-argument', `${fieldName} is invalid`);
+    }
+    return {
+        clinicId: sanitized,
+        resolution: 'canonical',
+        shareCode: null,
+        requestedId
+    };
+};
 const serializeOverride = (override) => {
     if (!override) {
         return null;
@@ -606,10 +850,25 @@ exports.onPatientStatusChange = regionalFunctions.firestore
 const joinQueueHandler = async (data, _context) => {
     try {
         // Extract data from the 'data' parameter provided by the client SDK
-        const { clinicId, doctorId, patientData } = data;
+        const rawClinicId = data?.clinicId;
+        const rawDoctorId = data?.doctorId;
+        const patientData = data?.patientData;
         // Validate required fields
-        if (!clinicId || !doctorId || !patientData) {
+        if (!rawClinicId || !rawDoctorId || !patientData) {
             throw new functions.https.HttpsError('invalid-argument', 'Missing required fields: clinicId, doctorId, and patientData are required.');
+        }
+        const clinicResolution = await resolveClinicIdentifier(rawClinicId, { allowSlugFallback: false });
+        const clinicId = clinicResolution.clinicId;
+        const doctorId = sanitizeFirestoreId(rawDoctorId);
+        if (!doctorId) {
+            throw new functions.https.HttpsError('invalid-argument', 'doctorId is invalid');
+        }
+        if (clinicResolution.shareCode) {
+            functions.logger.debug('joinQueue clinic resolved via share code', {
+                requestedClinicId: clinicResolution.requestedId,
+                clinicId,
+                shareCode: clinicResolution.shareCode
+            });
         }
         let normalizedPatient;
         try {
@@ -780,10 +1039,19 @@ const manualAddPatientHandler = async (data, context) => {
             throw new functions.https.HttpsError('unauthenticated', 'Authentication required');
         }
         const uid = context.auth.uid;
-        const clinicId = sanitizeFirestoreId(data?.clinicId);
+        const clinicResolution = await resolveClinicIdentifier(data?.clinicId);
+        const clinicId = clinicResolution.clinicId;
         const doctorId = sanitizeFirestoreId(data?.doctorId);
         const queueId = sanitizeFirestoreId(data?.queueId);
-        if (!clinicId || !doctorId || !queueId) {
+        if (clinicResolution.shareCode) {
+            functions.logger.debug('manualAddPatient clinic resolved via share code', {
+                requestedClinicId: clinicResolution.requestedId,
+                clinicId,
+                shareCode: clinicResolution.shareCode,
+                uid
+            });
+        }
+        if (!doctorId || !queueId) {
             span.fail({ reason: 'invalid-argument' });
             throw new functions.https.HttpsError('invalid-argument', 'clinicId, doctorId, and queueId are required');
         }
@@ -961,9 +1229,17 @@ exports.manualAddPatient = createV2Callable(manualAddPatientHandler);
  */
 const getPatientViewHandler = async (data, _context) => {
     try {
-        const { clinicId, doctorId, queueId, patientId, token } = data || {};
-        if (!clinicId || !doctorId || !queueId || !patientId || !token) {
+        const { clinicId: rawClinicId, doctorId: rawDoctorId, queueId: rawQueueId, patientId: rawPatientId, token } = data || {};
+        if (!rawClinicId || !rawDoctorId || !rawQueueId || !rawPatientId || !token) {
             throw new functions.https.HttpsError('invalid-argument', 'Missing required fields: clinicId, doctorId, queueId, patientId, token');
+        }
+        const clinicResolution = await resolveClinicIdentifier(rawClinicId, { allowShareCodeLookup: false });
+        const clinicId = clinicResolution.clinicId;
+        const doctorId = sanitizeFirestoreId(rawDoctorId);
+        const queueId = sanitizeFirestoreId(rawQueueId);
+        const patientId = sanitizeFirestoreId(rawPatientId);
+        if (!doctorId || !queueId || !patientId) {
+            throw new functions.https.HttpsError('invalid-argument', 'Invalid doctor, queue, or patient identifier');
         }
         const db = firebaseAdmin_1.admin.firestore();
         const patientRef = db.collection('clinics').doc(clinicId)
@@ -999,9 +1275,17 @@ const getPatientViewHandler = async (data, _context) => {
 exports.getPatientView = createV2Callable(getPatientViewHandler);
 const createPatientSessionHandler = async (data, _context) => {
     try {
-        const { clinicId, doctorId, queueId, patientId, token } = data || {};
-        if (!clinicId || !doctorId || !queueId || !patientId || !token) {
+        const { clinicId: rawClinicId, doctorId: rawDoctorId, queueId: rawQueueId, patientId: rawPatientId, token } = data || {};
+        if (!rawClinicId || !rawDoctorId || !rawQueueId || !rawPatientId || !token) {
             throw new functions.https.HttpsError('invalid-argument', 'Missing required fields: clinicId, doctorId, queueId, patientId, token');
+        }
+        const clinicResolution = await resolveClinicIdentifier(rawClinicId, { allowShareCodeLookup: false });
+        const clinicId = clinicResolution.clinicId;
+        const doctorId = sanitizeFirestoreId(rawDoctorId);
+        const queueId = sanitizeFirestoreId(rawQueueId);
+        const patientId = sanitizeFirestoreId(rawPatientId);
+        if (!doctorId || !queueId || !patientId) {
+            throw new functions.https.HttpsError('invalid-argument', 'Invalid doctor, queue, or patient identifier');
         }
         const db = firebaseAdmin_1.admin.firestore();
         const patientRef = db.collection('clinics').doc(clinicId)
@@ -1078,11 +1362,29 @@ const updatePatientStatusHandler = async (data, context) => {
             throw new functions.https.HttpsError('unauthenticated', 'The function must be called by an authenticated user.');
         }
         // Extract and validate required fields
-        const { clinicId, doctorId, queueId, patientId, newStatus } = data;
-        if (!clinicId || !doctorId || !queueId || !patientId || !newStatus) {
+        const { clinicId: rawClinicId, doctorId: rawDoctorId, queueId: rawQueueId, patientId: rawPatientId, newStatus } = data;
+        if (!rawClinicId || !rawDoctorId || !rawQueueId || !rawPatientId || !newStatus) {
             span.fail({ reason: 'invalid-argument' });
             spanClosed = true;
             throw new functions.https.HttpsError('invalid-argument', 'Missing required fields: clinicId, doctorId, queueId, patientId, and newStatus are required.');
+        }
+        const clinicResolution = await resolveClinicIdentifier(rawClinicId);
+        const clinicId = clinicResolution.clinicId;
+        const doctorId = sanitizeFirestoreId(rawDoctorId);
+        const queueId = sanitizeFirestoreId(rawQueueId);
+        const patientId = sanitizeFirestoreId(rawPatientId);
+        if (!doctorId || !queueId || !patientId) {
+            span.fail({ reason: 'invalid-argument' });
+            spanClosed = true;
+            throw new functions.https.HttpsError('invalid-argument', 'Invalid doctor, queue, or patient identifier');
+        }
+        if (clinicResolution.shareCode) {
+            functions.logger.debug('updatePatientStatus clinic resolved via share code', {
+                requestedClinicId: clinicResolution.requestedId,
+                clinicId,
+                shareCode: clinicResolution.shareCode,
+                uid: context.auth?.uid ?? null
+            });
         }
         // Validate status values
         const validStatuses = ['waiting', 'in-progress', 'completed', 'cancelled'];
@@ -1531,12 +1833,20 @@ const patientCancelTokenHandler = async (data, _context) => {
         patientId: data?.patientId ?? null
     });
     try {
-        const clinicId = sanitizeFirestoreId(data?.clinicId);
+        const clinicResolution = await resolveClinicIdentifier(data?.clinicId);
+        const clinicId = clinicResolution.clinicId;
         const doctorId = sanitizeFirestoreId(data?.doctorId);
         const queueId = sanitizeFirestoreId(data?.queueId);
         const patientId = sanitizeFirestoreId(data?.patientId);
         const token = typeof data?.token === 'string' ? data.token.trim() : '';
-        if (!clinicId || !doctorId || !queueId || !patientId || !token) {
+        if (clinicResolution.shareCode) {
+            functions.logger.debug('patientCancelToken clinic resolved via share code', {
+                requestedClinicId: clinicResolution.requestedId,
+                clinicId,
+                shareCode: clinicResolution.shareCode
+            });
+        }
+        if (!doctorId || !queueId || !patientId || !token) {
             span.fail({ reason: 'invalid-argument' });
             throw new functions.https.HttpsError('invalid-argument', 'Missing required fields.');
         }
@@ -1649,12 +1959,20 @@ const patientRejoinQueueHandler = async (data, _context) => {
         patientId: data?.patientId ?? null
     });
     try {
-        const clinicId = sanitizeFirestoreId(data?.clinicId);
+        const clinicResolution = await resolveClinicIdentifier(data?.clinicId);
+        const clinicId = clinicResolution.clinicId;
         const doctorId = sanitizeFirestoreId(data?.doctorId);
         const queueId = sanitizeFirestoreId(data?.queueId);
         const patientId = sanitizeFirestoreId(data?.patientId);
         const token = typeof data?.token === 'string' ? data.token.trim() : '';
-        if (!clinicId || !doctorId || !queueId || !patientId || !token) {
+        if (clinicResolution.shareCode) {
+            functions.logger.debug('patientRejoinQueue clinic resolved via share code', {
+                requestedClinicId: clinicResolution.requestedId,
+                clinicId,
+                shareCode: clinicResolution.shareCode
+            });
+        }
+        if (!doctorId || !queueId || !patientId || !token) {
             span.fail({ reason: 'invalid-argument' });
             throw new functions.https.HttpsError('invalid-argument', 'Missing required fields.');
         }
@@ -1804,10 +2122,26 @@ const advanceQueueHandler = async (data, context) => {
             span.fail({ reason: 'unauthenticated' });
             throw new functions.https.HttpsError('unauthenticated', 'The function must be called by an authenticated user.');
         }
-        const { clinicId, doctorId, queueId } = data || {};
-        if (!clinicId || !doctorId || !queueId) {
+        const { clinicId: rawClinicId, doctorId: rawDoctorId, queueId: rawQueueId } = data || {};
+        if (!rawClinicId || !rawDoctorId || !rawQueueId) {
             span.fail({ reason: 'invalid-argument' });
             throw new functions.https.HttpsError('invalid-argument', 'clinicId, doctorId, and queueId are required');
+        }
+        const clinicResolution = await resolveClinicIdentifier(rawClinicId);
+        const clinicId = clinicResolution.clinicId;
+        const doctorId = sanitizeFirestoreId(rawDoctorId);
+        const queueId = sanitizeFirestoreId(rawQueueId);
+        if (!doctorId || !queueId) {
+            span.fail({ reason: 'invalid-argument' });
+            throw new functions.https.HttpsError('invalid-argument', 'Invalid doctor or queue identifier');
+        }
+        if (clinicResolution.shareCode) {
+            functions.logger.debug('advanceQueue clinic resolved via share code', {
+                requestedClinicId: clinicResolution.requestedId,
+                clinicId,
+                shareCode: clinicResolution.shareCode,
+                uid: context.auth?.uid ?? null
+            });
         }
         await ensureStaffAccess(context, {
             clinicId,
@@ -1905,9 +2239,24 @@ const updateQueueStatusHandler = async (data, _context) => {
             throw new functions.https.HttpsError('unauthenticated', 'The function must be called by an authenticated user.');
         }
         // Extract and validate required fields
-        const { clinicId, doctorId, queueId, newStatus } = data;
-        if (!clinicId || !doctorId || !queueId || !newStatus) {
+        const { clinicId: rawClinicId, doctorId: rawDoctorId, queueId: rawQueueId, newStatus } = data;
+        if (!rawClinicId || !rawDoctorId || !rawQueueId || !newStatus) {
             throw new functions.https.HttpsError('invalid-argument', 'Missing required fields: clinicId, doctorId, queueId, and newStatus are required.');
+        }
+        const clinicResolution = await resolveClinicIdentifier(rawClinicId);
+        const clinicId = clinicResolution.clinicId;
+        const doctorId = sanitizeFirestoreId(rawDoctorId);
+        const queueId = sanitizeFirestoreId(rawQueueId);
+        if (!doctorId || !queueId) {
+            throw new functions.https.HttpsError('invalid-argument', 'Invalid doctor or queue identifier');
+        }
+        if (clinicResolution.shareCode) {
+            functions.logger.debug('updateQueueStatus clinic resolved via share code', {
+                requestedClinicId: clinicResolution.requestedId,
+                clinicId,
+                shareCode: clinicResolution.shareCode,
+                uid: _context.auth?.uid ?? null
+            });
         }
         // Validate status values
         const validStatuses = ['active', 'paused', 'ended'];
@@ -1972,10 +2321,26 @@ const setQueueAutoAdvanceHandler = async (data, _context) => {
             span.fail({ reason: 'unauthenticated' });
             throw new functions.https.HttpsError('unauthenticated', 'Auth required');
         }
-        const { clinicId, doctorId, queueId, enabled } = data || {};
-        if (!clinicId || !doctorId || !queueId || typeof enabled !== 'boolean') {
+        const { clinicId: rawClinicId, doctorId: rawDoctorId, queueId: rawQueueId, enabled } = data || {};
+        if (!rawClinicId || !rawDoctorId || !rawQueueId || typeof enabled !== 'boolean') {
             span.fail({ reason: 'invalid-argument' });
             throw new functions.https.HttpsError('invalid-argument', 'clinicId, doctorId, queueId, enabled(boolean) required');
+        }
+        const clinicResolution = await resolveClinicIdentifier(rawClinicId);
+        const clinicId = clinicResolution.clinicId;
+        const doctorId = sanitizeFirestoreId(rawDoctorId);
+        const queueId = sanitizeFirestoreId(rawQueueId);
+        if (!doctorId || !queueId) {
+            span.fail({ reason: 'invalid-argument' });
+            throw new functions.https.HttpsError('invalid-argument', 'Invalid doctor or queue identifier');
+        }
+        if (clinicResolution.shareCode) {
+            functions.logger.debug('setQueueAutoAdvance clinic resolved via share code', {
+                requestedClinicId: clinicResolution.requestedId,
+                clinicId,
+                shareCode: clinicResolution.shareCode,
+                uid: _context.auth?.uid ?? null
+            });
         }
         await ensureStaffAccess(_context, {
             clinicId,
@@ -2006,8 +2371,25 @@ const setRealTimeStatusHandler = async (data, context) => {
     if (typeof data?.online !== 'boolean') {
         throw new functions.https.HttpsError('invalid-argument', 'online must be a boolean');
     }
-    const clinicId = typeof data?.clinicId === 'string' ? data.clinicId.trim() : '';
-    const doctorId = typeof data?.doctorId === 'string' ? data.doctorId.trim() : '';
+    const rawClinicId = typeof data?.clinicId === 'string' ? data.clinicId : '';
+    const rawDoctorId = typeof data?.doctorId === 'string' ? data.doctorId : '';
+    if (!rawClinicId || !rawDoctorId) {
+        throw new functions.https.HttpsError('invalid-argument', 'clinicId and doctorId are required');
+    }
+    const clinicResolution = await resolveClinicIdentifier(rawClinicId);
+    const clinicId = clinicResolution.clinicId;
+    const doctorId = sanitizeFirestoreId(rawDoctorId);
+    if (!doctorId) {
+        throw new functions.https.HttpsError('invalid-argument', 'doctorId is invalid');
+    }
+    if (clinicResolution.shareCode) {
+        functions.logger.debug('setDoctorRealTimeStatus clinic resolved via share code', {
+            requestedClinicId: clinicResolution.requestedId,
+            clinicId,
+            shareCode: clinicResolution.shareCode,
+            uid: context.auth?.uid ?? null
+        });
+    }
     try {
         await ensureStaffAccess(context, {
             clinicId,
@@ -2047,9 +2429,14 @@ const getClinicDoctorAvailabilityHandler = async (data, _context) => {
     if (!data || typeof data !== 'object') {
         throw new functions.https.HttpsError('invalid-argument', 'Request payload must be an object');
     }
-    const clinicId = sanitizeFirestoreId(data.clinicId);
-    if (!clinicId) {
-        throw new functions.https.HttpsError('invalid-argument', 'clinicId is required');
+    const clinicResolution = await resolveClinicIdentifier(data?.clinicId);
+    const clinicId = clinicResolution.clinicId;
+    if (clinicResolution.shareCode) {
+        functions.logger.debug('getClinicDoctorAvailability clinic resolved via share code', {
+            requestedClinicId: clinicResolution.requestedId,
+            clinicId,
+            shareCode: clinicResolution.shareCode
+        });
     }
     const providedDoctorIds = Array.isArray(data.doctorIds) ? data.doctorIds : undefined;
     const sanitizedDoctorIds = providedDoctorIds
@@ -2149,9 +2536,14 @@ const getClinicDoctorAvailabilityHandler = async (data, _context) => {
 };
 exports.getClinicDoctorAvailability = createV2Callable(getClinicDoctorAvailabilityHandler);
 const getClinicSchedulingSettingsHandler = async (data, _context) => {
-    const clinicId = sanitizeFirestoreId(data?.clinicId);
-    if (!clinicId) {
-        throw new functions.https.HttpsError('invalid-argument', 'clinicId is required');
+    const clinicResolution = await resolveClinicIdentifier(data?.clinicId);
+    const clinicId = clinicResolution.clinicId;
+    if (clinicResolution.shareCode) {
+        functions.logger.debug('getClinicSchedulingSettings clinic resolved via share code', {
+            requestedClinicId: clinicResolution.requestedId,
+            clinicId,
+            shareCode: clinicResolution.shareCode
+        });
     }
     const settings = await (0, settings_1.loadClinicSchedulingSettings)(clinicId);
     return {
@@ -2164,9 +2556,15 @@ const updateClinicSchedulingSettingsHandler = async (data, context) => {
     if (!context.auth) {
         throw new functions.https.HttpsError('unauthenticated', 'Authentication required');
     }
-    const clinicId = sanitizeFirestoreId(data?.clinicId);
-    if (!clinicId) {
-        throw new functions.https.HttpsError('invalid-argument', 'clinicId is required');
+    const clinicResolution = await resolveClinicIdentifier(data?.clinicId);
+    const clinicId = clinicResolution.clinicId;
+    if (clinicResolution.shareCode) {
+        functions.logger.debug('updateClinicSchedulingSettings clinic resolved via share code', {
+            requestedClinicId: clinicResolution.requestedId,
+            clinicId,
+            shareCode: clinicResolution.shareCode,
+            uid: context.auth?.uid ?? null
+        });
     }
     await ensureStaffAccess(context, {
         clinicId,
@@ -2189,16 +2587,48 @@ const updateClinicSchedulingSettingsHandler = async (data, context) => {
     };
 };
 exports.updateClinicSchedulingSettings = createV2Callable(updateClinicSchedulingSettingsHandler);
-const requestDoctorOnlineNotificationHandler = (0, requestDoctorOnlineNotification_1.createRequestDoctorOnlineNotificationHandler)();
+const baseRequestDoctorOnlineNotificationHandler = (0, requestDoctorOnlineNotification_1.createRequestDoctorOnlineNotificationHandler)();
+const requestDoctorOnlineNotificationHandler = async (data, context) => {
+    const clinicResolution = await resolveClinicIdentifier(data?.clinicId, { allowSlugFallback: false });
+    const canonicalClinicId = clinicResolution.clinicId;
+    if (clinicResolution.shareCode) {
+        functions.logger.debug('requestDoctorOnlineNotification clinic resolved via share code', {
+            requestedClinicId: clinicResolution.requestedId,
+            clinicId: canonicalClinicId,
+            shareCode: clinicResolution.shareCode
+        });
+    }
+    return baseRequestDoctorOnlineNotificationHandler({
+        ...data,
+        clinicId: canonicalClinicId
+    }, context);
+};
 exports.requestDoctorOnlineNotification = createV2Callable(requestDoctorOnlineNotificationHandler);
 const updateDefaultRotaHandler = async (data, context) => {
     if (!context.auth) {
         throw new functions.https.HttpsError('unauthenticated', 'Authentication required');
     }
-    const clinicId = typeof data?.clinicId === 'string' ? data.clinicId.trim() : '';
-    const doctorId = typeof data?.doctorId === 'string' ? data.doctorId.trim() : '';
+    const rawClinicId = typeof data?.clinicId === 'string' ? data.clinicId : '';
+    const rawDoctorId = typeof data?.doctorId === 'string' ? data.doctorId : '';
     const timeZone = typeof data?.timeZone === 'string' ? data.timeZone.trim() : '';
     const week = data?.week ?? {};
+    if (!rawClinicId || !rawDoctorId) {
+        throw new functions.https.HttpsError('invalid-argument', 'clinicId and doctorId are required');
+    }
+    const clinicResolution = await resolveClinicIdentifier(rawClinicId);
+    const clinicId = clinicResolution.clinicId;
+    const doctorId = sanitizeFirestoreId(rawDoctorId);
+    if (!doctorId) {
+        throw new functions.https.HttpsError('invalid-argument', 'doctorId is invalid');
+    }
+    if (clinicResolution.shareCode) {
+        functions.logger.debug('updateDoctorDefaultRota clinic resolved via share code', {
+            requestedClinicId: clinicResolution.requestedId,
+            clinicId,
+            shareCode: clinicResolution.shareCode,
+            uid: context.auth?.uid ?? null
+        });
+    }
     try {
         await ensureStaffAccess(context, {
             clinicId,
@@ -2242,6 +2672,23 @@ const createOverrideHandler = async (data, context) => {
         payload.label = data.label ?? null;
     }
     try {
+        if (!payload.clinicId || !payload.doctorId) {
+            throw new functions.https.HttpsError('invalid-argument', 'clinicId and doctorId are required');
+        }
+        const clinicResolution = await resolveClinicIdentifier(payload.clinicId);
+        payload.clinicId = clinicResolution.clinicId;
+        payload.doctorId = sanitizeFirestoreId(payload.doctorId) ?? '';
+        if (!payload.doctorId) {
+            throw new functions.https.HttpsError('invalid-argument', 'doctorId is invalid');
+        }
+        if (clinicResolution.shareCode) {
+            functions.logger.debug('createDoctorScheduleOverride clinic resolved via share code', {
+                requestedClinicId: clinicResolution.requestedId,
+                clinicId: payload.clinicId,
+                shareCode: clinicResolution.shareCode,
+                uid: context.auth?.uid ?? null
+            });
+        }
         await ensureStaffAccess(context, {
             clinicId: payload.clinicId,
             doctorId: payload.doctorId,
@@ -2280,6 +2727,23 @@ const updateOverrideHandler = async (data, context) => {
         payload.label = data.label ?? null;
     }
     try {
+        if (!payload.clinicId || !payload.doctorId) {
+            throw new functions.https.HttpsError('invalid-argument', 'clinicId and doctorId are required');
+        }
+        const clinicResolution = await resolveClinicIdentifier(payload.clinicId);
+        payload.clinicId = clinicResolution.clinicId;
+        payload.doctorId = sanitizeFirestoreId(payload.doctorId) ?? '';
+        if (!payload.doctorId) {
+            throw new functions.https.HttpsError('invalid-argument', 'doctorId is invalid');
+        }
+        if (clinicResolution.shareCode) {
+            functions.logger.debug('updateDoctorScheduleOverride clinic resolved via share code', {
+                requestedClinicId: clinicResolution.requestedId,
+                clinicId: payload.clinicId,
+                shareCode: clinicResolution.shareCode,
+                uid: context.auth?.uid ?? null
+            });
+        }
         await ensureStaffAccess(context, {
             clinicId: payload.clinicId,
             doctorId: payload.doctorId,
@@ -2302,9 +2766,26 @@ const deleteOverrideHandler = async (data, context) => {
     if (!context.auth) {
         throw new functions.https.HttpsError('unauthenticated', 'Authentication required');
     }
-    const clinicId = typeof data?.clinicId === 'string' ? data.clinicId.trim() : '';
-    const doctorId = typeof data?.doctorId === 'string' ? data.doctorId.trim() : '';
+    const rawClinicId = typeof data?.clinicId === 'string' ? data.clinicId : '';
+    const rawDoctorId = typeof data?.doctorId === 'string' ? data.doctorId : '';
     const overrideId = typeof data?.overrideId === 'string' ? data.overrideId.trim() : '';
+    if (!rawClinicId || !rawDoctorId || !overrideId) {
+        throw new functions.https.HttpsError('invalid-argument', 'clinicId, doctorId, and overrideId are required');
+    }
+    const clinicResolution = await resolveClinicIdentifier(rawClinicId);
+    const clinicId = clinicResolution.clinicId;
+    const doctorId = sanitizeFirestoreId(rawDoctorId);
+    if (!doctorId) {
+        throw new functions.https.HttpsError('invalid-argument', 'doctorId is invalid');
+    }
+    if (clinicResolution.shareCode) {
+        functions.logger.debug('deleteDoctorScheduleOverride clinic resolved via share code', {
+            requestedClinicId: clinicResolution.requestedId,
+            clinicId,
+            shareCode: clinicResolution.shareCode,
+            uid: context.auth?.uid ?? null
+        });
+    }
     try {
         await ensureStaffAccess(context, {
             clinicId,
@@ -2386,8 +2867,14 @@ const bootstrapClinicAccountHandler = async (data, _context) => {
                 createdAt: userSnap.exists ? (userSnap.get('createdAt') || firestore_1.FieldValue.serverTimestamp()) : firestore_1.FieldValue.serverTimestamp()
             }, { merge: true });
         });
-        functions.logger.info('bootstrapClinicAccount complete', { clinicId, doctorId, uid: authUid });
-        return { success: true, clinicId, doctorId, queueId: today };
+        const shareCode = await ensureClinicShareCode(clinicId);
+        await clinicRef.set({
+            shareCode,
+            shareCodeStatus: 'active',
+            shareCodeAssignedAt: firestore_1.FieldValue.serverTimestamp()
+        }, { merge: true });
+        functions.logger.info('bootstrapClinicAccount complete', { clinicId, doctorId, shareCode, uid: authUid });
+        return { success: true, clinicId, clinicShareCode: shareCode, doctorId, queueId: today };
     }
     catch (err) {
         functions.logger.error('bootstrapClinicAccount error', err);

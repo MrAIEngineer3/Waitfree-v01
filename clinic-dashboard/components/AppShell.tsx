@@ -165,11 +165,22 @@ function getInitials(name: string | null | undefined): string {
 export default function AppShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
   const router = useRouter();
-  const { clinicId, clinicName, doctorId, doctorName, queueStatus } = useClinicContext();
+  const { clinicId, clinicShareCode, clinicName, doctorId, doctorName, queueStatus } = useClinicContext();
   const [showJoinQr, setShowJoinQr] = useState(false);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [doctorPhotoURL, setDoctorPhotoURL] = useState<string | null>(null);
+  const shareCodeDisplay = clinicShareCode
+    ? (() => {
+        const compact = clinicShareCode.replace(/\s+/g, '');
+        if (!compact) return null;
+        const upper = compact.toUpperCase();
+        if (upper.includes('-')) {
+          return upper;
+        }
+        return upper.match(/.{1,4}/g)?.join(' ') ?? upper;
+      })()
+    : null;
 
   // Fetch doctor photo while respecting auth changes to avoid permission errors on sign-out
   useEffect(() => {
@@ -398,6 +409,21 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
                   <h1 className="text-sm font-medium text-foreground truncate">
                     {clinicName || 'Clinic'}
                   </h1>
+                  {shareCodeDisplay ? (
+                    <Badge
+                      variant="secondary"
+                      className="hidden sm:inline-flex text-[10px] font-mono tracking-widest uppercase px-2 py-0.5"
+                    >
+                      {shareCodeDisplay}
+                    </Badge>
+                  ) : clinicId ? (
+                    <Badge
+                      variant="secondary"
+                      className="hidden sm:inline-flex text-[10px] font-mono uppercase px-2 py-0.5"
+                    >
+                      {clinicId}
+                    </Badge>
+                  ) : null}
                   {queueStatus && (
                     <Badge 
                       variant={queueStatus === 'active' ? 'success' : queueStatus === 'paused' ? 'warning' : 'destructive'}
@@ -489,7 +515,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
                     <line x1="6" y1="6" x2="18" y2="18"></line>
                   </svg>
                 </button>
-                <ClinicJoinQR clinicId={clinicId} />
+                <ClinicJoinQR clinicId={clinicId} clinicShareCode={clinicShareCode} />
               </div>
             </div>
           </div>

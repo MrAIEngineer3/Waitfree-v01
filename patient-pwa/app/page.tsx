@@ -7,8 +7,9 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { useJoinScanner } from './components/JoinScannerProvider';
+import { buildJoinHref, parseClinicIdentifierFromText } from '@/lib/clinicIdentifier';
 
-// ===== CLINIC ID ENTRY =====
+// ===== CLINIC CODE ENTRY =====
 function ClinicIdEntry() {
   const router = useRouter();
   const [clinicId, setClinicId] = useState('');
@@ -17,14 +18,19 @@ function ClinicIdEntry() {
     e.preventDefault();
     const trimmed = clinicId.trim();
     if (!trimmed) return;
-    router.push(`/join?clinicId=${encodeURIComponent(trimmed)}`);
+  const parsed = parseClinicIdentifierFromText(trimmed, { preferSlugOnAmbiguous: true });
+    if (!parsed) {
+      router.push(`/join?clinicId=${encodeURIComponent(trimmed)}`);
+      return;
+    }
+    router.push(buildJoinHref(parsed));
   };
 
   return (
     <form onSubmit={goToJoin} className="flex w-full max-w-xs items-center gap-2">
       <Input
         type="text"
-        placeholder="Enter clinic ID"
+  placeholder="Enter clinic code"
         value={clinicId}
         onChange={(event) => setClinicId(event.target.value)}
         className="h-12 rounded-full bg-background/90 backdrop-blur-sm border-border/50 pl-5 pr-4 text-sm shadow-md focus-visible:shadow-lg focus-visible:ring-primary/50 transition-all"
@@ -250,8 +256,8 @@ function HowItWorksSection() {
   const steps = [
     {
       number: 1,
-      title: 'Scan or Enter ID',
-      description: 'Join the queue instantly by scanning the clinic\'s QR code or entering their unique ID.'
+      title: 'Scan or Enter Code',
+      description: 'Join the queue instantly by scanning the clinic\'s QR code or entering their share code.'
     },
     {
       number: 2,

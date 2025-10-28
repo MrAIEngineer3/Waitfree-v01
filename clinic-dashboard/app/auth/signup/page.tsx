@@ -12,7 +12,7 @@ import { Label } from '../../../components/ui/label';
 import { Separator } from '../../../components/ui/separator';
 import { auth, db, functions } from '../../../lib/firebase';
 
-interface BootstrapResult { success: boolean; clinicId: string; doctorId: string; queueId: string; }
+interface BootstrapResult { success: boolean; clinicId: string; doctorId: string; queueId: string; clinicShareCode?: string; }
 
 export default function SignupPage() {
   const router = useRouter();

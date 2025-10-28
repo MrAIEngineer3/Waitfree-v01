@@ -252,7 +252,7 @@ function QRCodeScanner({ onScan, onError, onCancel }: QRCodeScannerProps) {
   );
 }
 
-// ===== CLINIC ID ENTRY =====
+// ===== CLINIC CODE ENTRY =====
 function ClinicIdEntry() {
   const router = useRouter();
   const [clinicId, setClinicId] = useState('');
@@ -268,7 +268,7 @@ function ClinicIdEntry() {
     <form onSubmit={goToJoin} className="relative w-auto max-w-[180px] group">
       <input 
         type="text" 
-        placeholder="Enter Clinic ID" 
+  placeholder="Enter clinic code" 
         value={clinicId}
         onChange={(e) => setClinicId(e.target.value)}
         className="w-full h-12 bg-white rounded-full pl-4 pr-12 text-gray-900 placeholder-gray-400 border border-gray-200/80 shadow-sm focus:ring-2 focus:ring-blue-400 focus:outline-none transition-all text-sm"

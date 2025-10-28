@@ -22,7 +22,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         <ThemeProvider
           attribute="class"
           defaultTheme="light"
-          enableSystem={false}
+          enableSystem
           disableTransitionOnChange={false}
           storageKey="waitfree-theme"
         >
