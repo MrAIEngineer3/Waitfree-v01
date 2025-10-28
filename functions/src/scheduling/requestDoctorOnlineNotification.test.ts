@@ -244,7 +244,7 @@ describe('createRequestDoctorOnlineNotificationHandler', () => {
     expect(enqueueDoctorOnlineNotification).toHaveBeenCalledWith({
       clinicId: 'clinic',
       doctorId: 'doctor',
-      phone: '1234567890',
+      phone: '+911234567890',
       patientName: 'Jane',
       source: 'patient-app',
       doctorName: 'Doctor Strange'
@@ -270,7 +270,7 @@ describe('createRequestDoctorOnlineNotificationHandler', () => {
     expect(enqueueDoctorOnlineNotification).toHaveBeenCalledWith({
       clinicId: 'clinic',
       doctorId: 'doctor',
-      phone: '1234567890',
+      phone: '+911234567890',
       patientName: null,
       source: 'staff',
       doctorName: 'Doctor Strange'

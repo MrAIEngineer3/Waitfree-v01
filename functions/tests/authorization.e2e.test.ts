@@ -1,4 +1,4 @@
-import fetch from 'node-fetch';
+﻿import fetch from 'node-fetch';
 import type { Response } from 'node-fetch';
 import { beforeAll, afterAll, describe, expect, it } from 'vitest';
 const TEST_TIMEOUT_MS = 40000;

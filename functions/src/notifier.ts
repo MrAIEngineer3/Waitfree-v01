@@ -7,8 +7,10 @@ import { requireNormalizedPhone, PhoneNormalizationError } from './utils/phone';
 
 // Import Twilio for WhatsApp integration
 type TwilioModule = typeof import('twilio');
+type TwilioClient = ReturnType<TwilioModule>;
 
 let twilioFactory: TwilioModule | null = null;
+let twilioClient: TwilioClient | null = null;
 
 function resolveTwilioFactory(): TwilioModule | null {
   if (twilioFactory) {
@@ -21,6 +23,12 @@ function resolveTwilioFactory(): TwilioModule | null {
     functions.logger.debug('Twilio SDK unavailable or not installed', err);
     return null;
   }
+}
+
+// Exposed for tests to inject a stubbed Twilio factory without touching runtime code.
+export function __setTwilioFactoryForTests(factory: TwilioModule | null) {
+  twilioFactory = factory;
+  twilioClient = null;
 }
 
 // Notification types used by functions. Add granular stages so server can record which
@@ -102,11 +110,16 @@ function getTwilioClient() {
     return null; // Return null if credentials not available (for testing)
   }
 
+  if (twilioClient) {
+    return twilioClient;
+  }
+
   const factory = resolveTwilioFactory();
   if (!factory) {
     return null;
   }
-  return factory(accountSid, authToken);
+  twilioClient = factory(accountSid, authToken);
+  return twilioClient;
 }
 
 // Single exported sendNotification used by functions.
@@ -149,6 +162,37 @@ export async function sendNotification(opts: NotifyOpts) {
       });
     } catch (e) {
       functions.logger.warn('Failed to write debug notification to Firestore', e);
+    }
+
+    const normalizeFlag = (value?: string | null) => {
+      if (!value) {
+        return false;
+      }
+      const normalized = value.toLowerCase();
+      return !['0', 'false', ''].includes(normalized);
+    };
+
+    const disableTwilioEnv = process.env.NOTIFIER_DISABLE_TWILIO;
+    const hasExplicitDisable = disableTwilioEnv !== undefined;
+    const explicitDisable = normalizeFlag(disableTwilioEnv);
+    const emulatorIndicators = [
+      process.env.FUNCTIONS_EMULATOR,
+      process.env.FIREBASE_AUTH_EMULATOR_HOST,
+      process.env.FIRESTORE_EMULATOR_HOST,
+      process.env.FIREBASE_STORAGE_EMULATOR_HOST,
+      process.env.FIREBASE_EMULATOR_HUB
+    ];
+    const runningInEmulator = emulatorIndicators.some((value) => normalizeFlag(value));
+    const isTwilioDisabled = hasExplicitDisable ? explicitDisable : runningInEmulator;
+
+    if (isTwilioDisabled) {
+      functions.logger.info('Twilio send skipped for local execution', {
+        to: formattedPhone,
+        type: opts.type,
+        reason: hasExplicitDisable ? 'NOTIFIER_DISABLE_TWILIO' : 'FUNCTIONS_EMULATOR'
+      });
+
+      return { ok: true, provider: 'disabled' };
     }
 
     // Try to send via Twilio WhatsApp if credentials are available

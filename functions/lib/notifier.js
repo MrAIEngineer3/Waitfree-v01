@@ -33,6 +33,7 @@ var __importStar = (this && this.__importStar) || (function () {
     };
 })();
 Object.defineProperty(exports, "__esModule", { value: true });
+exports.__setTwilioFactoryForTests = __setTwilioFactoryForTests;
 exports.sendNotification = sendNotification;
 // Load local env for emulator
 const functions = __importStar(require("firebase-functions/v1"));
@@ -41,6 +42,7 @@ const firebaseAdmin_1 = require("./firebaseAdmin");
 const firestore_1 = require("firebase-admin/firestore");
 const phone_1 = require("./utils/phone");
 let twilioFactory = null;
+let twilioClient = null;
 function resolveTwilioFactory() {
     if (twilioFactory) {
         return twilioFactory;
@@ -53,6 +55,11 @@ function resolveTwilioFactory() {
         functions.logger.debug('Twilio SDK unavailable or not installed', err);
         return null;
     }
+}
+// Exposed for tests to inject a stubbed Twilio factory without touching runtime code.
+function __setTwilioFactoryForTests(factory) {
+    twilioFactory = factory;
+    twilioClient = null;
 }
 // Resolve Patient PWA base URL from environment variables
 function getPatientPwaBaseUrl() {
@@ -115,11 +122,15 @@ function getTwilioClient() {
         functions.logger.info('Twilio client not configured (missing credentials)');
         return null; // Return null if credentials not available (for testing)
     }
+    if (twilioClient) {
+        return twilioClient;
+    }
     const factory = resolveTwilioFactory();
     if (!factory) {
         return null;
     }
-    return factory(accountSid, authToken);
+    twilioClient = factory(accountSid, authToken);
+    return twilioClient;
 }
 // Single exported sendNotification used by functions.
 // Supports both debug mode (local testing) and production WhatsApp via Twilio
@@ -161,6 +172,33 @@ async function sendNotification(opts) {
         }
         catch (e) {
             functions.logger.warn('Failed to write debug notification to Firestore', e);
+        }
+        const normalizeFlag = (value) => {
+            if (!value) {
+                return false;
+            }
+            const normalized = value.toLowerCase();
+            return !['0', 'false', ''].includes(normalized);
+        };
+        const disableTwilioEnv = process.env.NOTIFIER_DISABLE_TWILIO;
+        const hasExplicitDisable = disableTwilioEnv !== undefined;
+        const explicitDisable = normalizeFlag(disableTwilioEnv);
+        const emulatorIndicators = [
+            process.env.FUNCTIONS_EMULATOR,
+            process.env.FIREBASE_AUTH_EMULATOR_HOST,
+            process.env.FIRESTORE_EMULATOR_HOST,
+            process.env.FIREBASE_STORAGE_EMULATOR_HOST,
+            process.env.FIREBASE_EMULATOR_HUB
+        ];
+        const runningInEmulator = emulatorIndicators.some((value) => normalizeFlag(value));
+        const isTwilioDisabled = hasExplicitDisable ? explicitDisable : runningInEmulator;
+        if (isTwilioDisabled) {
+            functions.logger.info('Twilio send skipped for local execution', {
+                to: formattedPhone,
+                type: opts.type,
+                reason: hasExplicitDisable ? 'NOTIFIER_DISABLE_TWILIO' : 'FUNCTIONS_EMULATOR'
+            });
+            return { ok: true, provider: 'disabled' };
         }
         // Try to send via Twilio WhatsApp if credentials are available
         const client = getTwilioClient();
