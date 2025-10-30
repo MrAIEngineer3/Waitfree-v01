@@ -1,6 +1,5 @@
 import crypto from 'crypto';
-import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import * as functions from 'firebase-functions/v1';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { admin } from './firebaseAdmin';
 import { __test__ } from './index';
 
@@ -12,6 +11,28 @@ const buildFirestoreMocks = (patientData: Record<string, any>) => {
 
   const patientsCollection = {
     doc: vi.fn().mockReturnValue(patientDocRef)
+  };
+
+  const shareCodeDocRef = {
+    get: vi.fn().mockResolvedValue({
+      exists: true,
+      data: () => ({
+        canonicalClinicId: callData.clinicId,
+        status: 'active',
+        disabled: false
+      })
+    })
+  };
+
+  const clinicShareCodesCollection = {
+    doc: vi.fn().mockImplementation((id: string) => {
+      if (id === callData.clinicId.toUpperCase()) {
+        return shareCodeDocRef;
+      }
+      return {
+        get: vi.fn().mockResolvedValue({ exists: false })
+      };
+    })
   };
 
   const queueDocRef = {
@@ -55,6 +76,9 @@ const buildFirestoreMocks = (patientData: Record<string, any>) => {
 
   const firestoreStub = {
     collection: vi.fn().mockImplementation((name: string) => {
+      if (name === 'clinicShareCodes') {
+        return clinicShareCodesCollection;
+      }
       if (name === 'clinics') {
         return clinicsCollection;
       }

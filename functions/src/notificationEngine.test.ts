@@ -1,4 +1,4 @@
-import { describe, it, expect, vi } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 type PatientRecord = {
   id: string;
@@ -30,8 +30,6 @@ type PatientRef = {
   get: () => Promise<FirestoreDocSnapshot>;
   set: (data: Record<string, unknown>, options?: { merge?: boolean }) => Promise<void>;
 };
-
-type FirestoreEnv = ReturnType<typeof createFirestoreEnv>;
 
 type DeepRecord = Record<string, unknown>;
 

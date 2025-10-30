@@ -1,0 +1,163 @@
+{
+  "displayName": "Patient Resolver Overview",
+  "dashboardFilters": [],
+  "gridLayout": {
+    "columns": 4,
+    "widgets": [
+      {
+        "title": "Resolver Success Rate",
+        "xyChart": {
+          "chartOptions": {
+            "mode": "COLOR"
+          },
+          "dataSets": [
+            {
+              "plotType": "LINE",
+              "minAlignmentPeriod": "300s",
+              "targetAxis": "Y1",
+              "timeSeriesQuery": {
+                "timeSeriesFilter": {
+                  "filter": "metric.type=\"logging.googleapis.com/user/patient_resolver_linked_count\"",
+                  "aggregation": {
+                    "alignmentPeriod": "300s",
+                    "perSeriesAligner": "ALIGN_RATE"
+                  }
+                }
+              }
+            },
+            {
+              "plotType": "LINE",
+              "minAlignmentPeriod": "300s",
+              "targetAxis": "Y1",
+              "timeSeriesQuery": {
+                "timeSeriesFilter": {
+                  "filter": "metric.type=\"logging.googleapis.com/user/patient_resolver_error_count\"",
+                  "aggregation": {
+                    "alignmentPeriod": "300s",
+                    "perSeriesAligner": "ALIGN_RATE"
+                  }
+                }
+              }
+            }
+          ],
+          "yAxis": {
+            "label": "Events/min",
+            "scale": "LINEAR"
+          },
+          "thresholds": []
+        },
+        "layout": {
+          "column": 0,
+          "row": 0,
+          "width": 4,
+          "height": 8
+        }
+      },
+      {
+        "title": "Resolver Failure Ratio",
+        "scorecard": {
+          "timeSeriesQuery": {
+            "timeSeriesFilterRatio": {
+              "numerator": {
+                "filter": "metric.type=\"logging.googleapis.com/user/patient_resolver_error_count\"",
+                "aggregation": {
+                  "alignmentPeriod": "300s",
+                  "perSeriesAligner": "ALIGN_RATE"
+                }
+              },
+              "denominator": {
+                "filter": "metric.type=\"logging.googleapis.com/user/patient_resolver_linked_count\"",
+                "aggregation": {
+                  "alignmentPeriod": "300s",
+                  "perSeriesAligner": "ALIGN_RATE"
+                }
+              }
+            }
+          },
+          "sparkChartView": {
+            "sparkChartType": "SPARK_LINE"
+          },
+          "thresholds": [
+            {
+              "label": "Warning",
+              "value": 0.1,
+              "color": "YELLOW"
+            },
+            {
+              "label": "Critical",
+              "value": 0.2,
+              "color": "RED"
+            }
+          ]
+        },
+        "layout": {
+          "column": 4,
+          "row": 0,
+          "width": 4,
+          "height": 4
+        }
+      },
+      {
+        "title": "Resolver Activity by Clinic",
+        "xyChart": {
+          "chartOptions": {
+            "mode": "COLOR"
+          },
+          "dataSets": [
+            {
+              "plotType": "STACKED_BAR",
+              "targetAxis": "Y1",
+              "timeSeriesQuery": {
+                "timeSeriesFilter": {
+                  "filter": "metric.type=\"logging.googleapis.com/user/patient_resolver_linked_count\"",
+                  "aggregation": {
+                    "alignmentPeriod": "3600s",
+                    "perSeriesAligner": "ALIGN_SUM",
+                    "crossSeriesReducer": "REDUCE_SUM",
+                    "groupByFields": ["metric.label.clinicId"]
+                  }
+                }
+              }
+            }
+          ],
+          "yAxis": {
+            "label": "Linked patients/hour",
+            "scale": "LINEAR"
+          },
+          "thresholds": []
+        },
+        "layout": {
+          "column": 4,
+          "row": 4,
+          "width": 4,
+          "height": 4
+        }
+      },
+      {
+        "title": "Ambiguity Queue Backlog",
+        "scorecard": {
+          "timeSeriesQuery": {
+            "timeSeriesFilter": {
+              "filter": "metric.type=\"firestore.googleapis.com/document_count\" AND metric.label.collection_id=\"patientAmbiguityQueue\"",
+              "aggregation": {
+                "alignmentPeriod": "300s",
+                "perSeriesAligner": "ALIGN_MEAN",
+                "crossSeriesReducer": "REDUCE_SUM",
+                "groupByFields": ["resource.label.project_id"]
+              }
+            }
+          },
+          "sparkChartView": {
+            "sparkChartType": "SPARK_LINE"
+          }
+        },
+        "layout": {
+          "column": 0,
+          "row": 8,
+          "width": 4,
+          "height": 4
+        }
+      }
+    ]
+  }
+}

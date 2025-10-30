@@ -17,7 +17,11 @@
     "test:watch": "vitest watch",
   "test:e2e": "npm run build && firebase emulators:exec --only auth,firestore,functions,storage \"vitest run --config vitest.e2e.config.ts\"",
     "phase1:test": "npm run build && node lib/scripts/phase1Test.js",
-    "phase2:test": "npm run build && node lib/scripts/phase2Test.js"
+    "phase2:test": "npm run build && node lib/scripts/phase2Test.js",
+    "patient:flag": "npm run build && node lib/scripts/seedPatientResolverFlag.js",
+    "patient:dry-run": "npm run build && node lib/scripts/patientResolverDryRun.js",
+    "patient:backfill": "npm run build && node lib/scripts/patientResolverBackfill.js",
+    "patient:seed-test": "npm run build && node lib/scripts/seedResolverTestClinic.js"
   },
   "dependencies": {
     "@google-cloud/firestore": "^7",
@@ -29,7 +33,8 @@
     "google-libphonenumber": "^3.2.43",
     "luxon": "^3.7.2",
     "node-fetch": "^2.7.0",
-    "twilio": "^5.10.2"
+    "twilio": "^5.10.2",
+    "ulid": "^2.3.0"
   },
   "devDependencies": {
     "@eslint/js": "^9.36.0",

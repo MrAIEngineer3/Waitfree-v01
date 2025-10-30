@@ -46,19 +46,20 @@ const crypto_1 = __importDefault(require("crypto"));
 const functions = __importStar(require("firebase-functions/v1"));
 const v2_1 = require("firebase-functions/v2");
 const https_1 = require("firebase-functions/v2/https");
-require("./loadEnv");
 const firebaseAdmin_1 = require("./firebaseAdmin");
+require("./loadEnv");
 // Import functions for local use
 const notificationEngine_1 = require("./notificationEngine");
 const notifier_1 = require("./notifier");
-const notificationPreferences_1 = require("./settings/notificationPreferences");
+const patients_1 = require("./patients");
+const availability_1 = require("./scheduling/availability");
 const mutations_1 = require("./scheduling/mutations");
 const notificationQueue_1 = require("./scheduling/notificationQueue");
-const availability_1 = require("./scheduling/availability");
-const settings_1 = require("./scheduling/settings");
-const timing_1 = require("./utils/timing");
-const patient_1 = require("./utils/patient");
 const requestDoctorOnlineNotification_1 = require("./scheduling/requestDoctorOnlineNotification");
+const settings_1 = require("./scheduling/settings");
+const notificationPreferences_1 = require("./settings/notificationPreferences");
+const patient_1 = require("./utils/patient");
+const timing_1 = require("./utils/timing");
 // Export functions from other files to make them deployable
 __exportStar(require("./notifier"), exports);
 __exportStar(require("./scheduling"), exports);
@@ -655,12 +656,22 @@ const hashAccessToken = (token) => crypto_1.default.createHash('sha256').update(
 /** DEBUG: Returns runtime flag visibility and Node version */
 const debugRuntimeFlagsHandler = async (_data, _ctx) => {
     await ensureDebugAccess(_ctx, null, false);
+    let resolverFlag = null;
+    try {
+        resolverFlag = await (0, patients_1.currentPatientResolverFlagSnapshot)({ forceReload: true });
+    }
+    catch (error) {
+        functions.logger.warn('debugRuntimeFlags failed to load resolver flag snapshot', {
+            error: error instanceof Error ? error.message : String(error)
+        });
+    }
     return {
         phase1Enabled: true,
         rawPhase1: 'hardcoded:true',
         engineEnabled: true,
         rawEngine: 'hardcoded:true',
-        node: process.version
+        node: process.version,
+        resolverFlag
     };
 };
 exports.debugRuntimeFlags = createV2Callable(debugRuntimeFlagsHandler);
@@ -889,6 +900,15 @@ const joinQueueHandler = async (data, _context) => {
         }
         const normalizedAge = ageValue;
         const normalizedPhone = phoneValue;
+        const normalizedFullName = (0, patients_1.normalizePatientFullName)(normalizedName);
+        const resolverMetadata = {};
+        if (typeof normalizedAge === 'number') {
+            resolverMetadata.age = normalizedAge;
+        }
+        const resolverEnabled = await (0, patients_1.isPatientResolverV1Enabled)({ allowDryRun: true });
+        let patientResolverResult = null;
+        let patientIdentityLink = null;
+        let patientResolverSummary = null;
         const availability = await (0, availability_1.resolveDoctorAvailability)({
             clinicId,
             doctorId
@@ -957,6 +977,7 @@ const joinQueueHandler = async (data, _context) => {
             newPatientData.id = newPatientRef.id;
             transaction.set(newPatientRef, newPatientData);
         });
+        const patientDocRef = patientsRef.doc(newPatientData.id);
         // Send "joined" notification (non-blocking)
         try {
             const canSendJoined = await (0, notificationPreferences_1.isNotificationEnabled)({
@@ -975,11 +996,7 @@ const joinQueueHandler = async (data, _context) => {
             else {
                 // Mark the patient's notifications.joined flag (so emulator/debug shows it) and emit a debug notification
                 try {
-                    await firebaseAdmin_1.admin.firestore().collection('clinics').doc(clinicId)
-                        .collection('doctors').doc(doctorId)
-                        .collection('queues').doc(today)
-                        .collection('patients').doc(newPatientData.id)
-                        .set({ notifications: { joined: true } }, { merge: true });
+                    await patientDocRef.set({ notifications: { joined: true } }, { merge: true });
                 }
                 catch (e) {
                     functions.logger.warn('Failed to mark joined notification on patient doc', e);
@@ -1002,6 +1019,68 @@ const joinQueueHandler = async (data, _context) => {
         catch (notifyErr) {
             functions.logger.warn('Failed to send joined notification (continuing):', notifyErr);
         }
+        if (resolverEnabled) {
+            try {
+                patientResolverResult = await (0, patients_1.resolvePatientForQueue)({
+                    actor: {
+                        actorType: 'system',
+                        actorId: 'callable:joinQueue',
+                        actorClinicId: clinicId
+                    },
+                    context: {
+                        clinicId,
+                        doctorId,
+                        queueId: today,
+                        queueDate: today
+                    },
+                    patient: {
+                        name: normalizedName,
+                        normalizedName: normalizedFullName,
+                        age: normalizedAge,
+                        phone: {
+                            normalized: normalizedPhone
+                        },
+                        metadata: Object.keys(resolverMetadata).length > 0 ? resolverMetadata : undefined
+                    },
+                    allowCreate: true
+                });
+                patientIdentityLink = (0, patients_1.buildQueuePatientLink)(patientResolverResult);
+                patientResolverSummary = {
+                    version: patientResolverResult.resolverVersion,
+                    matchType: patientResolverResult.matchType,
+                    confidence: patientResolverResult.confidence,
+                    requiresReview: patientResolverResult.requiresReview,
+                    metadataVersion: patientResolverResult.metadataVersion,
+                    ambiguityId: patientResolverResult.ambiguityEntryRef?.id ?? null
+                };
+                const resolverUpdate = {
+                    patientIdentityId: patientResolverResult.patientId,
+                    patientIdentityLink,
+                    patientResolver: patientResolverSummary,
+                    requiresPatientReview: patientResolverResult.requiresReview === true
+                };
+                await patientDocRef.set(resolverUpdate, { merge: true });
+                functions.logger.info('joinQueue linked patient identity', {
+                    clinicId,
+                    doctorId,
+                    queueId: today,
+                    patientDocId: newPatientData.id,
+                    patientIdentityId: patientResolverResult.patientId,
+                    matchType: patientResolverResult.matchType,
+                    requiresReview: patientResolverResult.requiresReview
+                });
+            }
+            catch (resolverError) {
+                functions.logger.error('joinQueue patient resolver failed', {
+                    clinicId,
+                    doctorId,
+                    queueId: today,
+                    patientDocId: newPatientData.id,
+                    error: resolverError instanceof Error ? resolverError.message : String(resolverError),
+                    stack: resolverError instanceof Error ? resolverError.stack : undefined
+                });
+            }
+        }
         // Return data to the client
         return {
             success: true,
@@ -1010,7 +1089,13 @@ const joinQueueHandler = async (data, _context) => {
             queueId: today,
             doctorId: doctorId,
             clinicId: clinicId,
-            accessToken: rawAccessToken
+            accessToken: rawAccessToken,
+            ...(patientResolverResult
+                ? {
+                    patientIdentityId: patientResolverResult.patientId,
+                    patientResolver: patientResolverSummary
+                }
+                : {})
         };
     }
     catch (error) {
@@ -1080,6 +1165,15 @@ const manualAddPatientHandler = async (data, context) => {
         const age = sanitizedPatient.age;
         let phone = sanitizedPatient.phone;
         const suppressNotification = data?.suppressNotification === true;
+        const normalizedFullName = (0, patients_1.normalizePatientFullName)(rawName);
+        const resolverMetadata = {};
+        if (typeof age === 'number') {
+            resolverMetadata.age = age;
+        }
+        const resolverEnabled = await (0, patients_1.isPatientResolverV1Enabled)({ allowDryRun: true, allowPilot: true });
+        let patientResolverResult = null;
+        let patientIdentityLink = null;
+        let patientResolverSummary = null;
         const db = firebaseAdmin_1.admin.firestore();
         const queueRef = db.collection('clinics').doc(clinicId)
             .collection('doctors').doc(doctorId)
@@ -1187,6 +1281,66 @@ const manualAddPatientHandler = async (data, context) => {
                 functions.logger.warn('Failed to record notification suppression flag', notifyFlagErr);
             }
         }
+        if (resolverEnabled) {
+            try {
+                const resolverPhone = phone ?? null;
+                patientResolverResult = await (0, patients_1.resolvePatientForQueue)({
+                    actor: {
+                        actorType: 'user',
+                        actorId: uid,
+                        actorClinicId: clinicId
+                    },
+                    context: {
+                        clinicId,
+                        doctorId,
+                        queueId,
+                        queueDate: queueId
+                    },
+                    patient: {
+                        name: rawName,
+                        normalizedName: normalizedFullName,
+                        age: age ?? undefined,
+                        phone: resolverPhone ? { normalized: resolverPhone } : null,
+                        metadata: Object.keys(resolverMetadata).length > 0 ? resolverMetadata : undefined
+                    },
+                    allowCreate: true
+                });
+                patientIdentityLink = (0, patients_1.buildQueuePatientLink)(patientResolverResult);
+                patientResolverSummary = {
+                    version: patientResolverResult.resolverVersion,
+                    matchType: patientResolverResult.matchType,
+                    confidence: patientResolverResult.confidence,
+                    requiresReview: patientResolverResult.requiresReview,
+                    metadataVersion: patientResolverResult.metadataVersion,
+                    ambiguityId: patientResolverResult.ambiguityEntryRef?.id ?? null
+                };
+                const resolverUpdate = {
+                    patientIdentityId: patientResolverResult.patientId,
+                    patientIdentityLink,
+                    patientResolver: patientResolverSummary,
+                    requiresPatientReview: patientResolverResult.requiresReview === true
+                };
+                await patientDocRef.set(resolverUpdate, { merge: true });
+                functions.logger.info('manualAddPatient linked patient identity', {
+                    clinicId,
+                    doctorId,
+                    queueId,
+                    patientDocId: newPatientId,
+                    patientIdentityId: patientResolverResult.patientId,
+                    matchType: patientResolverResult.matchType,
+                    requiresReview: patientResolverResult.requiresReview
+                });
+            }
+            catch (resolverError) {
+                functions.logger.error('manualAddPatient resolver failed', {
+                    clinicId,
+                    doctorId,
+                    queueId,
+                    patientDocId: newPatientId,
+                    error: resolverError instanceof Error ? resolverError.message : String(resolverError)
+                });
+            }
+        }
         runInBackground('manualAddPatient.recompute', () => (0, notificationEngine_1.recomputeQueueNotifications)({ clinicId, doctorId, queueId }));
         functions.logger.info('Manual patient added', {
             clinicId,
@@ -1195,7 +1349,14 @@ const manualAddPatientHandler = async (data, context) => {
             patientId: newPatientId,
             tokenNumber: newTokenNumber,
             suppressNotification,
-            uid
+            uid,
+            ...(patientResolverResult
+                ? {
+                    patientIdentityId: patientResolverResult.patientId,
+                    patientResolverMatchType: patientResolverResult.matchType,
+                    patientResolverRequiresReview: patientResolverResult.requiresReview
+                }
+                : {})
         });
         span.succeed({ patientId: newPatientId, tokenNumber: newTokenNumber });
         return {
@@ -1205,7 +1366,14 @@ const manualAddPatientHandler = async (data, context) => {
             doctorId,
             clinicId,
             accessToken: rawAccessToken,
-            tokenNumber: newTokenNumber
+            tokenNumber: newTokenNumber,
+            ...(patientResolverResult
+                ? {
+                    patientIdentityId: patientResolverResult.patientId,
+                    patientResolver: patientResolverSummary,
+                    requiresPatientReview: patientResolverResult.requiresReview === true
+                }
+                : {})
         };
     }
     catch (error) {

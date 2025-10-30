@@ -2,33 +2,41 @@ import { FieldValue } from '@google-cloud/firestore';
 // Ensure local .env variables are loaded when running in emulator / local scripts
 import crypto from 'crypto';
 import * as functions from 'firebase-functions/v1';
-import { setGlobalOptions } from 'firebase-functions/v2';
-import { onCall } from 'firebase-functions/v2/https';
-import type { CallableRequest } from 'firebase-functions/v2/https';
 import type { GlobalOptions } from 'firebase-functions/v2';
-import './loadEnv';
+import { setGlobalOptions } from 'firebase-functions/v2';
+import type { CallableRequest } from 'firebase-functions/v2/https';
+import { onCall } from 'firebase-functions/v2/https';
 import { admin } from './firebaseAdmin';
+import './loadEnv';
 
 // Import functions for local use
 import { recomputeQueueNotifications } from './notificationEngine';
 import { sendNotification } from './notifier';
-import { isNotificationEnabled } from './settings/notificationPreferences';
+import type { PatientMetadataInput, PatientResolverFlagSnapshot, PatientResolverResult, QueuePatientLink } from './patients';
 import {
-  createDoctorScheduleOverride as applyCreateScheduleOverride,
-  deleteDoctorScheduleOverride as applyDeleteScheduleOverride,
-  NotFoundError as SchedulingNotFoundError,
-  setDoctorRealTimeStatus as applySetDoctorRealTimeStatus,
-  updateDoctorDefaultRota as applyUpdateDoctorDefaultRota,
-  updateDoctorScheduleOverride as applyUpdateScheduleOverride,
-  ValidationError as SchedulingValidationError
+    buildQueuePatientLink,
+    currentPatientResolverFlagSnapshot,
+    isPatientResolverV1Enabled,
+    normalizePatientFullName,
+    resolvePatientForQueue
+} from './patients';
+import { resolveDoctorAvailability, resolveManyDoctorAvailability } from './scheduling/availability';
+import {
+    createDoctorScheduleOverride as applyCreateScheduleOverride,
+    deleteDoctorScheduleOverride as applyDeleteScheduleOverride,
+    setDoctorRealTimeStatus as applySetDoctorRealTimeStatus,
+    updateDoctorDefaultRota as applyUpdateDoctorDefaultRota,
+    updateDoctorScheduleOverride as applyUpdateScheduleOverride,
+    NotFoundError as SchedulingNotFoundError,
+    ValidationError as SchedulingValidationError
 } from './scheduling/mutations';
 import { dispatchDoctorOnlineNotifications } from './scheduling/notificationQueue';
-import { resolveDoctorAvailability, resolveManyDoctorAvailability } from './scheduling/availability';
+import { createRequestDoctorOnlineNotificationHandler } from './scheduling/requestDoctorOnlineNotification';
 import { loadClinicSchedulingSettings, saveClinicSchedulingSettings } from './scheduling/settings';
 import type { DoctorAvailabilityResult, ScheduleOverride } from './scheduling/types';
+import { isNotificationEnabled } from './settings/notificationPreferences';
+import { PatientValidationError, sanitizePatientInput } from './utils/patient';
 import { startTiming } from './utils/timing';
-import { sanitizePatientInput, PatientValidationError } from './utils/patient';
-import { createRequestDoctorOnlineNotificationHandler } from './scheduling/requestDoctorOnlineNotification';
 
 // Export functions from other files to make them deployable
 export * from './notifier';
@@ -775,6 +783,27 @@ type JoinQueueRequest = {
   };
 };
 
+type PatientResolverSummary = {
+  version: string;
+  matchType: string;
+  confidence: string;
+  requiresReview: boolean;
+  metadataVersion: number;
+  ambiguityId?: string | null;
+} | null;
+
+type JoinQueueResponse = {
+  success: boolean;
+  message: string;
+  patientId: string;
+  queueId: string;
+  doctorId: string;
+  clinicId: string;
+  accessToken: string;
+  patientIdentityId?: string;
+  patientResolver?: PatientResolverSummary;
+};
+
 type GetPatientViewRequest = {
   clinicId?: string;
   doctorId?: string;
@@ -833,6 +862,9 @@ type ManualAddPatientResponse = {
   clinicId: string;
   accessToken: string;
   tokenNumber: number;
+  patientIdentityId?: string;
+  patientResolver?: PatientResolverSummary;
+  requiresPatientReview?: boolean;
 };
 
 type BootstrapClinicAccountRequest = {
@@ -942,12 +974,21 @@ type CreatePatientSessionResponse = {
 /** DEBUG: Returns runtime flag visibility and Node version */
 const debugRuntimeFlagsHandler = async (_data: unknown, _ctx: CallableCtx) => {
   await ensureDebugAccess(_ctx, null, false);
+  let resolverFlag: PatientResolverFlagSnapshot | null = null;
+  try {
+    resolverFlag = await currentPatientResolverFlagSnapshot({ forceReload: true });
+  } catch (error) {
+    functions.logger.warn('debugRuntimeFlags failed to load resolver flag snapshot', {
+      error: error instanceof Error ? error.message : String(error)
+    });
+  }
   return {
     phase1Enabled: true,
     rawPhase1: 'hardcoded:true',
     engineEnabled: true,
     rawEngine: 'hardcoded:true',
-    node: process.version
+    node: process.version,
+    resolverFlag
   };
 };
 export const debugRuntimeFlags = createV2Callable(debugRuntimeFlagsHandler);
@@ -1158,7 +1199,7 @@ export const onPatientStatusChange = regionalFunctions.firestore
  * This is invoked from the client SDK and handles auth and data serialization.
  * Implements secure queue joining with automatic token assignment.
  */
-const joinQueueHandler = async (data: JoinQueueRequest, _context: CallableCtx) => {
+const joinQueueHandler = async (data: JoinQueueRequest, _context: CallableCtx): Promise<JoinQueueResponse> => {
   try {
     // Extract data from the 'data' parameter provided by the client SDK
     const rawClinicId = data?.clinicId;
@@ -1211,6 +1252,17 @@ const joinQueueHandler = async (data: JoinQueueRequest, _context: CallableCtx) =
 
     const normalizedAge = ageValue;
     const normalizedPhone = phoneValue;
+    const normalizedFullName = normalizePatientFullName(normalizedName);
+
+    const resolverMetadata: PatientMetadataInput = {};
+    if (typeof normalizedAge === 'number') {
+      resolverMetadata.age = normalizedAge;
+    }
+
+    const resolverEnabled = await isPatientResolverV1Enabled({ allowDryRun: true });
+    let patientResolverResult: PatientResolverResult | null = null;
+    let patientIdentityLink: QueuePatientLink | null = null;
+    let patientResolverSummary: PatientResolverSummary = null;
 
     const availability = await resolveDoctorAvailability({
       clinicId,
@@ -1293,6 +1345,8 @@ const joinQueueHandler = async (data: JoinQueueRequest, _context: CallableCtx) =
       transaction.set(newPatientRef, newPatientData);
     });
 
+    const patientDocRef = patientsRef.doc(newPatientData.id);
+
     // Send "joined" notification (non-blocking)
     try {
       const canSendJoined = await isNotificationEnabled({
@@ -1311,11 +1365,7 @@ const joinQueueHandler = async (data: JoinQueueRequest, _context: CallableCtx) =
       } else {
         // Mark the patient's notifications.joined flag (so emulator/debug shows it) and emit a debug notification
         try {
-          await admin.firestore().collection('clinics').doc(clinicId)
-            .collection('doctors').doc(doctorId)
-            .collection('queues').doc(today)
-            .collection('patients').doc(newPatientData.id)
-            .set({ notifications: { joined: true } }, { merge: true });
+          await patientDocRef.set({ notifications: { joined: true } }, { merge: true });
         } catch (e) {
           functions.logger.warn('Failed to mark joined notification on patient doc', e);
         }
@@ -1338,6 +1388,72 @@ const joinQueueHandler = async (data: JoinQueueRequest, _context: CallableCtx) =
       functions.logger.warn('Failed to send joined notification (continuing):', notifyErr);
     }
 
+    if (resolverEnabled) {
+      try {
+        patientResolverResult = await resolvePatientForQueue({
+          actor: {
+            actorType: 'system',
+            actorId: 'callable:joinQueue',
+            actorClinicId: clinicId
+          },
+          context: {
+            clinicId,
+            doctorId,
+            queueId: today,
+            queueDate: today
+          },
+          patient: {
+            name: normalizedName,
+            normalizedName: normalizedFullName,
+            age: normalizedAge,
+            phone: {
+              normalized: normalizedPhone
+            },
+            metadata: Object.keys(resolverMetadata).length > 0 ? resolverMetadata : undefined
+          },
+          allowCreate: true
+        });
+
+        patientIdentityLink = buildQueuePatientLink(patientResolverResult);
+        patientResolverSummary = {
+          version: patientResolverResult.resolverVersion,
+          matchType: patientResolverResult.matchType,
+          confidence: patientResolverResult.confidence,
+          requiresReview: patientResolverResult.requiresReview,
+          metadataVersion: patientResolverResult.metadataVersion,
+          ambiguityId: patientResolverResult.ambiguityEntryRef?.id ?? null
+        };
+
+        const resolverUpdate: Record<string, unknown> = {
+          patientIdentityId: patientResolverResult.patientId,
+          patientIdentityLink,
+          patientResolver: patientResolverSummary,
+          requiresPatientReview: patientResolverResult.requiresReview === true
+        };
+
+        await patientDocRef.set(resolverUpdate, { merge: true });
+
+        functions.logger.info('joinQueue linked patient identity', {
+          clinicId,
+          doctorId,
+          queueId: today,
+          patientDocId: newPatientData.id,
+          patientIdentityId: patientResolverResult.patientId,
+          matchType: patientResolverResult.matchType,
+          requiresReview: patientResolverResult.requiresReview
+        });
+      } catch (resolverError) {
+        functions.logger.error('joinQueue patient resolver failed', {
+          clinicId,
+          doctorId,
+          queueId: today,
+          patientDocId: newPatientData.id,
+          error: resolverError instanceof Error ? resolverError.message : String(resolverError),
+          stack: resolverError instanceof Error ? resolverError.stack : undefined
+        });
+      }
+    }
+
     // Return data to the client
     return {
       success: true,
@@ -1346,7 +1462,13 @@ const joinQueueHandler = async (data: JoinQueueRequest, _context: CallableCtx) =
       queueId: today,
       doctorId: doctorId,
       clinicId: clinicId,
-      accessToken: rawAccessToken
+      accessToken: rawAccessToken,
+      ...(patientResolverResult
+        ? {
+            patientIdentityId: patientResolverResult.patientId,
+            patientResolver: patientResolverSummary
+          }
+        : {})
     };
 
   } catch (error) {
@@ -1430,6 +1552,16 @@ const manualAddPatientHandler = async (data: ManualAddPatientRequest, context: C
 
     const suppressNotification = data?.suppressNotification === true;
 
+    const normalizedFullName = normalizePatientFullName(rawName);
+    const resolverMetadata: PatientMetadataInput = {};
+    if (typeof age === 'number') {
+      resolverMetadata.age = age;
+    }
+    const resolverEnabled = await isPatientResolverV1Enabled({ allowDryRun: true, allowPilot: true });
+    let patientResolverResult: PatientResolverResult | null = null;
+    let patientIdentityLink: QueuePatientLink | null = null;
+    let patientResolverSummary: PatientResolverSummary = null;
+
     const db = admin.firestore();
     const queueRef = db.collection('clinics').doc(clinicId)
       .collection('doctors').doc(doctorId)
@@ -1485,7 +1617,7 @@ const manualAddPatientHandler = async (data: ManualAddPatientRequest, context: C
         clinicId,
         doctorId,
         accessTokenHash,
-  createdBy: uid,
+        createdBy: uid,
         createdVia: 'staff'
       };
 
@@ -1545,6 +1677,70 @@ const manualAddPatientHandler = async (data: ManualAddPatientRequest, context: C
       }
     }
 
+    if (resolverEnabled) {
+      try {
+        const resolverPhone = phone ?? null;
+        patientResolverResult = await resolvePatientForQueue({
+          actor: {
+            actorType: 'user',
+            actorId: uid,
+            actorClinicId: clinicId
+          },
+          context: {
+            clinicId,
+            doctorId,
+            queueId,
+            queueDate: queueId
+          },
+          patient: {
+            name: rawName,
+            normalizedName: normalizedFullName,
+            age: age ?? undefined,
+            phone: resolverPhone ? { normalized: resolverPhone } : null,
+            metadata: Object.keys(resolverMetadata).length > 0 ? resolverMetadata : undefined
+          },
+          allowCreate: true
+        });
+
+        patientIdentityLink = buildQueuePatientLink(patientResolverResult);
+        patientResolverSummary = {
+          version: patientResolverResult.resolverVersion,
+          matchType: patientResolverResult.matchType,
+          confidence: patientResolverResult.confidence,
+          requiresReview: patientResolverResult.requiresReview,
+          metadataVersion: patientResolverResult.metadataVersion,
+          ambiguityId: patientResolverResult.ambiguityEntryRef?.id ?? null
+        };
+
+        const resolverUpdate: Record<string, unknown> = {
+          patientIdentityId: patientResolverResult.patientId,
+          patientIdentityLink,
+          patientResolver: patientResolverSummary,
+          requiresPatientReview: patientResolverResult.requiresReview === true
+        };
+
+        await patientDocRef.set(resolverUpdate, { merge: true });
+
+        functions.logger.info('manualAddPatient linked patient identity', {
+          clinicId,
+          doctorId,
+          queueId,
+          patientDocId: newPatientId,
+          patientIdentityId: patientResolverResult.patientId,
+          matchType: patientResolverResult.matchType,
+          requiresReview: patientResolverResult.requiresReview
+        });
+      } catch (resolverError) {
+        functions.logger.error('manualAddPatient resolver failed', {
+          clinicId,
+          doctorId,
+          queueId,
+          patientDocId: newPatientId,
+          error: resolverError instanceof Error ? resolverError.message : String(resolverError)
+        });
+      }
+    }
+
     runInBackground('manualAddPatient.recompute', () => recomputeQueueNotifications({ clinicId, doctorId, queueId }));
 
     functions.logger.info('Manual patient added', {
@@ -1554,7 +1750,14 @@ const manualAddPatientHandler = async (data: ManualAddPatientRequest, context: C
       patientId: newPatientId,
       tokenNumber: newTokenNumber,
       suppressNotification,
-      uid
+      uid,
+      ...(patientResolverResult
+        ? {
+            patientIdentityId: patientResolverResult.patientId,
+            patientResolverMatchType: patientResolverResult.matchType,
+            patientResolverRequiresReview: patientResolverResult.requiresReview
+          }
+        : {})
     });
 
     span.succeed({ patientId: newPatientId, tokenNumber: newTokenNumber });
@@ -1566,7 +1769,14 @@ const manualAddPatientHandler = async (data: ManualAddPatientRequest, context: C
       doctorId,
       clinicId,
       accessToken: rawAccessToken,
-      tokenNumber: newTokenNumber
+      tokenNumber: newTokenNumber,
+      ...(patientResolverResult
+        ? {
+            patientIdentityId: patientResolverResult.patientId,
+            patientResolver: patientResolverSummary,
+            requiresPatientReview: patientResolverResult.requiresReview === true
+          }
+        : {})
     } satisfies ManualAddPatientResponse;
   } catch (error) {
     functions.logger.error('manualAddPatient failed', error, {

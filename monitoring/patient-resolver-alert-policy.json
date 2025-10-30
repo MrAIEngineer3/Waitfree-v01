@@ -1,0 +1,37 @@
+{
+  "displayName": "Patient Resolver Failure Spike",
+  "combiner": "OR",
+  "enabled": true,
+  "documentation": {
+    "content": "Alert when resolver failures exceed expected volume. Investigate Cloud Functions logs for joinQueue and manualAddPatient.",
+    "mimeType": "text/markdown"
+  },
+  "conditions": [
+    {
+      "displayName": "Resolver errors > 5 per 10 minutes",
+      "conditionThreshold": {
+        "filter": "metric.type=\"logging.googleapis.com/user/patient_resolver_error_count\"",
+        "comparison": "COMPARISON_GT",
+        "thresholdValue": 5,
+        "duration": "600s",
+        "trigger": {
+          "count": 1
+        },
+        "aggregations": [
+          {
+            "alignmentPeriod": "600s",
+            "perSeriesAligner": "ALIGN_RATE",
+            "crossSeriesReducer": "REDUCE_SUM"
+          }
+        ],
+        "evaluationMissingData": "EVALUATION_MISSING_DATA_INACTIVE"
+      }
+    }
+  ],
+  "notificationChannels": [
+    "projects/PROJECT_ID/notificationChannels/CHANNEL_ID_PLACEHOLDER"
+  ],
+  "alertStrategy": {
+    "autoClose": "1200s"
+  }
+}

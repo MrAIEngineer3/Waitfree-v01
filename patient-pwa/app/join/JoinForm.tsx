@@ -1,37 +1,37 @@
 'use client';
 
-import { useEffect, useMemo, useRef, useState } from 'react';
-import { useRouter } from 'next/navigation';
 import { httpsCallable } from 'firebase/functions';
+import { useRouter } from 'next/navigation';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { toast } from 'sonner';
 
+import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { Badge } from '@/components/ui/badge';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Separator } from '@/components/ui/separator';
 import { Skeleton } from '@/components/ui/skeleton';
-import { cn } from '@/lib/utils';
 import { formatClinicShareCode, normalizeClinicShareCode, parseClinicIdentifierFromQuery, parseClinicIdentifierFromText } from '@/lib/clinicIdentifier';
+import { cn } from '@/lib/utils';
 
+import {
+    getClinicDoctorAvailability,
+    type ClinicDoctorAvailabilityEntry,
+    type ClinicSummary,
+    type DoctorAvailabilityPayload,
+} from '../../lib/availability';
 import { functions } from '../../lib/firebase';
 import {
-  getClinicDoctorAvailability,
-  type ClinicDoctorAvailabilityEntry,
-  type ClinicSummary,
-  type DoctorAvailabilityPayload,
-} from '../../lib/availability';
-import {
-  deserializeAvailabilityPayload,
-  evaluateJoinEligibility,
-  isCallableError,
+    deserializeAvailabilityPayload,
+    evaluateJoinEligibility,
+    isCallableError,
 } from '../../lib/joinLogic';
 import {
-  fetchClinicSchedulingSettings,
-  getDefaultClinicSchedulingSettings,
-  type ClinicSchedulingSettings,
+    fetchClinicSchedulingSettings,
+    getDefaultClinicSchedulingSettings,
+    type ClinicSchedulingSettings,
 } from '../../lib/scheduling';
 
 const OFFLINE_NOTIFICATION_PROMPT =
@@ -385,6 +385,15 @@ export default function JoinForm() {
         doctorId: string;
         clinicId: string;
         accessToken?: string;
+        patientIdentityId?: string;
+        patientResolver?: {
+          version: string;
+          matchType: string;
+          confidence: string;
+          requiresReview: boolean;
+          metadataVersion: number;
+          ambiguityId?: string | null;
+        } | null;
       }
 
       const joinFn = httpsCallable<JoinQueuePayload, JoinQueueResult>(functions, 'joinQueue');

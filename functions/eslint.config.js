@@ -1,12 +1,12 @@
 import js from '@eslint/js';
-import globals from 'globals';
 import tseslint from '@typescript-eslint/eslint-plugin';
 import tsparser from '@typescript-eslint/parser';
+import globals from 'globals';
 
 export default [
   js.configs.recommended,
   {
-    ignores: ['lib/**', 'scripts/**', 'firebase-export*/**', 'src/scripts/**'],
+    ignores: ['lib/**', 'scripts/**', 'firebase-export*/**', 'src/scripts/**', 'tmp/**'],
   },
   {
     files: ['src/**/*.ts'],
@@ -15,7 +15,7 @@ export default [
       globals: globals.node,
       parser: tsparser,
       parserOptions: {
-        project: './tsconfig.json',
+        project: './tsconfig.eslint.json',
       },
     },
     plugins: {

@@ -1,11 +1,11 @@
 "use client";
 
-import { useEffect, useMemo, useState } from 'react';
-import { httpsCallable } from 'firebase/functions';
-import { toast } from 'sonner';
 import { functions } from '@/lib/firebase';
-import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from './ui/dialog';
+import { httpsCallable } from 'firebase/functions';
+import { useEffect, useMemo, useState } from 'react';
+import { toast } from 'sonner';
 import { Button } from './ui/Button';
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from './ui/dialog';
 import { Input } from './ui/Input';
 import { Label } from './ui/label';
 import { Switch } from './ui/switch';
@@ -190,6 +190,16 @@ export function ManualAddPatientDialog({
         clinicId: string;
         accessToken: string;
         tokenNumber: number;
+        patientIdentityId?: string;
+        patientResolver?: {
+          version: string;
+          matchType: string;
+          confidence: string;
+          requiresReview: boolean;
+          metadataVersion: number;
+          ambiguityId?: string | null;
+        } | null;
+        requiresPatientReview?: boolean;
       }
 
       const callable = httpsCallable<ManualAddPatientPayload, ManualAddPatientResult>(functions, 'manualAddPatient');
@@ -212,6 +222,11 @@ export function ManualAddPatientDialog({
       }
 
       toast.success(`Patient added to queue (Token #${data.tokenNumber}).`);
+      if (data.requiresPatientReview) {
+        toast.info('Patient flagged for manual review', {
+          description: 'Review this entry in the patient identity tools to merge or approve.'
+        });
+      }
       onOpenChange(false);
     } catch (error) {
       console.error('Failed to manually add patient', error);

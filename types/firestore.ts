@@ -132,4 +132,28 @@ export interface PatientDocument {
     rejoinedPatientId?: string | null;
     rejoinedQueueId?: string | null;
   };
+  patientIdentityId?: string;
+  patientIdentityLink?: PatientIdentityLink;
+  patientResolver?: PatientResolverSummary;
+  requiresPatientReview?: boolean;
+}
+
+export interface PatientIdentityLink {
+  patientId: string;
+  resolverVersion: string;
+  matchType: 'existing' | 'created' | 'ambiguous' | 'phone-missing';
+  confidence: 'high' | 'medium' | 'low' | 'none';
+  requiresReview: boolean;
+  metadataVersion: number;
+  ambiguityId?: string | null;
+  linkedAt: Timestamp;
+}
+
+export interface PatientResolverSummary {
+  version: string;
+  matchType: PatientIdentityLink['matchType'];
+  confidence: PatientIdentityLink['confidence'];
+  requiresReview: boolean;
+  metadataVersion: number;
+  ambiguityId?: string | null;
 }

@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach, afterAll, beforeAll } from 'vitest';
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const {
   loggerMock,
@@ -46,6 +46,12 @@ function resetEnv() {
   delete process.env.TWILIO_ACCOUNT_SID;
   delete process.env.TWILIO_AUTH_TOKEN;
   delete process.env.TWILIO_WHATSAPP_FROM;
+  delete process.env.NOTIFIER_DISABLE_TWILIO;
+  delete process.env.FUNCTIONS_EMULATOR;
+  delete process.env.FIREBASE_AUTH_EMULATOR_HOST;
+  delete process.env.FIREBASE_EMULATOR_HUB;
+  delete process.env.FIRESTORE_EMULATOR_HOST;
+  delete process.env.FIREBASE_STORAGE_EMULATOR_HOST;
   process.env.PATIENT_PWA_BASE_URL = 'https://demo.waitfreeclinic.com';
 }
 

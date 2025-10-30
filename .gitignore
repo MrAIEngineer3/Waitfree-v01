@@ -77,4 +77,5 @@ node_modules/
 emulator_export/
 functions/firebase-export-*/
 functions/tmp/
+functions/out/
 saved-data/
