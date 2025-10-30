@@ -1,5 +1,6 @@
 "use client";
 import { doc, getDoc, setDoc } from 'firebase/firestore';
+import { httpsCallable } from 'firebase/functions';
 import { useRouter } from 'next/navigation';
 import React, { useEffect, useState } from 'react';
 import { Input } from '../../components/ui/Input';
@@ -7,7 +8,7 @@ import { Button } from '../../components/ui/Button';
 import { Card } from '../../components/ui/Card';
 import { Label } from '../../components/ui/label';
 import { Separator } from '../../components/ui/separator';
-import { auth, db } from '../../lib/firebase';
+import { auth, db, functions } from '../../lib/firebase';
 
 interface Mapping { clinicId?: string; doctorId?: string; }
 
@@ -51,12 +52,31 @@ export default function OnboardingPage() {
       const user = auth.currentUser;
       if (!user) throw new Error('Not authenticated');
       const uid = user.uid;
-      const clinicId = `clinic-${uid.slice(0,8)}`;
-      const doctorId = `doctor-${uid.slice(0,8)}`;
+      const bootstrap = httpsCallable(functions, 'bootstrapClinicAccount');
+      const response = await bootstrap({
+        clinicName: clinicName || 'New Clinic',
+        doctorName: doctorName || 'Primary Doctor',
+        specialty: specialty || 'General',
+        clinicPhone: clinicPhone || undefined
+      });
+
+  const result = response.data as { success?: boolean; clinicId?: string; doctorId?: string; clinicShareCode?: string };
+      if (!result?.success) {
+        throw new Error('Failed to create clinic structures');
+      }
+
       const now = new Date().toISOString();
-  await setDoc(doc(db, 'clinics', clinicId), { name: clinicName || 'New Clinic', ownerUid: uid, createdAt: now, contactNumber: clinicPhone || null });
-      await setDoc(doc(db, 'clinics', clinicId, 'doctors', doctorId), { name: doctorName || 'Primary Doctor', specialty: specialty || 'General', clinicId, createdAt: now });
-      await setDoc(doc(db, 'users', uid), { ...(userMapping || {}), clinicId, doctorId, email: user.email, createdAt: now }, { merge: true });
+      await setDoc(
+        doc(db, 'users', uid),
+        {
+          ...(userMapping || {}),
+          clinicId: result.clinicId,
+          doctorId: result.doctorId,
+          email: user.email,
+          createdAt: now
+        },
+        { merge: true }
+      );
       router.replace('/');
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : 'Failed to save';

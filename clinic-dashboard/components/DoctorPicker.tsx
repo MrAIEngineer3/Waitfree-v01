@@ -42,7 +42,7 @@ export default function DoctorPicker({ clinicId, value, onChange }:{ clinicId: s
         value={value ?? ''}
         onValueChange={handleChange}
       >
-        <SelectTrigger className="h-8 text-sm rounded-md border border-gray-300 px-2 bg-white text-gray-800">
+        <SelectTrigger className="h-8 text-sm rounded-md border border-border px-2 bg-background text-foreground">
           <SelectValue placeholder={loading ? "Loading…" : "Select a doctor…"} />
         </SelectTrigger>
         <SelectContent>

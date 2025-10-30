@@ -1,4 +1,5 @@
 import LandingClient from './LandingClient';
+import { ForceTheme } from '@/components/ForceTheme';
 
 export const metadata = {
   title: 'Waitfree – Modern Queue Management for Healthcare',
@@ -6,5 +7,9 @@ export const metadata = {
 };
 
 export default function LandingPage() {
-  return <LandingClient />;
+  return (
+    <ForceTheme theme="light">
+      <LandingClient />
+    </ForceTheme>
+  );
 }

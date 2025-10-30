@@ -1,5 +1,5 @@
-import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { Timestamp } from 'firebase-admin/firestore';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const schedulingMocks = vi.hoisted(() => ({
   loadDoctorSchedulingSnapshot: vi.fn(),
@@ -15,7 +15,6 @@ vi.mock('./settings', () => ({
 }));
 
 import { resolveDoctorAvailability } from './availability';
-import type { DoctorAvailabilityResult } from './types';
 
 type Snapshot = {
   document: {

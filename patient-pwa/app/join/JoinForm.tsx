@@ -1,40 +1,53 @@
 'use client';
 
-import { useEffect, useMemo, useRef, useState } from 'react';
-import { useRouter } from 'next/navigation';
-import { doc, getDoc } from 'firebase/firestore';
 import { httpsCallable } from 'firebase/functions';
+import { useRouter } from 'next/navigation';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { toast } from 'sonner';
 
+import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { Badge } from '@/components/ui/badge';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Separator } from '@/components/ui/separator';
 import { Skeleton } from '@/components/ui/skeleton';
+import { formatClinicShareCode, normalizeClinicShareCode, parseClinicIdentifierFromQuery, parseClinicIdentifierFromText } from '@/lib/clinicIdentifier';
 import { cn } from '@/lib/utils';
 
-import { db, functions } from '../../lib/firebase';
 import {
-  getClinicDoctorAvailability,
-  type ClinicDoctorAvailabilityEntry,
-  type DoctorAvailabilityPayload,
+    getClinicDoctorAvailability,
+    type ClinicDoctorAvailabilityEntry,
+    type ClinicSummary,
+    type DoctorAvailabilityPayload,
 } from '../../lib/availability';
+import { functions } from '../../lib/firebase';
 import {
-  deserializeAvailabilityPayload,
-  evaluateJoinEligibility,
-  isCallableError,
+    deserializeAvailabilityPayload,
+    evaluateJoinEligibility,
+    isCallableError,
 } from '../../lib/joinLogic';
 import {
-  fetchClinicSchedulingSettings,
-  getDefaultClinicSchedulingSettings,
-  type ClinicSchedulingSettings,
+    fetchClinicSchedulingSettings,
+    getDefaultClinicSchedulingSettings,
+    type ClinicSchedulingSettings,
 } from '../../lib/scheduling';
 
 const OFFLINE_NOTIFICATION_PROMPT =
   'You can request a notification when the doctor is back online.';
+
+const createPlaceholderAvailability = (message = 'Fetching the latest status…'): DoctorAvailabilityPayload => ({
+  status: 'UNAVAILABLE',
+  layer: 'placeholder',
+  reasonCode: 'FETCHING',
+  message,
+  computedAt: new Date().toISOString(),
+  nextAvailableAt: null,
+  activeOverride: null,
+  realTimeStatus: null,
+  debug: { source: 'placeholder' },
+});
 
 type DoctorListEntry = {
   id: string;
@@ -78,6 +91,85 @@ const AVAILABILITY_TONE_BADGE: Record<
   positive: { badgeVariant: 'success' },
   warning: { badgeVariant: 'warning' },
   neutral: { badgeVariant: 'secondary', badgeClassName: 'text-muted-foreground bg-muted/40' },
+};
+
+type PatientFieldErrors = {
+  name?: string;
+  age?: string;
+  phone?: string;
+};
+
+const collapseWhitespace = (value: string) => value.replace(/\s+/g, ' ');
+
+const normalizeName = (value: string): { result?: string; error?: string } => {
+  const trimmed = collapseWhitespace(value.trim());
+  if (!trimmed) {
+    return { error: 'Please enter your full name.' };
+  }
+  if (trimmed.length < 2 || trimmed.length > 100) {
+    return { error: 'Name must be between 2 and 100 characters.' };
+  }
+  return { result: trimmed };
+};
+
+const normalizeAge = (value: string, required: boolean): { result?: number | null; error?: string } => {
+  const digits = value.replace(/\D+/g, '');
+  if (!digits) {
+    return required ? { error: 'Please enter your age.' } : { result: null };
+  }
+  const parsed = Number.parseInt(digits, 10);
+  if (!Number.isFinite(parsed) || !Number.isInteger(parsed)) {
+    return { error: 'Please enter a whole number for age.' };
+  }
+  if (parsed < 1 || parsed > 120) {
+    return { error: 'Age must be between 1 and 120.' };
+  }
+  return { result: parsed };
+};
+
+const normalizePhone = (value: string, required: boolean): { result?: string | null; error?: string } => {
+  const digits = value.replace(/\D+/g, '');
+  if (!digits) {
+    return required ? { error: 'Please enter a phone number.' } : { result: null };
+  }
+  if (digits.length === 10) {
+    return { result: `+91${digits}` };
+  }
+  if (digits.length === 12 && digits.startsWith('91')) {
+    return { result: `+${digits}` };
+  }
+  return { error: 'Enter a valid 10-digit Indian mobile number.' };
+};
+
+const validatePatientFields = (
+  fields: { name: string; age: string; phone: string },
+  options: { requireAge?: boolean; requirePhone?: boolean }
+): { errors: PatientFieldErrors; sanitized: { name?: string; age?: number | null; phone?: string | null } } => {
+  const errors: PatientFieldErrors = {};
+  const sanitized: { name?: string; age?: number | null; phone?: string | null } = {};
+
+  const nameResult = normalizeName(fields.name);
+  if (nameResult.error) {
+    errors.name = nameResult.error;
+  } else {
+    sanitized.name = nameResult.result;
+  }
+
+  const ageResult = normalizeAge(fields.age, options.requireAge !== false);
+  if (ageResult.error) {
+    errors.age = ageResult.error;
+  } else {
+    sanitized.age = ageResult.result ?? null;
+  }
+
+  const phoneResult = normalizePhone(fields.phone, options.requirePhone !== false);
+  if (phoneResult.error) {
+    errors.phone = phoneResult.error;
+  } else {
+    sanitized.phone = phoneResult.result ?? null;
+  }
+
+  return { errors, sanitized };
 };
 
 function formatNextAvailability(iso: string | null | undefined) {
@@ -153,11 +245,15 @@ export default function JoinForm() {
   const [name, setName] = useState('');
   const [age, setAge] = useState('');
   const [phone, setPhone] = useState('');
+  const [nameTouched, setNameTouched] = useState(false);
+  const [ageTouched, setAgeTouched] = useState(false);
   const [phoneTouched, setPhoneTouched] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState('');
+  const [fieldErrors, setFieldErrors] = useState<PatientFieldErrors>({});
 
   const [clinicId, setClinicId] = useState<string | null>(null);
+  const [clinicShareCode, setClinicShareCode] = useState<string | null>(null);
   const [doctorId, setDoctorId] = useState<string | null>(null);
   const [doctorIdParamProvided, setDoctorIdParamProvided] = useState(false);
   const [doctors, setDoctors] = useState<DoctorListEntry[]>([]);
@@ -166,12 +262,14 @@ export default function JoinForm() {
   const [availabilityByDoctor, setAvailabilityByDoctor] = useState<Record<string, DoctorAvailabilityPayload>>({});
   const [notifyStates, setNotifyStates] = useState<Record<string, NotifyState>>({});
   const [status, setStatus] = useState<'loading' | 'valid' | 'invalid'>('loading');
-  const [clinicData, setClinicData] = useState<{ name?: string; address?: string; phone?: string } | null>(null);
+  const [clinicData, setClinicData] = useState<ClinicSummary | null>(null);
   const [clinicSchedulingSettings, setClinicSchedulingSettings] = useState<ClinicSchedulingSettings>(() =>
     getDefaultClinicSchedulingSettings()
   );
+  const formattedClinicShareCode = useMemo(() => formatClinicShareCode(clinicShareCode), [clinicShareCode]);
 
   const initOnceRef = useRef(false);
+  const isMountedRef = useRef(false);
 
   const getCurrentAvailability = () => {
     if (!doctorId) return null;
@@ -236,20 +334,18 @@ export default function JoinForm() {
     event.preventDefault();
     setError('');
 
-    if (!name.trim() || !age.trim()) {
-      setError('Please fill in all fields');
-      return;
-    }
+    const validation = validatePatientFields(
+      { name, age, phone },
+      { requireAge: true, requirePhone: true }
+    );
+    setFieldErrors(validation.errors);
+    setNameTouched(true);
+    setAgeTouched(true);
+    setPhoneTouched(true);
 
-    const normalizedDigits = phone.replace(/\D+/g, '');
-    if (normalizedDigits.length !== 10) {
-      setPhoneTouched(true);
-      return;
-    }
-
-    const ageNumber = Number.parseInt(age, 10);
-    if (!Number.isFinite(ageNumber) || ageNumber <= 0 || ageNumber > 200) {
-      setError('Please enter a valid age');
+    if (validation.errors.name || validation.errors.age || validation.errors.phone) {
+      setError('Please fix the highlighted fields.');
+      toast.error('Please check the highlighted fields.');
       return;
     }
 
@@ -289,6 +385,15 @@ export default function JoinForm() {
         doctorId: string;
         clinicId: string;
         accessToken?: string;
+        patientIdentityId?: string;
+        patientResolver?: {
+          version: string;
+          matchType: string;
+          confidence: string;
+          requiresReview: boolean;
+          metadataVersion: number;
+          ambiguityId?: string | null;
+        } | null;
       }
 
       const joinFn = httpsCallable<JoinQueuePayload, JoinQueueResult>(functions, 'joinQueue');
@@ -296,9 +401,9 @@ export default function JoinForm() {
         clinicId,
         doctorId,
         patientData: {
-          name: name.trim(),
-          age: ageNumber,
-          phone: normalizedDigits,
+          name: validation.sanitized.name ?? name.trim(),
+          age: validation.sanitized.age ?? Number.parseInt(age, 10),
+          phone: validation.sanitized.phone ?? phone.replace(/\D+/g, ''),
         },
       });
 
@@ -362,9 +467,14 @@ export default function JoinForm() {
       return;
     }
 
-    const normalizedDigits = phone.replace(/\D+/g, '');
-    if (normalizedDigits.length !== 10) {
-      setPhoneTouched(true);
+    const validation = validatePatientFields(
+      { name, age, phone },
+      { requireAge: false, requirePhone: true }
+    );
+    setFieldErrors((prev) => ({ ...prev, phone: validation.errors.phone }));
+    setPhoneTouched(true);
+    if (validation.errors.phone) {
+      toast.error(validation.errors.phone);
       return;
     }
 
@@ -379,7 +489,7 @@ export default function JoinForm() {
       const { data } = await notifyFn({
         clinicId,
         doctorId,
-        phone: normalizedDigits,
+        phone: validation.sanitized.phone ?? phone.replace(/\D+/g, ''),
         patientName: name.trim() || undefined,
       });
 
@@ -446,20 +556,46 @@ export default function JoinForm() {
   };
 
   useEffect(() => {
-    if (initOnceRef.current) return;
+    isMountedRef.current = true;
+    if (initOnceRef.current) {
+      return () => {
+        isMountedRef.current = false;
+      };
+    }
     initOnceRef.current = true;
 
     try {
-      let rawClinicId = '';
-      let rawDoctorId = '';
+      let rawClinicIdParam = '';
+      let rawClinicCodeParam = '';
+      let rawDoctorIdParam = '';
+      let parsedFromQuery: ReturnType<typeof parseClinicIdentifierFromQuery> = null;
 
       if (typeof window !== 'undefined') {
         const params = new URLSearchParams(window.location.search);
-        rawClinicId = params.get('clinicId') || params.get('c') || '';
-        rawDoctorId = params.get('doctorId') || params.get('d') || '';
+        parsedFromQuery = parseClinicIdentifierFromQuery(params);
+        rawClinicIdParam = params.get('clinicId') || params.get('c') || '';
+        rawClinicCodeParam = params.get('code') || params.get('clinicCode') || params.get('shareCode') || '';
+        rawDoctorIdParam = params.get('doctorId') || params.get('d') || '';
       }
 
-      const coerceId = (value: string | null | undefined): string | null => {
+      const parsedFromClinicParam = rawClinicIdParam
+        ? parseClinicIdentifierFromText(rawClinicIdParam)
+        : null;
+      const parsedFromCodeParam = rawClinicCodeParam ? parseClinicIdentifierFromText(rawClinicCodeParam) : null;
+
+      const shareCodeCandidates = [
+        normalizeClinicShareCode(rawClinicCodeParam),
+        parsedFromQuery?.shareCode ?? null,
+        parsedFromClinicParam?.shareCode ?? null,
+        parsedFromCodeParam?.shareCode ?? null,
+      ];
+
+      const resolvedShareCode = shareCodeCandidates.find((candidate): candidate is string => typeof candidate === 'string' && candidate.length > 0) ?? null;
+
+      const effectiveClinicIdentifier = resolvedShareCode ?? null;
+      const effectiveShareCode = resolvedShareCode;
+
+      const coerceFirestoreId = (value: string | null | undefined): string | null => {
         if (!value) return null;
         const str = `${value}`.trim();
         if (!str) return null;
@@ -480,129 +616,187 @@ export default function JoinForm() {
         return cleaned || null;
       };
 
-      const coercedClinicId = coerceId(rawClinicId);
-      const coercedDoctorId = coerceId(rawDoctorId);
+      const coercedDoctorId = coerceFirestoreId(rawDoctorIdParam);
+      const doctorIdWasProvided = Boolean(coercedDoctorId);
 
-      setDoctorIdParamProvided(Boolean(coercedDoctorId));
+      setDoctorIdParamProvided(doctorIdWasProvided);
 
-      if (!coercedClinicId) {
+      if (!effectiveClinicIdentifier) {
         setClinicId(null);
+        setClinicShareCode(null);
         setDoctorId(coercedDoctorId ?? null);
         setClinicSchedulingSettings(getDefaultClinicSchedulingSettings());
         setStatus('invalid');
         return;
       }
 
-      setClinicId(coercedClinicId);
+    setClinicId(effectiveClinicIdentifier);
+    setClinicShareCode(effectiveShareCode);
       setDoctorId(coercedDoctorId ?? null);
       setClinicSchedulingSettings(getDefaultClinicSchedulingSettings());
       setStatus('valid');
-
-      const fetchClinic = async () => {
-        try {
-          const clinicRef = doc(db, 'clinics', coercedClinicId);
-          const clinicSnapshot = await getDoc(clinicRef);
-          if (clinicSnapshot.exists()) {
-            setClinicData(clinicSnapshot.data() as { name?: string; address?: string; phone?: string } | null);
-          }
-        } catch (err) {
-          console.error('Error fetching clinic:', err);
-        }
-      };
+      setClinicData(null);
+      if (coercedDoctorId) {
+        setDoctors([
+          {
+            id: coercedDoctorId,
+            name: coercedDoctorId,
+            specialty: 'Doctor',
+            availability: null,
+          },
+        ]);
+        setDoctorsLoading(false);
+        setAvailabilityByDoctor({
+          [coercedDoctorId]: createPlaceholderAvailability(),
+        });
+      } else {
+        setDoctors([]);
+        setDoctorsLoading(true);
+        setAvailabilityByDoctor({});
+      }
 
       const loadAvailability = async () => {
-        try {
+        let mergedDoctors: DoctorListEntry[] = [];
+
+        if (isMountedRef.current && !coercedDoctorId) {
           setDoctorsLoading(true);
-          setAvailabilityError(null);
+        }
+
+        try {
+          if (isMountedRef.current) {
+            setAvailabilityError(null);
+          }
 
           const response = await getClinicDoctorAvailability(
-            coercedClinicId,
+            effectiveClinicIdentifier,
             coercedDoctorId ? [coercedDoctorId] : undefined
           );
 
+          if (!isMountedRef.current) {
+            return;
+          }
+
+          setClinicData(response.clinic ?? null);
+
           const entries = response.doctors;
 
-          if (entries.length === 0 && coercedDoctorId) {
-            setDoctors([
+          const availabilityMap = entries.reduce<Record<string, DoctorAvailabilityPayload>>((acc, entry) => {
+            acc[entry.doctorId] = entry.availability;
+            return acc;
+          }, {});
+
+          if (entries.length > 0) {
+            setAvailabilityByDoctor((prev) => ({ ...prev, ...availabilityMap }));
+          } else if (coercedDoctorId) {
+            setAvailabilityByDoctor((prev) => ({
+              ...prev,
+              [coercedDoctorId]: createPlaceholderAvailability('Doctor availability is currently offline.'),
+            }));
+          }
+
+          if (!isMountedRef.current) {
+            return;
+          }
+
+          const resolvedDoctors: DoctorListEntry[] = entries.map((entry: ClinicDoctorAvailabilityEntry) => ({
+            id: entry.doctorId,
+            name: entry.profile?.name ?? entry.doctorId,
+            specialty: entry.profile?.specialty ?? 'General Practice',
+            availability: entry.availability,
+          }));
+
+          if (resolvedDoctors.length > 0) {
+            mergedDoctors = resolvedDoctors;
+            setDoctors(resolvedDoctors);
+          } else if (coercedDoctorId) {
+            mergedDoctors = [
               {
                 id: coercedDoctorId,
                 name: coercedDoctorId,
                 specialty: 'Doctor',
-                availability: null,
+                availability: availabilityMap[coercedDoctorId] ?? null,
               },
-            ]);
+            ];
+            setDoctors(mergedDoctors);
           } else {
-            const mapped: DoctorListEntry[] = entries.map((entry: ClinicDoctorAvailabilityEntry) => ({
-              id: entry.doctorId,
-              name: entry.profile?.name ?? entry.doctorId,
-              specialty: entry.profile?.specialty ?? 'General Practice',
-              availability: entry.availability,
-            }));
-            setDoctors(mapped);
-
-            if (!coercedDoctorId && mapped.length === 1) {
-              setDoctorId(mapped[0].id);
-            }
+            mergedDoctors = [];
+            setDoctors([]);
           }
 
-          if (entries.length > 0) {
-            const availabilityMap = entries.reduce<Record<string, DoctorAvailabilityPayload>>((acc, entry) => {
-              acc[entry.doctorId] = entry.availability;
-              return acc;
-            }, {});
-            setAvailabilityByDoctor((prev) => ({ ...prev, ...availabilityMap }));
+          if (isMountedRef.current) {
+            setDoctorId((current) => {
+              if (current) {
+                return current;
+              }
+
+              if (coercedDoctorId) {
+                return coercedDoctorId;
+              }
+
+              if (!doctorIdWasProvided && !coercedDoctorId && resolvedDoctors.length === 1) {
+                return resolvedDoctors[0].id;
+              }
+
+              if (!doctorIdWasProvided && !coercedDoctorId && mergedDoctors.length === 1) {
+                return mergedDoctors[0].id;
+              }
+
+              return current;
+            });
           }
         } catch (err) {
           console.error('Error fetching doctor availability:', err);
-          setAvailabilityError(
-            err instanceof Error ? err.message : 'Failed to load doctor availability.'
-          );
-
-          if (!coercedDoctorId) {
-            try {
-              setDoctorsLoading(true);
-              const { collection, getDocs } = await import('firebase/firestore');
-              const snapshot = await getDocs(collection(db, 'clinics', coercedClinicId, 'doctors'));
-              const fallback: DoctorListEntry[] = [];
-              snapshot.forEach((docSnap) => {
-                const data = docSnap.data() as { name?: string; specialty?: string } | undefined;
-                fallback.push({
-                  id: docSnap.id,
-                  name: data?.name ?? docSnap.id,
-                  specialty: data?.specialty ?? 'General Practice',
-                  availability: null,
-                });
+          if (isMountedRef.current) {
+            setAvailabilityError(
+              err instanceof Error ? err.message : 'Failed to load doctor availability.'
+            );
+            setAvailabilityByDoctor((prev) => {
+              const next = { ...prev };
+              const doctorIds =
+                mergedDoctors.length > 0
+                  ? mergedDoctors.map((entry) => entry.id)
+                  : coercedDoctorId
+                    ? [coercedDoctorId]
+                    : Object.keys(prev);
+              doctorIds.forEach((id) => {
+                if (!next[id]) {
+                  next[id] = createPlaceholderAvailability('Unable to load live availability.');
+                }
               });
-              setDoctors(fallback);
-              if (fallback.length === 1) {
-                setDoctorId(fallback[0].id);
-              }
-            } catch (fallbackErr) {
-              console.error('Fallback doctor fetch failed:', fallbackErr);
-            }
+              return next;
+            });
           }
-        } finally {
+        }
+
+        if (isMountedRef.current) {
           setDoctorsLoading(false);
         }
       };
 
       const loadSchedulingSettings = async () => {
         try {
-          const data = await fetchClinicSchedulingSettings(coercedClinicId);
-          setClinicSchedulingSettings(data);
+          const data = await fetchClinicSchedulingSettings(effectiveClinicIdentifier);
+          if (isMountedRef.current) {
+            setClinicSchedulingSettings(data);
+          }
         } catch (err) {
           console.error('Error loading clinic scheduling settings:', err);
-          setClinicSchedulingSettings(getDefaultClinicSchedulingSettings());
+          if (isMountedRef.current) {
+            setClinicSchedulingSettings(getDefaultClinicSchedulingSettings());
+          }
         }
       };
 
-      fetchClinic();
       loadAvailability();
       loadSchedulingSettings();
     } catch (err) {
       console.error('Error reading search params', err);
       setStatus('invalid');
     }
+
+    return () => {
+      isMountedRef.current = false;
+    };
   }, []);
 
   useEffect(() => {
@@ -654,7 +848,7 @@ export default function JoinForm() {
             </div>
             <CardTitle>Invalid Clinic Link</CardTitle>
             <CardDescription>
-              The clinic link appears to be invalid. Please scan the QR code again or contact the clinic for
+              The clinic code or link appears to be invalid. Please scan the QR code again or contact the clinic for
               assistance.
             </CardDescription>
           </CardHeader>
@@ -685,6 +879,11 @@ export default function JoinForm() {
               {clinicData?.name?.trim() || 'Clinic'}
             </CardTitle>
             <CardDescription className="font-medium">Virtual Queue System</CardDescription>
+            {formattedClinicShareCode ? (
+              <p className="text-xs font-medium text-muted-foreground">
+                Clinic code: <span className="font-mono tracking-wider text-foreground">{formattedClinicShareCode}</span>
+              </p>
+            ) : null}
           </CardHeader>
 
           <Separator className="bg-border/60" />
@@ -891,9 +1090,24 @@ export default function JoinForm() {
                   autoComplete="name"
                   autoCapitalize="words"
                   value={name}
-                  onChange={(event) => setName(event.target.value)}
+                  onChange={(event) => {
+                    const value = event.target.value;
+                    setName(value);
+                    if (nameTouched) {
+                      const { errors } = validatePatientFields({ name: value, age, phone }, { requireAge: true, requirePhone: true });
+                      setFieldErrors((prev) => ({ ...prev, name: errors.name }));
+                    }
+                  }}
+                  onBlur={() => {
+                    setNameTouched(true);
+                    const { errors } = validatePatientFields({ name, age, phone }, { requireAge: true, requirePhone: true });
+                    setFieldErrors((prev) => ({ ...prev, name: errors.name }));
+                  }}
                   disabled={isLoading}
                 />
+                {nameTouched && fieldErrors.name ? (
+                  <p className="text-xs text-destructive">{fieldErrors.name}</p>
+                ) : null}
               </div>
 
               <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
@@ -908,10 +1122,25 @@ export default function JoinForm() {
                     onChange={(event) => {
                       const digits = event.target.value.replace(/\D+/g, '');
                       setAge(digits.slice(0, 3));
+                      if (ageTouched) {
+                        const { errors } = validatePatientFields(
+                          { name, age: digits.slice(0, 3), phone },
+                          { requireAge: true, requirePhone: true }
+                        );
+                        setFieldErrors((prev) => ({ ...prev, age: errors.age }));
+                      }
+                    }}
+                    onBlur={() => {
+                      setAgeTouched(true);
+                      const { errors } = validatePatientFields({ name, age, phone }, { requireAge: true, requirePhone: true });
+                      setFieldErrors((prev) => ({ ...prev, age: errors.age }));
                     }}
                     disabled={isLoading}
                     maxLength={3}
                   />
+                  {ageTouched && fieldErrors.age ? (
+                    <p className="text-xs text-destructive">{fieldErrors.age}</p>
+                  ) : null}
                 </div>
 
                 <div className="space-y-2">
@@ -926,19 +1155,30 @@ export default function JoinForm() {
                     onChange={(event) => {
                       const digits = event.target.value.replace(/\D+/g, '');
                       setPhone(digits.slice(0, 10));
+                      if (phoneTouched) {
+                        const { errors } = validatePatientFields(
+                          { name, age, phone: digits.slice(0, 10) },
+                          { requireAge: true, requirePhone: true }
+                        );
+                        setFieldErrors((prev) => ({ ...prev, phone: errors.phone }));
+                      }
                     }}
-                    onBlur={() => setPhoneTouched(true)}
+                    onBlur={() => {
+                      setPhoneTouched(true);
+                      const { errors } = validatePatientFields({ name, age, phone }, { requireAge: true, requirePhone: true });
+                      setFieldErrors((prev) => ({ ...prev, phone: errors.phone }));
+                    }}
                     disabled={isLoading}
                     maxLength={10}
-                    aria-invalid={phoneTouched && phone.replace(/\D+/g, '').length !== 10}
+                    aria-invalid={Boolean(phoneTouched && fieldErrors.phone)}
                     className={cn(
-                      phoneTouched && phone.replace(/\D+/g, '').length !== 10
+                      phoneTouched && fieldErrors.phone
                         ? 'border-destructive/70 focus-visible:ring-destructive'
                         : undefined
                     )}
                   />
-                  {phoneTouched && phone.replace(/\D+/g, '').length !== 10 ? (
-                    <p className="text-xs text-destructive">Please enter a valid 10-digit phone number.</p>
+                  {phoneTouched && fieldErrors.phone ? (
+                    <p className="text-xs text-destructive">{fieldErrors.phone}</p>
                   ) : null}
                 </div>
               </div>

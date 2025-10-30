@@ -623,14 +623,14 @@ export default function DoctorsSettingsPage() {
     <div className="max-w-6xl space-y-6">
       {/* Page Header */}
       <div className="flex items-start gap-4">
-        <div className="w-12 h-12 rounded-xl bg-gradient-to-br from-violet-500 to-purple-600 flex items-center justify-center shadow-lg shadow-violet-500/25">
-          <svg className="w-6 h-6 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+        <div className="w-12 h-12 rounded-xl bg-primary flex items-center justify-center shadow-lg shadow-primary/25">
+          <svg className="w-6 h-6 text-primary-foreground" fill="none" viewBox="0 0 24 24" stroke="currentColor">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z" />
           </svg>
         </div>
         <div className="flex-1">
-          <h1 className="text-2xl font-bold tracking-tight text-gray-900">Medical Staff</h1>
-          <p className="text-sm text-gray-600 mt-1">Manage doctors and medical professionals in your clinic</p>
+          <h1 className="text-2xl font-bold tracking-tight text-foreground">Medical Staff</h1>
+          <p className="text-sm text-muted-foreground mt-1">Manage doctors and medical professionals in your clinic</p>
         </div>
         <Button onClick={startAdd} variant="accent">
           <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -646,13 +646,13 @@ export default function DoctorsSettingsPage() {
         <Card variant="outline">
           <CardContent className="p-6">
             <div className="text-center py-8">
-              <div className="w-16 h-16 bg-gray-100 rounded-2xl flex items-center justify-center mx-auto mb-4">
-                <svg className="w-8 h-8 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <div className="w-16 h-16 bg-muted rounded-2xl flex items-center justify-center mx-auto mb-4">
+                <svg className="w-8 h-8 text-muted-foreground" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-5 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4" />
                 </svg>
               </div>
-              <h3 className="text-lg font-semibold text-gray-900 mb-2">No Clinic Selected</h3>
-              <p className="text-sm text-gray-600">Attach your account to a clinic to manage doctors.</p>
+              <h3 className="text-lg font-semibold text-foreground mb-2">No Clinic Selected</h3>
+              <p className="text-sm text-muted-foreground">Attach your account to a clinic to manage doctors.</p>
             </div>
           </CardContent>
         </Card>
@@ -661,8 +661,8 @@ export default function DoctorsSettingsPage() {
       {/* Doctors Grid */}
       {loading ? (
         <div className="flex items-center justify-center py-12">
-          <div className="flex items-center gap-3 text-gray-600">
-            <div className="w-5 h-5 border-2 border-violet-500 border-t-transparent rounded-full animate-spin" />
+          <div className="flex items-center gap-3 text-muted-foreground">
+            <div className="w-5 h-5 border-2 border-primary border-t-transparent rounded-full animate-spin" />
             <span className="text-sm font-medium">Loading doctors…</span>
           </div>
         </div>
@@ -670,13 +670,13 @@ export default function DoctorsSettingsPage() {
         <Card variant="outline">
           <CardContent className="p-6">
             <div className="text-center py-12">
-              <div className="w-16 h-16 bg-gradient-to-br from-violet-100 to-purple-100 rounded-2xl flex items-center justify-center mx-auto mb-4">
-                <svg className="w-8 h-8 text-violet-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <div className="w-16 h-16 bg-gradient-to-br from-violet-100 to-purple-100 dark:from-violet-950 dark:to-purple-950 rounded-2xl flex items-center justify-center mx-auto mb-4">
+                <svg className="w-8 h-8 text-violet-500 dark:text-violet-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z" />
                 </svg>
               </div>
-              <h3 className="text-lg font-semibold text-gray-900 mb-2">No Doctors Added</h3>
-              <p className="text-sm text-gray-600 mb-6">Get started by adding your first medical professional</p>
+              <h3 className="text-lg font-semibold text-foreground mb-2">No Doctors Added</h3>
+              <p className="text-sm text-muted-foreground mb-6">Get started by adding your first medical professional</p>
               <Button onClick={startAdd} variant="default">
                 Add Your First Doctor
               </Button>
@@ -730,19 +730,19 @@ export default function DoctorsSettingsPage() {
                     {d.name.split(' ').map(n => n[0]).join('').slice(0, 2).toUpperCase()}
                   </div>
                   <div className="flex-1 min-w-0">
-                    <h3 className="font-semibold text-gray-900 text-lg truncate">{d.name}</h3>
-                    <p className="text-sm text-violet-600 font-medium">{d.specialty}</p>
+                    <h3 className="font-semibold text-foreground text-lg truncate">{d.name}</h3>
+                    <p className="text-sm text-violet-600 dark:text-violet-400 font-medium">{d.specialty}</p>
                   </div>
                 </div>
 
                 {/* Real-time Controls */}
-                <div className="rounded-lg border border-gray-100 bg-gray-50 px-3 py-3 space-y-2">
+                <div className="rounded-lg border border-border bg-muted px-3 py-3 space-y-2">
                   <div className="flex items-center justify-between gap-3">
                     <div className="flex items-center gap-2">
                       <span className={`h-2.5 w-2.5 rounded-full ${statusColor}`} />
-                      <span className="text-sm font-semibold text-gray-900">{statusLabel}</span>
+                      <span className="text-sm font-semibold text-foreground">{statusLabel}</span>
                       {isToggling && (
-                        <svg className="w-4 h-4 animate-spin text-gray-400" fill="none" viewBox="0 0 24 24">
+                        <svg className="w-4 h-4 animate-spin text-muted-foreground" fill="none" viewBox="0 0 24 24">
                           <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
                           <path
                             className="opacity-75"
@@ -753,38 +753,63 @@ export default function DoctorsSettingsPage() {
                       )}
                     </div>
                     <div className="flex items-center gap-2">
-                      <Switch
-                        checked={online}
-                        onCheckedChange={(checked) => handleToggleRealTimeStatus(d, checked)}
-                        disabled={isToggling || !clinicId}
-                        aria-label={`Toggle ${d.name} online status`}
-                      />
+                      <AlertDialog>
+                        <AlertDialogTrigger asChild>
+                          <div onClick={(e) => e.stopPropagation()}>
+                            <Switch
+                              checked={online}
+                              onCheckedChange={() => {}}
+                              disabled={isToggling || !clinicId}
+                              aria-label={`Toggle ${d.name} online status`}
+                            />
+                          </div>
+                        </AlertDialogTrigger>
+                        <AlertDialogContent>
+                          <AlertDialogHeader>
+                            <AlertDialogTitle>
+                              {online ? 'Set Doctor Offline?' : 'Set Doctor Online?'}
+                            </AlertDialogTitle>
+                            <AlertDialogDescription>
+                              {online
+                                ? `${d.name} will be marked as offline. New patients won't be able to join their queue.`
+                                : `${d.name} will be marked as online and available for patients to join the queue.`
+                              }
+                            </AlertDialogDescription>
+                          </AlertDialogHeader>
+                          <AlertDialogFooter>
+                            <AlertDialogCancel>Cancel</AlertDialogCancel>
+                            <AlertDialogAction onClick={() => handleToggleRealTimeStatus(d, !online)}>
+                              {online ? 'Set Offline' : 'Set Online'}
+                            </AlertDialogAction>
+                          </AlertDialogFooter>
+                        </AlertDialogContent>
+                      </AlertDialog>
                     </div>
                   </div>
-                  <p className="text-xs text-gray-600">
+                  <p className="text-xs text-muted-foreground">
                     {online
                       ? 'Patients can see this doctor in the live queue.'
                       : 'Patients will not see this doctor in the live queue.'}
                   </p>
                   {updatedAtLabel && (
-                    <p className="text-[11px] text-gray-500">Updated {updatedAtLabel}</p>
+                    <p className="text-[11px] text-muted-foreground">Updated {updatedAtLabel}</p>
                   )}
                 </div>
 
                 {/* Contact Info */}
                 {(d.email || d.phone) && (
-                  <div className="space-y-2 pt-2 border-t border-gray-100">
+                  <div className="space-y-2 pt-2 border-t border-border">
                     {d.email && (
-                      <div className="flex items-center gap-2 text-sm text-gray-600">
-                        <svg className="w-4 h-4 text-gray-400 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                        <svg className="w-4 h-4 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" />
                         </svg>
                         <span className="truncate">{d.email}</span>
                       </div>
                     )}
                     {d.phone && (
-                      <div className="flex items-center gap-2 text-sm text-gray-600">
-                        <svg className="w-4 h-4 text-gray-400 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                        <svg className="w-4 h-4 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 5a2 2 0 012-2h3.28a1 1 0 01.948.684l1.498 4.493a1 1 0 01-.502 1.21l-2.257 1.13a11.042 11.042 0 005.516 5.516l1.13-2.257a1 1 0 011.21-.502l4.493 1.498a1 1 0 01.684.949V19a2 2 0 01-2 2h-1C9.716 21 3 14.284 3 6V5z" />
                         </svg>
                         <span>{d.phone}</span>
@@ -794,10 +819,10 @@ export default function DoctorsSettingsPage() {
                 )}
 
                 {/* Action Buttons */}
-                <div className="flex items-center gap-0 pt-2 border-t border-gray-100">
+                <div className="flex items-center gap-0 pt-2 border-t border-border">
                   <button
                     onClick={() => openAvailabilityManager(d)}
-                    className="flex-1 px-3 py-2.5 bg-violet-50 hover:bg-violet-100 text-violet-700 rounded-lg text-sm font-medium transition-colors flex items-center justify-center gap-2"
+                    className="flex-1 px-3 py-2.5 bg-violet-50 dark:bg-violet-950 hover:bg-violet-100 dark:hover:bg-violet-900 text-violet-700 dark:text-violet-300 rounded-lg text-sm font-medium transition-colors flex items-center justify-center gap-2"
                   >
                     <svg className="w-4 h-4 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
@@ -805,11 +830,11 @@ export default function DoctorsSettingsPage() {
                     <span>Availability</span>
                   </button>
                   
-                  <div className="w-px h-8 bg-gray-200 mx-2"></div>
+                  <div className="w-px h-8 bg-border mx-2"></div>
                   
                   <button
                     onClick={() => startEdit(d)}
-                    className="flex-1 px-3 py-2.5 bg-gray-50 hover:bg-gray-100 text-gray-700 rounded-lg text-sm font-medium transition-colors flex items-center justify-center gap-2"
+                    className="flex-1 px-3 py-2.5 bg-muted hover:bg-accent text-foreground rounded-lg text-sm font-medium transition-colors flex items-center justify-center gap-2"
                   >
                     <svg className="w-4 h-4 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
@@ -840,69 +865,69 @@ export default function DoctorsSettingsPage() {
             <form onSubmit={saveDoctor} className="p-8 space-y-6">
               <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                 <div className="space-y-2">
-                  <label className="block text-sm font-semibold text-gray-700">
+                  <label className="block text-sm font-semibold text-foreground">
                     Full Name
                     <span className="text-red-500 ml-1">*</span>
                   </label>
                   <input
                     value={form.name}
                     onChange={(e) => setForm((p) => ({ ...p, name: e.target.value }))}
-                    className="w-full px-4 py-3 rounded-lg border border-gray-300 text-sm focus:outline-none focus:ring-2 focus:ring-violet-500 focus:border-transparent transition-all"
+                    className="w-full px-4 py-3 rounded-lg border border-border bg-background text-foreground text-sm focus:outline-none focus:ring-2 focus:ring-violet-500 focus:border-transparent transition-all"
                     placeholder="Dr. Jane Smith"
                     required
                   />
                 </div>
 
                 <div className="space-y-2">
-                  <label className="block text-sm font-semibold text-gray-700">
+                  <label className="block text-sm font-semibold text-foreground">
                     Specialty
                     <span className="text-red-500 ml-1">*</span>
                   </label>
                   <input
                     value={form.specialty}
                     onChange={(e) => setForm((p) => ({ ...p, specialty: e.target.value }))}
-                    className="w-full px-4 py-3 rounded-lg border border-gray-300 text-sm focus:outline-none focus:ring-2 focus:ring-violet-500 focus:border-transparent transition-all"
+                    className="w-full px-4 py-3 rounded-lg border border-border bg-background text-foreground text-sm focus:outline-none focus:ring-2 focus:ring-violet-500 focus:border-transparent transition-all"
                     placeholder="Cardiologist"
                     required
                   />
                 </div>
 
                 <div className="space-y-2">
-                  <label className="block text-sm font-semibold text-gray-700">
+                  <label className="block text-sm font-semibold text-foreground">
                     Email Address
                   </label>
                   <input
                     type="email"
                     value={form.email}
                     onChange={(e) => setForm((p) => ({ ...p, email: e.target.value }))}
-                    className="w-full px-4 py-3 rounded-lg border border-gray-300 text-sm focus:outline-none focus:ring-2 focus:ring-violet-500 focus:border-transparent transition-all"
+                    className="w-full px-4 py-3 rounded-lg border border-border bg-background text-foreground text-sm focus:outline-none focus:ring-2 focus:ring-violet-500 focus:border-transparent transition-all"
                     placeholder="doctor@example.com"
                   />
                 </div>
 
                 <div className="space-y-2">
-                  <label className="block text-sm font-semibold text-gray-700">
+                  <label className="block text-sm font-semibold text-foreground">
                     Phone Number
                   </label>
                   <input
                     value={form.phone}
                     onChange={(e) => setForm((p) => ({ ...p, phone: e.target.value }))}
-                    className="w-full px-4 py-3 rounded-lg border border-gray-300 text-sm focus:outline-none focus:ring-2 focus:ring-violet-500 focus:border-transparent transition-all"
+                    className="w-full px-4 py-3 rounded-lg border border-border bg-background text-foreground text-sm focus:outline-none focus:ring-2 focus:ring-violet-500 focus:border-transparent transition-all"
                     placeholder="+91 98765 43210"
                   />
                 </div>
               </div>
 
               {error && (
-                <div className="flex items-start gap-3 bg-red-50 border border-red-200 rounded-lg px-4 py-3">
-                  <svg className="w-5 h-5 text-red-500 flex-shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <div className="flex items-start gap-3 bg-red-50 dark:bg-red-950/50 border border-red-200 dark:border-red-800 rounded-lg px-4 py-3">
+                  <svg className="w-5 h-5 text-red-500 dark:text-red-400 flex-shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
                   </svg>
-                  <span className="text-sm text-red-700">{error}</span>
+                  <span className="text-sm text-red-700 dark:text-red-400">{error}</span>
                 </div>
               )}
 
-              <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-3 pt-4 border-t border-gray-200">
+              <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-3 pt-4 border-t border-border">
                 <Button type="submit" loading={saving} variant="default" className="w-full sm:w-auto">
                   {editing ? 'Save Changes' : 'Add Doctor'}
                 </Button>

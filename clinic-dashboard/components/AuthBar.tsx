@@ -1,31 +1,12 @@
 "use client";
 
 import { createUserWithEmailAndPassword, onAuthStateChanged, signInWithEmailAndPassword, signOut, User } from 'firebase/auth';
-import type { DocumentReference } from 'firebase/firestore';
 import { doc, getDoc, setDoc } from 'firebase/firestore';
+import { httpsCallable } from 'firebase/functions';
 import { useEffect, useState } from 'react';
-import { auth, db } from '../lib/firebase';
+import { auth, db, functions } from '../lib/firebase';
 import { Input } from './ui/Input';
 import { Button } from './ui/Button';
-
-// Helper to ensure demo entities exist
-async function ensureDemoClinicStructure() {
-  const today = new Date().toISOString().split('T')[0];
-  const clinicRef = doc(db, 'clinics', 'demo-clinic');
-  const doctorRef = doc(db, 'clinics', 'demo-clinic', 'doctors', 'demo-doctor');
-  const queueRef = doc(db, 'clinics', 'demo-clinic', 'doctors', 'demo-doctor', 'queues', today);
-  const maybeCreate = async (
-  ref: DocumentReference,
-    data: Record<string, unknown>,
-    label: string
-  ) => {
-    const snap = await getDoc(ref);
-    if (!snap.exists()) { await setDoc(ref, data); console.log('Created', label); }
-  };
-  await maybeCreate(clinicRef, { name: 'Demo Clinic', createdAt: new Date().toISOString() }, 'clinic');
-  await maybeCreate(doctorRef, { name: 'Demo Doctor', specialty: 'General', clinicId: 'demo-clinic', createdAt: new Date().toISOString() }, 'doctor');
-  await maybeCreate(queueRef, { status: 'active', currentToken: 0, totalPatients: 0, completedPatients: 0, createdAt: new Date().toISOString() }, 'queue');
-}
 
 export default function AuthBar() {
   const [user, setUser] = useState<User | null>(null);
@@ -73,13 +54,22 @@ export default function AuthBar() {
       const demoEmail = `demo+${Date.now()}@example.com`;
       const demoPassword = 'DemoPass!123';
       const cred = await createUserWithEmailAndPassword(auth, demoEmail, demoPassword);
-      await ensureDemoClinicStructure();
+      const bootstrap = httpsCallable(functions, 'bootstrapClinicAccount');
+      const response = await bootstrap({
+        clinicName: 'Demo Clinic',
+        doctorName: 'Demo Doctor',
+        specialty: 'General'
+      });
+  const result = response.data as { success?: boolean; clinicId?: string; doctorId?: string; clinicShareCode?: string };
+      if (!result?.success) {
+        throw new Error('Demo bootstrap failed');
+      }
       await setDoc(doc(db, 'users', cred.user.uid), {
         email: demoEmail,
-        clinicId: 'demo-clinic',
-        doctorId: 'demo-doctor',
+        clinicId: result.clinicId,
+        doctorId: result.doctorId,
         createdAt: new Date().toISOString()
-      });
+      }, { merge: true });
       setSuccess(`Created demo user ${demoEmail}`);
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : 'Failed to create demo account');
@@ -106,16 +96,16 @@ export default function AuthBar() {
     <div className="mb-6">
       {user ? (
         <div className="flex items-center justify-between">
-          <div className="text-sm text-gray-700">Signed in as <strong className="text-gray-900">{user.email}</strong></div>
+          <div className="text-sm text-muted-foreground">Signed in as <strong className="text-foreground">{user.email}</strong></div>
           <div className="flex items-center gap-3">
             <Button onClick={doSignOut} size="sm" variant="destructive" className="px-3 h-8">Sign out</Button>
           </div>
         </div>
       ) : (
-        <div className="bg-gray-100 rounded-lg p-4">
+        <div className="bg-muted rounded-lg p-4">
           <div className="flex items-center justify-between mb-3">
-            <div className="text-sm text-gray-700">Sign in / Sign up</div>
-            <div className="text-xs text-gray-600">Mode: <strong>{mode}</strong></div>
+            <div className="text-sm text-muted-foreground">Sign in / Sign up</div>
+            <div className="text-xs text-muted-foreground">Mode: <strong>{mode}</strong></div>
           </div>
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 mb-2">
             <Input value={email} onChange={e=>setEmail(e.target.value)} placeholder="Email" className="col-span-2" />
@@ -123,7 +113,7 @@ export default function AuthBar() {
           </div>
           {mode === 'signup' && (
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 mb-2">
-              <Input value={clinicId} onChange={e=>setClinicId(e.target.value)} placeholder="Clinic ID (optional)" className="col-span-2" />
+              <Input value={clinicId} onChange={e=>setClinicId(e.target.value)} placeholder="Clinic code (optional)" className="col-span-2" />
               <Input value={doctorId} onChange={e=>setDoctorId(e.target.value)} placeholder="Doctor ID (optional)" />
             </div>
           )}
@@ -142,11 +132,11 @@ export default function AuthBar() {
           </div>
           <div className="mt-3">
             <Button onClick={createDemoAccount} disabled={loading} variant="outline" className="text-sm">Create demo account</Button>
-            <div className="text-xs text-gray-600 mt-2">Creates a demo clinic/doctor and signs you in (dev only).</div>
+            <div className="text-xs text-muted-foreground mt-2">Creates a demo clinic/doctor and signs you in (dev only).</div>
           </div>
           {error && <div className="mt-2 text-sem-danger text-sm">{error}</div>}
-          {success && <div className="mt-2 text-green-600 text-sm">{success}</div>}
-          <div className="mt-2 text-xs text-gray-600">Simplified mode: any authenticated user can manage queues.</div>
+          {success && <div className="mt-2 text-sem-success text-sm">{success}</div>}
+          <div className="mt-2 text-xs text-muted-foreground">Simplified mode: any authenticated user can manage queues.</div>
         </div>
       )}
     </div>

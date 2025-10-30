@@ -2,24 +2,25 @@
 import { Button } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
 import { Separator } from '@/components/ui/separator';
-import { useState } from 'react';
+import { useTheme } from 'next-themes';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
 
 type LanguageOption = 'en' | 'hi';
 type ThemeOption = 'light' | 'dark' | 'system';
 
 // Modern Radio Button Component
-function RadioOption({ 
-  checked, 
-  onChange, 
-  label, 
+function RadioOption({
+  checked,
+  onChange,
+  label,
   description,
-  icon 
-}: { 
-  checked: boolean; 
-  onChange: () => void; 
-  label: string; 
+  icon,
+}: {
+  checked: boolean;
+  onChange: () => void;
+  label: string;
   description?: string;
-  icon?: React.ReactNode;
+  icon?: ReactNode;
 }) {
   return (
     <button
@@ -28,42 +29,42 @@ function RadioOption({
       className={`
         relative flex items-start gap-4 p-4 rounded-xl border-2 transition-all text-left w-full
         ${checked 
-          ? 'border-violet-500 bg-violet-50/50 shadow-md shadow-violet-100' 
-          : 'border-gray-200 hover:border-violet-200 hover:bg-gray-50'
+          ? 'border-primary bg-accent shadow-md shadow-primary/10' 
+          : 'border-border hover:border-primary/50 hover:bg-accent'
         }
       `}
     >
       <div className={`
         w-5 h-5 rounded-full border-2 flex items-center justify-center flex-shrink-0 mt-0.5
-        ${checked ? 'border-violet-500' : 'border-gray-300'}
+        ${checked ? 'border-primary' : 'border-border'}
       `}>
         {checked && (
-          <div className="w-3 h-3 rounded-full bg-gradient-to-br from-violet-500 to-purple-600" />
+          <div className="w-3 h-3 rounded-full bg-primary" />
         )}
       </div>
       {icon && (
         <div className={`
           w-10 h-10 rounded-lg flex items-center justify-center flex-shrink-0
-          ${checked ? 'bg-gradient-to-br from-violet-500 to-purple-600' : 'bg-gray-100'}
+          ${checked ? 'bg-primary' : 'bg-muted'}
         `}>
-          <div className={checked ? 'text-white' : 'text-gray-500'}>
+          <div className={checked ? 'text-primary-foreground' : 'text-muted-foreground'}>
             {icon}
           </div>
         </div>
       )}
       <div className="flex-1 min-w-0">
-        <h4 className={`text-sm font-semibold ${checked ? 'text-violet-900' : 'text-gray-900'}`}>
+        <h4 className={`text-sm font-semibold ${checked ? 'text-primary' : 'text-foreground'}`}>
           {label}
         </h4>
         {description && (
-          <p className={`text-xs mt-0.5 ${checked ? 'text-violet-600' : 'text-gray-500'}`}>
+          <p className={`text-xs mt-0.5 ${checked ? 'text-primary' : 'text-muted-foreground'}`}>
             {description}
           </p>
         )}
       </div>
       {checked && (
         <div className="absolute top-3 right-3">
-          <svg className="w-5 h-5 text-violet-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+          <svg className="w-5 h-5 text-primary" fill="none" viewBox="0 0 24 24" stroke="currentColor">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
           </svg>
         </div>
@@ -73,18 +74,91 @@ function RadioOption({
 }
 
 export default function PreferencesSettingsPage() {
+  const { theme: activeTheme, resolvedTheme, setTheme: applyTheme } = useTheme();
   const [language, setLanguage] = useState<LanguageOption>('en');
-  const [theme, setTheme] = useState<ThemeOption>('system');
+  const [selectedTheme, setSelectedTheme] = useState<ThemeOption>('system');
   const [saving, setSaving] = useState(false);
   const [success, setSuccess] = useState(false);
+  const [isThemeDirty, setIsThemeDirty] = useState(false);
+  const [mounted, setMounted] = useState(false);
+  const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const successTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => {
+    setMounted(true);
+    return () => {
+      if (saveTimerRef.current) {
+        clearTimeout(saveTimerRef.current);
+        saveTimerRef.current = null;
+      }
+      if (successTimerRef.current) {
+        clearTimeout(successTimerRef.current);
+        successTimerRef.current = null;
+      }
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!mounted || isThemeDirty) {
+      return;
+    }
+
+    if (activeTheme === 'light' || activeTheme === 'dark' || activeTheme === 'system') {
+      setSelectedTheme(activeTheme);
+      return;
+    }
+
+    if (resolvedTheme === 'light' || resolvedTheme === 'dark') {
+      setSelectedTheme(resolvedTheme);
+    }
+  }, [activeTheme, resolvedTheme, isThemeDirty, mounted]);
+
+  const clearSuccessTimer = () => {
+    if (successTimerRef.current) {
+      clearTimeout(successTimerRef.current);
+      successTimerRef.current = null;
+    }
+  };
+
+  const handleThemeSelect = (value: ThemeOption) => {
+    clearSuccessTimer();
+    setSuccess(false);
+    setSelectedTheme(value);
+    if (activeTheme === 'light' || activeTheme === 'dark' || activeTheme === 'system') {
+      const matchesActive = value === 'system' ? activeTheme === 'system' : activeTheme === value;
+      setIsThemeDirty(!matchesActive);
+    } else {
+      setIsThemeDirty(true);
+    }
+    if (saveTimerRef.current) {
+      clearTimeout(saveTimerRef.current);
+      saveTimerRef.current = null;
+    }
+    if (saving) {
+      setSaving(false);
+    }
+  };
 
   const handleSave = () => {
+    clearSuccessTimer();
+    if (saveTimerRef.current) {
+      clearTimeout(saveTimerRef.current);
+      saveTimerRef.current = null;
+    }
     setSaving(true);
-    setTimeout(() => {
+    const targetTheme = selectedTheme === 'light' || selectedTheme === 'dark' ? selectedTheme : 'system';
+    applyTheme(targetTheme);
+    setIsThemeDirty(false);
+
+    saveTimerRef.current = setTimeout(() => {
       setSaving(false);
       setSuccess(true);
-      setTimeout(() => setSuccess(false), 3000);
-    }, 1000);
+      successTimerRef.current = setTimeout(() => {
+        setSuccess(false);
+        successTimerRef.current = null;
+      }, 3000);
+      saveTimerRef.current = null;
+    }, 400);
   };
 
   return (
@@ -97,8 +171,8 @@ export default function PreferencesSettingsPage() {
           </svg>
         </div>
         <div className="flex-1">
-          <h1 className="text-2xl font-bold tracking-tight text-gray-900">App Preferences</h1>
-          <p className="text-sm text-gray-600 mt-1">Customize your experience with language and theme settings</p>
+          <h1 className="text-2xl font-bold tracking-tight text-foreground">App Preferences</h1>
+          <p className="text-sm text-muted-foreground mt-1">Customize your experience with language and theme settings</p>
         </div>
       </div>
 
@@ -110,20 +184,24 @@ export default function PreferencesSettingsPage() {
           {/* Language Section */}
           <section className="space-y-4">
             <div className="flex items-center gap-3">
-              <div className="w-8 h-8 rounded-lg bg-indigo-100 flex items-center justify-center">
-                <svg className="w-5 h-5 text-indigo-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <div className="w-8 h-8 rounded-lg bg-indigo-100 dark:bg-indigo-950 flex items-center justify-center">
+                <svg className="w-5 h-5 text-indigo-600 dark:text-indigo-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 5h12M9 3v2m1.048 9.5A18.022 18.022 0 016.412 9m6.088 9h7M11 21l5-10 5 10M12.751 5C11.783 10.77 8.07 15.61 3 18.129" />
                 </svg>
               </div>
               <div>
-                <h3 className="text-base font-semibold text-gray-900">Language</h3>
-                <p className="text-sm text-gray-500">Select your preferred language</p>
+                <h3 className="text-base font-semibold text-foreground">Language</h3>
+                <p className="text-sm text-muted-foreground">Select your preferred language</p>
               </div>
             </div>
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               <RadioOption
                 checked={language === 'en'}
-                onChange={() => setLanguage('en')}
+                onChange={() => {
+                  clearSuccessTimer();
+                  setLanguage('en');
+                  setSuccess(false);
+                }}
                 label="English"
                 description="Default language"
                 icon={
@@ -134,7 +212,11 @@ export default function PreferencesSettingsPage() {
               />
               <RadioOption
                 checked={language === 'hi'}
-                onChange={() => setLanguage('hi')}
+                onChange={() => {
+                  clearSuccessTimer();
+                  setLanguage('hi');
+                  setSuccess(false);
+                }}
                 label="हिंदी (Hindi)"
                 description="भारतीय भाषा"
                 icon={
@@ -151,20 +233,20 @@ export default function PreferencesSettingsPage() {
           
           <section className="space-y-4">
             <div className="flex items-center gap-3">
-              <div className="w-8 h-8 rounded-lg bg-blue-100 flex items-center justify-center">
-                <svg className="w-5 h-5 text-blue-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <div className="w-8 h-8 rounded-lg bg-blue-100 dark:bg-blue-950 flex items-center justify-center">
+                <svg className="w-5 h-5 text-blue-600 dark:text-blue-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 21a4 4 0 01-4-4V5a2 2 0 012-2h4a2 2 0 012 2v12a4 4 0 01-4 4zm0 0h12a2 2 0 002-2v-4a2 2 0 00-2-2h-2.343M11 7.343l1.657-1.657a2 2 0 012.828 0l2.829 2.829a2 2 0 010 2.828l-8.486 8.485M7 17h.01" />
                 </svg>
               </div>
               <div>
-                <h3 className="text-base font-semibold text-gray-900">Appearance</h3>
-                <p className="text-sm text-gray-500">Choose how the app looks</p>
+                <h3 className="text-base font-semibold text-foreground">Appearance</h3>
+                <p className="text-sm text-muted-foreground">Choose how the app looks</p>
               </div>
             </div>
             <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
               <RadioOption
-                checked={theme === 'light'}
-                onChange={() => setTheme('light')}
+                checked={selectedTheme === 'light'}
+                onChange={() => handleThemeSelect('light')}
                 label="Light"
                 description="Bright and clear"
                 icon={
@@ -174,8 +256,8 @@ export default function PreferencesSettingsPage() {
                 }
               />
               <RadioOption
-                checked={theme === 'dark'}
-                onChange={() => setTheme('dark')}
+                checked={selectedTheme === 'dark'}
+                onChange={() => handleThemeSelect('dark')}
                 label="Dark"
                 description="Easy on the eyes"
                 icon={
@@ -185,8 +267,8 @@ export default function PreferencesSettingsPage() {
                 }
               />
               <RadioOption
-                checked={theme === 'system'}
-                onChange={() => setTheme('system')}
+                checked={selectedTheme === 'system'}
+                onChange={() => handleThemeSelect('system')}
                 label="System"
                 description="Auto adjust"
                 icon={
@@ -203,45 +285,45 @@ export default function PreferencesSettingsPage() {
           
           <section className="space-y-4">
             <div className="flex items-center gap-3">
-              <div className="w-8 h-8 rounded-lg bg-purple-100 flex items-center justify-center">
-                <svg className="w-5 h-5 text-purple-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <div className="w-8 h-8 rounded-lg bg-accent flex items-center justify-center">
+                <svg className="w-5 h-5 text-primary" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 3v4M3 5h4M6 17v4m-2-2h4m5-16l2.286 6.857L21 12l-5.714 2.143L13 21l-2.286-6.857L5 12l5.714-2.143L13 3z" />
                 </svg>
               </div>
               <div>
-                <h3 className="text-base font-semibold text-gray-900">More Options</h3>
-                <p className="text-sm text-gray-500">Additional customization coming soon</p>
+                <h3 className="text-base font-semibold text-foreground">More Options</h3>
+                <p className="text-sm text-muted-foreground">Additional customization coming soon</p>
               </div>
             </div>
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              <div className="flex items-center justify-between p-4 rounded-xl border border-gray-200 bg-gray-50">
+              <div className="flex items-center justify-between p-4 rounded-xl border border-border bg-muted">
                 <div className="flex items-center gap-3">
-                  <svg className="w-5 h-5 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <svg className="w-5 h-5 text-muted-foreground" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9" />
                   </svg>
-                  <span className="text-sm font-medium text-gray-500">Sound Effects</span>
+                  <span className="text-sm font-medium text-muted-foreground">Sound Effects</span>
                 </div>
-                <span className="text-xs text-gray-400 bg-gray-200 px-2 py-1 rounded">Soon</span>
+                <span className="text-xs text-muted-foreground bg-background px-2 py-1 rounded">Soon</span>
               </div>
-              <div className="flex items-center justify-between p-4 rounded-xl border border-gray-200 bg-gray-50">
+              <div className="flex items-center justify-between p-4 rounded-xl border border-border bg-muted">
                 <div className="flex items-center gap-3">
-                  <svg className="w-5 h-5 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <svg className="w-5 h-5 text-muted-foreground" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
                   </svg>
-                  <span className="text-sm font-medium text-gray-500">Date & Time Format</span>
+                  <span className="text-sm font-medium text-muted-foreground">Date & Time Format</span>
                 </div>
-                <span className="text-xs text-gray-400 bg-gray-200 px-2 py-1 rounded">Soon</span>
+                <span className="text-xs text-muted-foreground bg-background px-2 py-1 rounded">Soon</span>
               </div>
             </div>
           </section>
 
           {/* Success Message */}
           {success && (
-            <div className="flex items-start gap-3 bg-green-50 border border-green-200 rounded-lg px-4 py-3">
-              <svg className="w-5 h-5 text-green-500 flex-shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <div className="flex items-start gap-3 bg-green-50 dark:bg-green-950/50 border border-green-200 dark:border-green-800 rounded-lg px-4 py-3">
+              <svg className="w-5 h-5 text-green-500 dark:text-green-400 flex-shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
               </svg>
-              <span className="text-sm text-green-700">Preferences saved successfully!</span>
+              <span className="text-sm text-green-700 dark:text-green-400">Preferences saved successfully!</span>
             </div>
           )}
 
@@ -256,8 +338,9 @@ export default function PreferencesSettingsPage() {
               variant="outline"
               className="w-full sm:w-auto"
               onClick={() => {
+                clearSuccessTimer();
                 setLanguage('en');
-                setTheme('system');
+                handleThemeSelect('system');
               }}
             >
               Reset to Default

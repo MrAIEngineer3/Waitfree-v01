@@ -3,6 +3,8 @@ import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import React from 'react';
 import SiteFooter from './SiteFooter';
+import Logo from '../../components/Logo';
+import { useJoinScanner } from './JoinScannerProvider';
 
 interface PatientShellProps { children: React.ReactNode; }
 
@@ -13,6 +15,7 @@ const nav = [
 
 export default function PatientShell({ children }: PatientShellProps) {
   const pathname = usePathname();
+  const { openScanner } = useJoinScanner();
   return (
     <div className="min-h-screen flex flex-col relative overflow-x-hidden">
       {/* Decorative gradient mesh overlay with reduced spread to avoid horizontal scroll */}
@@ -26,30 +29,24 @@ export default function PatientShell({ children }: PatientShellProps) {
         <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
           <div className="my-4 glass-card rounded-full flex items-center justify-between p-2 shadow-sm">
             <Link href="/" className="flex items-center gap-2 pl-4">
-              <svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-                <path d="M12 2L2 7L12 12L22 7L12 2Z" stroke="#007CF0" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
-                <path d="M2 17L12 22L22 17" stroke="#00DFD8" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
-                <path d="M2 12L12 17L22 12" stroke="#00A2E4" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
-              </svg>
-              <span className="font-bold text-lg text-gray-900">Waitfree</span>
+              <Logo className="text-gray-900" />
             </Link>
             <nav className="flex items-center gap-1.5">
               {nav.map(item => {
-                const active = pathname === item.href;
-                
-                // Special handling for "Join Queue" when on home page
-                if (item.label === 'Join Queue' && pathname === '/') {
+                if (item.label === 'Join Queue') {
                   return (
                     <button
                       key={item.href}
-                      onClick={() => window.scrollTo({ top: 0, behavior: 'smooth' })}
-                      className={`px-4 py-2 text-sm font-medium rounded-full transition-colors ${active ? 'text-white bg-gray-900' : 'text-gray-600 hover:text-gray-900 hover:bg-gray-200/50'}`}
+                      type="button"
+                      onClick={openScanner}
+                      className="px-4 py-2 text-sm font-medium rounded-full transition-colors text-gray-600 hover:text-gray-900 hover:bg-gray-200/50 focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-gray-900"
                     >
                       {item.label}
                     </button>
                   );
                 }
-                
+
+                const active = pathname === item.href;
                 return (
                   <Link
                     key={item.href}

@@ -1,7 +1,7 @@
 "use client";
 import { onAuthStateChanged } from 'firebase/auth';
 import type { Timestamp, Unsubscribe } from 'firebase/firestore';
-import { doc, getDoc, onSnapshot, serverTimestamp, setDoc } from 'firebase/firestore';
+import { collection, doc, getDoc, getDocs, limit, onSnapshot, query, serverTimestamp, setDoc, where } from 'firebase/firestore';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { auth, db } from '../lib/firebase';
 import { clearClinicCache, prefetchValue, setCachedValue } from '../lib/settingsCache';
@@ -39,6 +39,7 @@ interface UserRecord {
 
 interface ClinicRecord {
   name?: string | null;
+  shareCode?: string | null;
 }
 
 interface Doctor {
@@ -85,6 +86,7 @@ export default function ClinicContextProvider({ children }: ClinicContextProvide
   const [doctor, setDoctor] = useState<Doctor | null>(null);
   const [queue, setQueue] = useState<Queue | null>(null);
   const [clinicId, setClinicId] = useState<string | null>(null);
+  const [clinicShareCode, setClinicShareCode] = useState<string | null>(null);
   const [doctorId, setDoctorId] = useState<string | null>(null);
   const [clinicName, setClinicName] = useState<string | null>(null);
   const [notificationSettings, setNotificationSettings] = useState<NotificationSettingsDoc | null | undefined>(undefined);
@@ -115,6 +117,53 @@ export default function ClinicContextProvider({ children }: ClinicContextProvide
       if (process.env.NODE_ENV === 'development') {
         const reason = isPermissionDeniedError(error) ? 'permission-denied' : 'unknown';
         console.warn('[ClinicContext] Failed to prefetch notification settings', reason, error);
+      }
+    }
+  }, []);
+
+  const loadClinicShareCode = useCallback(async (clinic: string) => {
+    const key = ['clinicShareCodes', clinic];
+    const findActiveShareCode = (rows: Array<{ id: string; data: Record<string, unknown> | undefined }>) => {
+      for (const row of rows) {
+        const data = row.data ?? {};
+        const statusRaw = typeof data.status === 'string' ? data.status.toLowerCase() : 'active';
+        const disabled = data.disabled === true;
+        if (!disabled && statusRaw !== 'disabled' && statusRaw !== 'revoked') {
+          return row.id;
+        }
+      }
+      return null;
+    };
+
+    try {
+      const code = await prefetchValue<string | null>(
+        key,
+        async () => {
+          const codes = collection(db, 'clinicShareCodes');
+          const canonicalQuery = query(codes, where('canonicalClinicId', '==', clinic), limit(5));
+          const canonicalSnap = await getDocs(canonicalQuery);
+          const canonical = findActiveShareCode(canonicalSnap.docs.map((docSnap) => ({ id: docSnap.id, data: docSnap.data() as Record<string, unknown> | undefined })));
+          if (canonical) {
+            return canonical;
+          }
+
+          const legacyQuery = query(codes, where('clinicId', '==', clinic), limit(5));
+          const legacySnap = await getDocs(legacyQuery);
+          return findActiveShareCode(legacySnap.docs.map((docSnap) => ({ id: docSnap.id, data: docSnap.data() as Record<string, unknown> | undefined })));
+        },
+        { freshMs: 5 * 60_000 }
+      );
+
+      if (latestClinicRef.current === clinic) {
+        setClinicShareCode(code ? code.toUpperCase() : null);
+      }
+    } catch (error) {
+      if (latestClinicRef.current === clinic) {
+        setClinicShareCode(null);
+      }
+      if (process.env.NODE_ENV === 'development') {
+        const reason = isPermissionDeniedError(error) ? 'permission-denied' : 'unknown';
+        console.warn('[ClinicContext] Failed to load clinic share code', reason, error);
       }
     }
   }, []);
@@ -220,6 +269,7 @@ export default function ClinicContextProvider({ children }: ClinicContextProvide
         }
         latestClinicRef.current = null;
         setClinicId(null);
+        setClinicShareCode(null);
         setDoctorId(null);
         setDoctor(null);
         setQueue(null);
@@ -245,6 +295,7 @@ export default function ClinicContextProvider({ children }: ClinicContextProvide
           setDoctor(null);
           setQueue(null);
           setClinicName(null);
+          setClinicShareCode(null);
           setNotificationSettings(undefined);
           return;
         }
@@ -255,18 +306,27 @@ export default function ClinicContextProvider({ children }: ClinicContextProvide
           }
           latestClinicRef.current = nextClinicId;
           setNotificationSettings(undefined);
+          setClinicShareCode(null);
           void loadNotificationSettings(nextClinicId);
+          void loadClinicShareCode(nextClinicId);
         }
 
         unsubscribeClinic = detach(unsubscribeClinic);
         const clinicRef = doc(db, 'clinics', nextClinicId);
         unsubscribeClinic = onSnapshot(clinicRef, (clinicSnap) => {
+          const cacheKey = ['clinicShareCodes', nextClinicId];
           if (!clinicSnap.exists()) {
             setClinicName(null);
+            setClinicShareCode(null);
+            setCachedValue(cacheKey, null);
             return;
           }
           const clinicData = (clinicSnap.data() as ClinicRecord | undefined) ?? {};
           setClinicName(clinicData.name ?? null);
+          const shareCodeRaw = typeof clinicData.shareCode === 'string' ? clinicData.shareCode.trim() : '';
+          const normalizedShareCode = shareCodeRaw ? shareCodeRaw.replace(/\s+/g, '').toUpperCase() : null;
+          setClinicShareCode(normalizedShareCode);
+          setCachedValue(cacheKey, normalizedShareCode);
         });
 
         unsubscribeDoctor = detach(unsubscribeDoctor);
@@ -299,11 +359,12 @@ export default function ClinicContextProvider({ children }: ClinicContextProvide
       unsubscribeClinic = detach(unsubscribeClinic);
       unsubscribeUserDoc = detach(unsubscribeUserDoc);
     };
-  }, [loadNotificationSettings, todayKey]);
+  }, [loadNotificationSettings, loadClinicShareCode, todayKey]);
 
   const contextValue = useMemo(
     () => ({
       clinicId,
+      clinicShareCode,
       clinicName,
       doctorId,
       doctorName: doctor?.name ?? null,
@@ -313,7 +374,7 @@ export default function ClinicContextProvider({ children }: ClinicContextProvide
       notificationSettings,
       reloadNotificationSettings: refreshNotificationSettings,
     }),
-    [clinicId, clinicName, doctor?.name, doctor?.specialty, doctorId, queue, notificationSettings, refreshNotificationSettings]
+    [clinicId, clinicShareCode, clinicName, doctor?.name, doctor?.specialty, doctorId, queue, notificationSettings, refreshNotificationSettings]
   );
 
   return <ClinicContext.Provider value={contextValue}>{children}</ClinicContext.Provider>;

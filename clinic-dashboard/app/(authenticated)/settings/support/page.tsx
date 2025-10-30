@@ -14,8 +14,8 @@ export default function SupportSettingsPage() {
           </svg>
         </div>
         <div className="flex-1">
-          <h1 className="text-2xl font-bold tracking-tight text-gray-900">Support</h1>
-          <p className="text-sm text-gray-600 mt-1">Find answers or get in touch with our team</p>
+          <h1 className="text-2xl font-bold tracking-tight text-foreground">Support</h1>
+          <p className="text-sm text-muted-foreground mt-1">Find answers or get in touch with our team</p>
         </div>
       </div>
 
@@ -24,16 +24,16 @@ export default function SupportSettingsPage() {
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         <Card variant="outline">
           <CardContent className="lg:col-span-2 space-y-4 pt-6">
-            <h2 className="text-base font-semibold">FAQ</h2>
-            <ul className="divide-y divide-sem-border">
+            <h2 className="text-base font-semibold text-foreground">FAQ</h2>
+            <ul className="divide-y divide-border">
               {[
                 { q: 'How do I add a new doctor?', a: 'Go to Settings → Doctors and click “Add Doctor”.' },
                 { q: 'Can I pause notifications?', a: 'Yes, under Settings → Notifications, toggle channels off anytime.' },
                 { q: 'Where can I download invoices?', a: 'Settings → Billing → Billing History → Download.' },
               ].map((f, idx) => (
                 <li key={idx} className="py-3">
-                  <div className="font-medium">{f.q}</div>
-                  <div className="text-sm text-gray-600">{f.a}</div>
+                  <div className="font-medium text-foreground">{f.q}</div>
+                  <div className="text-sm text-muted-foreground">{f.a}</div>
                 </li>
               ))}
             </ul>
@@ -42,11 +42,11 @@ export default function SupportSettingsPage() {
 
         <Card variant="outline">
           <CardContent className="space-y-4 pt-6">
-            <h2 className="text-base font-semibold">Contact Support</h2>
-            <p className="text-sm text-gray-600">Our team typically responds within a few hours.</p>
-            <div className="space-y-2 text-sm">
-              <div className="break-words">Email: support@waitfree.app</div>
-              <div>WhatsApp: +91 90000 00000</div>
+            <h2 className="text-base font-semibold text-foreground">Contact Support</h2>
+            <p className="text-sm text-muted-foreground">Our team typically responds within a few hours.</p>
+            <div className="space-y-2 text-sm text-foreground">
+              <div className="break-words">Email: docsetu.services@gmail.com</div>
+              <div>WhatsApp: +91-8817244374</div>
             </div>
             <Button variant="accent" className="w-full sm:w-auto">Start a conversation</Button>
           </CardContent>

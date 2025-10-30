@@ -46,8 +46,15 @@ export interface ClinicDoctorAvailabilityEntry {
   availability: DoctorAvailabilityPayload;
 }
 
+export interface ClinicSummary {
+  name: string | null;
+  address: string | null;
+  phone: string | null;
+}
+
 export interface ClinicDoctorAvailabilityResponse {
   clinicId: string;
+  clinic: ClinicSummary | null;
   count: number;
   doctors: ClinicDoctorAvailabilityEntry[];
   requestedDoctorIds?: string[];

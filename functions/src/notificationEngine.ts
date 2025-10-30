@@ -1,6 +1,7 @@
 import * as functions from 'firebase-functions/v1';
 import { sendNotification } from './notifier';
 import { admin } from './firebaseAdmin';
+import { isNotificationEnabled } from './settings/notificationPreferences';
 
 /**
  * Notification Engine (Phase 2)
@@ -44,6 +45,21 @@ export async function recomputeQueueNotifications(params: { clinicId: string; do
   if (!queueSnap.exists) {
     functions.logger.warn('Queue missing during recompute', params);
     return { skipped: true };
+  }
+
+  const tokenUpdatesAllowed = await isNotificationEnabled({
+    clinicId,
+    channel: 'whatsapp',
+    event: 'tokenUpdates'
+  });
+
+  if (!tokenUpdatesAllowed) {
+    functions.logger.info('Notification preferences disabled token updates; skipping queue recompute notifications', {
+      clinicId,
+      doctorId,
+      queueId
+    });
+    return { skipped: true, reason: 'token-updates-disabled' };
   }
   const qData: any = queueSnap.data() || {};
   const avgServiceMs: number | undefined = qData?.metrics?.avgServiceMs;

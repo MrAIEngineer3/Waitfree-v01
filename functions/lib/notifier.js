@@ -33,14 +33,16 @@ var __importStar = (this && this.__importStar) || (function () {
     };
 })();
 Object.defineProperty(exports, "__esModule", { value: true });
+exports.__setTwilioFactoryForTests = __setTwilioFactoryForTests;
 exports.sendNotification = sendNotification;
-exports.setStaffClaim = setStaffClaim;
 // Load local env for emulator
 const functions = __importStar(require("firebase-functions/v1"));
 require("./loadEnv");
 const firebaseAdmin_1 = require("./firebaseAdmin");
 const firestore_1 = require("firebase-admin/firestore");
+const phone_1 = require("./utils/phone");
 let twilioFactory = null;
+let twilioClient = null;
 function resolveTwilioFactory() {
     if (twilioFactory) {
         return twilioFactory;
@@ -54,19 +56,10 @@ function resolveTwilioFactory() {
         return null;
     }
 }
-// Phone number validation and formatting for WhatsApp
-function formatWhatsAppNumber(phone) {
-    // Remove all non-digit characters except +
-    let cleaned = phone.replace(/[^\d+]/g, '');
-    // If it doesn't start with +, assume Indian number and add +91
-    if (!cleaned.startsWith('+')) {
-        // Remove leading 0 if present (common in Indian numbers)
-        if (cleaned.startsWith('0')) {
-            cleaned = cleaned.substring(1);
-        }
-        cleaned = '+91' + cleaned;
-    }
-    return cleaned;
+// Exposed for tests to inject a stubbed Twilio factory without touching runtime code.
+function __setTwilioFactoryForTests(factory) {
+    twilioFactory = factory;
+    twilioClient = null;
 }
 // Resolve Patient PWA base URL from environment variables
 function getPatientPwaBaseUrl() {
@@ -129,18 +122,34 @@ function getTwilioClient() {
         functions.logger.info('Twilio client not configured (missing credentials)');
         return null; // Return null if credentials not available (for testing)
     }
+    if (twilioClient) {
+        return twilioClient;
+    }
     const factory = resolveTwilioFactory();
     if (!factory) {
         return null;
     }
-    return factory(accountSid, authToken);
+    twilioClient = factory(accountSid, authToken);
+    return twilioClient;
 }
 // Single exported sendNotification used by functions.
 // Supports both debug mode (local testing) and production WhatsApp via Twilio
 async function sendNotification(opts) {
     try {
         const messageContent = createWhatsAppMessage(opts.type, opts.payload);
-        const formattedPhone = formatWhatsAppNumber(opts.to);
+        let formattedPhone;
+        try {
+            formattedPhone = (0, phone_1.requireNormalizedPhone)(opts.to);
+        }
+        catch (error) {
+            const message = error instanceof phone_1.PhoneNormalizationError ? error.message : 'Invalid phone number';
+            functions.logger.warn('Notifier: skipping send due to invalid phone', {
+                to: opts.to,
+                type: opts.type,
+                message
+            });
+            return { ok: false, error: message };
+        }
         functions.logger.info('Notifier: sending', {
             to: opts.to,
             formatted: formattedPhone,
@@ -163,6 +172,33 @@ async function sendNotification(opts) {
         }
         catch (e) {
             functions.logger.warn('Failed to write debug notification to Firestore', e);
+        }
+        const normalizeFlag = (value) => {
+            if (!value) {
+                return false;
+            }
+            const normalized = value.toLowerCase();
+            return !['0', 'false', ''].includes(normalized);
+        };
+        const disableTwilioEnv = process.env.NOTIFIER_DISABLE_TWILIO;
+        const hasExplicitDisable = disableTwilioEnv !== undefined;
+        const explicitDisable = normalizeFlag(disableTwilioEnv);
+        const emulatorIndicators = [
+            process.env.FUNCTIONS_EMULATOR,
+            process.env.FIREBASE_AUTH_EMULATOR_HOST,
+            process.env.FIRESTORE_EMULATOR_HOST,
+            process.env.FIREBASE_STORAGE_EMULATOR_HOST,
+            process.env.FIREBASE_EMULATOR_HUB
+        ];
+        const runningInEmulator = emulatorIndicators.some((value) => normalizeFlag(value));
+        const isTwilioDisabled = hasExplicitDisable ? explicitDisable : runningInEmulator;
+        if (isTwilioDisabled) {
+            functions.logger.info('Twilio send skipped for local execution', {
+                to: formattedPhone,
+                type: opts.type,
+                reason: hasExplicitDisable ? 'NOTIFIER_DISABLE_TWILIO' : 'FUNCTIONS_EMULATOR'
+            });
+            return { ok: true, provider: 'disabled' };
         }
         // Try to send via Twilio WhatsApp if credentials are available
         const client = getTwilioClient();
@@ -206,16 +242,5 @@ async function sendNotification(opts) {
         return { ok: false, error: String(err) };
     }
 }
-// Optional admin helper for programmatic staff claim setting. Keep here so functions can reuse it if needed.
-async function setStaffClaim(uid, isStaff) {
-    try {
-        await firebaseAdmin_1.admin.auth().setCustomUserClaims(uid, { staff: isStaff });
-        return { success: true };
-    }
-    catch (err) {
-        functions.logger.error('setStaffClaim error', err);
-        throw err;
-    }
-}
-exports.default = { sendNotification, setStaffClaim };
+exports.default = { sendNotification };
 //# sourceMappingURL=notifier.js.map

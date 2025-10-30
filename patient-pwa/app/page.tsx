@@ -1,255 +1,15 @@
 "use client";
 import { useRouter } from 'next/navigation';
-import QrScanner from 'qr-scanner';
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useState } from 'react';
 
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
+import { useJoinScanner } from './components/JoinScannerProvider';
+import { buildJoinHref, parseClinicIdentifierFromText } from '@/lib/clinicIdentifier';
 
-// ===== QR CODE SCANNER =====
-interface QRCodeScannerProps {
-  onScan: (result: string) => void;
-  onError?: (error: Error) => void;
-  onCancel?: () => void;
-}
-
-function QRCodeScanner({ onScan, onError, onCancel }: QRCodeScannerProps) {
-  const videoRef = useRef<HTMLVideoElement>(null);
-  const qrScannerRef = useRef<QrScanner | null>(null);
-  const [isLoading, setIsLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-  const mountedRef = useRef(true);
-  const startingRef = useRef(false);
-  const onScanRef = useRef(onScan);
-  const onErrorRef = useRef(onError);
-
-  // Keep latest handlers without re-initializing the scanner
-  useEffect(() => { onScanRef.current = onScan; }, [onScan]);
-  useEffect(() => { onErrorRef.current = onError; }, [onError]);
-
-  useEffect(() => {
-    mountedRef.current = true;
-    let scanner: QrScanner | null = null;
-    const initialVideoEl = videoRef.current;
-
-    const initScanner = async () => {
-      if (!videoRef.current || !mountedRef.current) return;
-      if (startingRef.current) return; // prevent concurrent starts
-      startingRef.current = true;
-
-      try {
-        setError(null);
-
-        // Check if camera is available
-        const hasCamera = await QrScanner.hasCamera();
-        if (!hasCamera) {
-          throw new Error('No camera found on this device');
-        }
-
-        // Small delay to ensure the video element is fully attached/rendered
-        await new Promise(resolve => setTimeout(resolve, 80));
-
-        if (!videoRef.current || !mountedRef.current) return;
-
-        // Create scanner instance
-        scanner = new QrScanner(
-          videoRef.current,
-          (result) => {
-            if (!mountedRef.current) return;
-
-            // Clean up scanner before calling onScan
-            try {
-              scanner?.stop();
-              scanner?.destroy();
-            } catch {}
-            scanner = null;
-            qrScannerRef.current = null;
-
-            try { onScanRef.current?.(result.data); } catch (e) { console.error('onScan handler error', e); }
-          },
-          {
-            // Prefer environment camera (rear camera)
-            preferredCamera: 'environment',
-            // Highlight code outline
-            highlightScanRegion: true,
-            highlightCodeOutline: true,
-            // Return detailed scan result
-            returnDetailedScanResult: true,
-            // Calculate scan region for better performance
-            calculateScanRegion: (video) => {
-              const smallerDimension = Math.min(video.videoWidth, video.videoHeight);
-              const regionSize = Math.round(0.7 * smallerDimension);
-              return {
-                x: Math.round((video.videoWidth - regionSize) / 2),
-                y: Math.round((video.videoHeight - regionSize) / 2),
-                width: regionSize,
-                height: regionSize,
-              };
-            },
-          }
-        );
-
-        if (!mountedRef.current) {
-          try { scanner.destroy(); } catch {}
-          startingRef.current = false;
-          return;
-        }
-
-        qrScannerRef.current = scanner;
-
-        // Start scanning (QrScanner controls video.play internally)
-        await scanner.start();
-
-        if (mountedRef.current) {
-          setIsLoading(false);
-        }
-      } catch (error) {
-        console.error('Failed to initialize QR scanner:', error);
-        if (mountedRef.current) {
-          setIsLoading(false);
-          const errorMessage = error instanceof Error ? error.message : 'Failed to access camera';
-          setError(errorMessage);
-          try { onErrorRef.current?.(error as Error); } catch {}
-        }
-      } finally {
-        startingRef.current = false;
-      }
-    };
-
-    initScanner();
-
-    // Cleanup function
-    return () => {
-      mountedRef.current = false;
-      try {
-        scanner?.stop();
-        scanner?.destroy();
-      } catch {}
-      scanner = null;
-      try {
-        qrScannerRef.current?.stop();
-        qrScannerRef.current?.destroy();
-      } catch {}
-      qrScannerRef.current = null;
-      // Explicitly clear video srcObject to avoid lingering streams
-      if (initialVideoEl) {
-        try {
-          initialVideoEl.srcObject = null;
-        } catch {}
-      }
-    };
-  }, []);
-
-  const handleCancel = () => {
-    mountedRef.current = false;
-    if (qrScannerRef.current) {
-      qrScannerRef.current.destroy();
-      qrScannerRef.current = null;
-    }
-    onCancel?.();
-  };
-
-  const handleRetry = () => {
-    // Reset state and attempt to (re)start
-    setIsLoading(true);
-    setError(null);
-    mountedRef.current = true;
-    // We rely on the initial effect to run once. For retry, imperatively start if instance exists.
-    // If instance was destroyed due to error, we can create a fresh one by calling the same init path:
-    // Re-run minimal init only when no instance is present.
-    if (!qrScannerRef.current && videoRef.current && !startingRef.current) {
-      // Kick the effect's init logic by creating a microtask that sets startingRef and builds the scanner
-      // rather than duplicating logic here. The simplest safe approach is to trigger a tiny state tick
-      // that doesn't remount but causes no heavy re-render.
-      // However, our effect has empty deps, so we manually create an instance here mirroring init.
-      (async () => {
-        try {
-          startingRef.current = true;
-          const hasCamera = await QrScanner.hasCamera();
-          if (!hasCamera) throw new Error('No camera found on this device');
-          await new Promise(r => setTimeout(r, 80));
-          if (!videoRef.current) return;
-          const scanner = new QrScanner(
-            videoRef.current,
-            (result) => {
-              try { scanner.stop(); scanner.destroy(); } catch {}
-              qrScannerRef.current = null;
-              try { onScanRef.current?.(result.data); } catch (e) { console.error('onScan handler error', e); }
-            },
-            {
-              preferredCamera: 'environment',
-              highlightScanRegion: true,
-              highlightCodeOutline: true,
-              returnDetailedScanResult: true,
-              calculateScanRegion: (video) => {
-                const smaller = Math.min(video.videoWidth, video.videoHeight);
-                const size = Math.round(0.7 * smaller);
-                return { x: Math.round((video.videoWidth - size) / 2), y: Math.round((video.videoHeight - size) / 2), width: size, height: size };
-              },
-            }
-          );
-          qrScannerRef.current = scanner;
-          await scanner.start();
-          setIsLoading(false);
-        } catch (e) {
-          console.error('Retry failed to initialize scanner', e);
-          setIsLoading(false);
-          setError(e instanceof Error ? e.message : 'Failed to access camera');
-          try { onErrorRef.current?.(e as Error); } catch {}
-        } finally {
-          startingRef.current = false;
-        }
-      })();
-    }
-  };
-
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-background/95 backdrop-blur-md">
-      <Card className="w-full max-w-sm border-border/50 bg-card/95 backdrop-blur-sm shadow-2xl">
-        <CardContent className="flex flex-col items-center gap-4 p-6">
-          <div className="relative h-72 w-72 overflow-hidden rounded-2xl border-2 border-border/40 bg-black shadow-lg">
-            <video
-              ref={videoRef}
-              className="h-full w-full object-cover"
-              playsInline
-              muted
-            />
-            {isLoading && (
-              <div className="absolute inset-0 flex items-center justify-center bg-black/70 backdrop-blur-sm">
-                <div className="h-10 w-10 animate-spin rounded-full border-3 border-primary border-t-transparent" />
-              </div>
-            )}
-            {error && (
-              <div className="absolute inset-0 flex items-center justify-center bg-black/85 backdrop-blur-sm p-4">
-                <div className="space-y-2 text-center text-sm text-destructive">
-                  <div className="text-2xl">⚠️</div>
-                  <p className="font-medium">{error}</p>
-                </div>
-              </div>
-            )}
-          </div>
-          <p className="text-center text-sm font-medium text-muted-foreground">
-            {error ? 'Camera access required' : 'Point your camera at the QR code'}
-          </p>
-          <div className="flex w-full items-center gap-2">
-            {error && (
-              <Button type="button" variant="outline" className="flex-1" onClick={handleRetry}>
-                Retry
-              </Button>
-            )}
-            <Button type="button" variant={error ? "default" : "outline"} className="flex-1" onClick={handleCancel}>
-              {error ? 'Close' : 'Cancel'}
-            </Button>
-          </div>
-        </CardContent>
-      </Card>
-    </div>
-  );
-}
-
-// ===== CLINIC ID ENTRY =====
+// ===== CLINIC CODE ENTRY =====
 function ClinicIdEntry() {
   const router = useRouter();
   const [clinicId, setClinicId] = useState('');
@@ -258,14 +18,19 @@ function ClinicIdEntry() {
     e.preventDefault();
     const trimmed = clinicId.trim();
     if (!trimmed) return;
-    router.push(`/join?clinicId=${encodeURIComponent(trimmed)}`);
+  const parsed = parseClinicIdentifierFromText(trimmed, { preferSlugOnAmbiguous: true });
+    if (!parsed) {
+      router.push(`/join?clinicId=${encodeURIComponent(trimmed)}`);
+      return;
+    }
+    router.push(buildJoinHref(parsed));
   };
 
   return (
     <form onSubmit={goToJoin} className="flex w-full max-w-xs items-center gap-2">
       <Input
         type="text"
-        placeholder="Enter clinic ID"
+  placeholder="Enter clinic code"
         value={clinicId}
         onChange={(event) => setClinicId(event.target.value)}
         className="h-12 rounded-full bg-background/90 backdrop-blur-sm border-border/50 pl-5 pr-4 text-sm shadow-md focus-visible:shadow-lg focus-visible:ring-primary/50 transition-all"
@@ -309,33 +74,7 @@ function useScrollAnimation() {
 
 // ===== HERO SECTION =====
 function HeroSection() {
-  const [scanning, setScanning] = useState(false);
-  const router = useRouter();
-  
-  function extractClinicId(text: string): string | null {
-    const raw = (text || '').trim();
-    if (!raw) return null;
-    // If it's a URL, try to extract clinicId from query
-    try {
-      const url = new URL(raw);
-      const fromQuery = url.searchParams.get('clinicId') || url.searchParams.get('c');
-      if (fromQuery && /^[a-z0-9-]+$/i.test(fromQuery)) return fromQuery;
-      // If path-based pattern ever used: /join?clinicId=... already handled; otherwise ignore
-    } catch {
-      // Not a valid URL - could be a raw clinic id
-    }
-    // Fallback: if the scanned content looks like a clinic id, accept it
-    const m = raw.match(/^[a-z0-9-]{3,}$/i);
-    if (m) return raw;
-    // Last resort: attempt to parse query portion if it's something like clinicId=...
-    try {
-      const qIndex = raw.indexOf('?');
-      const qs = new URLSearchParams(qIndex >= 0 ? raw.slice(qIndex + 1) : raw);
-      const fromQs = qs.get('clinicId') || qs.get('c');
-      if (fromQs && /^[a-z0-9-]+$/i.test(fromQs)) return fromQs;
-  } catch {}
-    return null;
-  }
+  const { openScanner } = useJoinScanner();
 
   return (
     <section className="pt-8 sm:pt-12 pb-16 sm:pb-20 text-center">
@@ -369,7 +108,7 @@ function HeroSection() {
             size="lg"
             variant="accent"
             className="h-12 rounded-full px-8 shadow-xl hover:shadow-2xl hover:scale-[1.02] transition-all"
-            onClick={() => setScanning(true)}
+            onClick={openScanner}
           >
             <svg className="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v1m6 11h2m-6 0h-2v4m0-11v3m0 0h.01M12 12h4.01M16 20h4M4 12h4m12 0h.01M5 8h2a1 1 0 001-1V5a1 1 0 00-1-1H5a1 1 0 00-1 1v2a1 1 0 001 1zm12 0h2a1 1 0 001-1V5a1 1 0 00-1-1h-2a1 1 0 00-1 1v2a1 1 0 001 1zM5 20h2a1 1 0 001-1v-2a1 1 0 00-1-1H5a1 1 0 00-1 1v2a1 1 0 001 1z" />
@@ -379,37 +118,6 @@ function HeroSection() {
           <ClinicIdEntry />
         </div>
       </div>
-      {scanning && (
-        <QRCodeScanner
-          onScan={(text) => {
-            setScanning(false);
-            const cid = extractClinicId(text);
-            if (cid) {
-              router.push(`/join?clinicId=${encodeURIComponent(cid)}`);
-            } else {
-              // If it's a full URL to our join page, navigate directly as a fallback
-              try {
-                const u = new URL(text);
-                if (/\/join(\?|$)/.test(u.pathname)) {
-                  // Stay within app routing if same origin
-                  if (typeof window !== 'undefined' && u.origin === window.location.origin) {
-                    router.push(u.pathname + (u.search || ''));
-                  } else {
-                    window.location.href = u.toString();
-                  }
-                  return;
-                }
-              } catch {}
-              console.warn('QR scan did not contain a recognizable clinic link or ID');
-            }
-          }}
-          onCancel={() => setScanning(false)}
-          onError={(err) => {
-            console.error('QR scan error:', err);
-            setScanning(false);
-          }}
-        />
-      )}
     </section>
   );
 }
@@ -548,8 +256,8 @@ function HowItWorksSection() {
   const steps = [
     {
       number: 1,
-      title: 'Scan or Enter ID',
-      description: 'Join the queue instantly by scanning the clinic\'s QR code or entering their unique ID.'
+      title: 'Scan or Enter Code',
+      description: 'Join the queue instantly by scanning the clinic\'s QR code or entering their share code.'
     },
     {
       number: 2,

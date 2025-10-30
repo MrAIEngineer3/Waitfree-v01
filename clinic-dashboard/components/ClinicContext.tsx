@@ -17,6 +17,7 @@ interface QueueContextValue {
 
 interface ClinicContextType {
   clinicId: string | null;
+  clinicShareCode: string | null;
   clinicName: string | null;
   doctorId: string | null;
   doctorName: string | null;
@@ -29,6 +30,7 @@ interface ClinicContextType {
 
 const ClinicContext = createContext<ClinicContextType>({
   clinicId: null,
+  clinicShareCode: null,
   clinicName: null,
   doctorId: null,
   doctorName: null,

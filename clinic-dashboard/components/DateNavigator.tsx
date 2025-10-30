@@ -1,6 +1,8 @@
 "use client";
 import { Popover, PopoverContent, PopoverTrigger } from './ui/popover';
 import { Calendar } from './ui/calendar';
+import { Button } from './ui/Button';
+import { Badge } from './ui/Badge';
 import { useCallback, useState } from 'react';
 
 interface DateNavigatorProps {
@@ -67,29 +69,43 @@ export default function DateNavigator({ value, onChange, max, min, disableFuture
   };
 
   return (
-    <div className={"inline-flex items-center gap-0.5 " + (className || '')}>
-      <button
+    <div className={"inline-flex items-center gap-1 " + (className || '')}>
+      <Button
         type="button"
+        size="sm"
+        variant="outline"
         onClick={goPrev}
         disabled={prevDisabled}
         aria-label="Previous day"
-        className="h-6 w-6 flex items-center justify-center text-slate-600 bg-white hover:bg-slate-50 hover:text-slate-800 rounded-lg border border-slate-200 transition-all duration-200 disabled:opacity-40 disabled:cursor-not-allowed shadow-sm hover:shadow"
-      >‹</button>
+        className="h-8 w-8 p-0"
+      >
+        <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+          <path strokeLinecap="round" strokeLinejoin="round" d="M15 19l-7-7 7-7" />
+        </svg>
+      </Button>
+      
       <Popover open={open} onOpenChange={setOpen}>
         <PopoverTrigger asChild>
-          <button
+          <Button
             type="button"
+            size="sm"
+            variant="outline"
             aria-haspopup="dialog"
             aria-expanded={open}
-            className="h-6 min-w-[110px] font-mono text-slate-700 px-3 py-0.5 flex items-center justify-center rounded-lg bg-white border border-slate-200 hover:bg-slate-50 hover:border-slate-300 focus-visible:ring-2 focus-visible:ring-blue-500 text-xs transition-all duration-200 shadow-sm hover:shadow"
+            className="h-8 min-w-[140px] justify-center gap-2 font-medium"
           >
-            <span className="flex items-center gap-1.5">
-              <span className="text-blue-500">📅</span> {value}
-              {!isToday && <span className="inline-block text-[9px] uppercase tracking-wide text-slate-400 bg-slate-100 px-1.5 py-0.5 rounded-full">PAST</span>}
-            </span>
-          </button>
+            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
+            </svg>
+            <span>{value}</span>
+            {!isToday && (
+              <Badge variant="outline" className="ml-auto text-[9px] px-1 h-4">
+                PAST
+              </Badge>
+            )}
+          </Button>
         </PopoverTrigger>
-        <PopoverContent className="w-auto p-4">
+        <PopoverContent className="w-auto p-0" align="start">
           <Calendar
             mode="single"
             selected={new Date(value)}
@@ -98,25 +114,37 @@ export default function DateNavigator({ value, onChange, max, min, disableFuture
             disabled={(date) =>
               (min ? date < new Date(min) : false) || (max ? date > new Date(max) : false)
             }
-            className="text-lg"
           />
         </PopoverContent>
       </Popover>
-      <button
+      
+      <Button
         type="button"
+        size="sm"
+        variant="outline"
         onClick={goNext}
         disabled={nextDisabled}
         aria-label="Next day"
-        className="h-6 w-6 flex items-center justify-center text-slate-600 bg-white hover:bg-slate-50 hover:text-slate-800 rounded-lg border border-slate-200 transition-all duration-200 disabled:opacity-40 disabled:cursor-not-allowed shadow-sm hover:shadow"
-      >›</button>
+        className="h-8 w-8 p-0"
+      >
+        <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+          <path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" />
+        </svg>
+      </Button>
+      
       {showTodayButton && !isToday && (
-        <button
+        <Button
           type="button"
+          size="sm"
+          variant="default"
           onClick={goToday}
-          className="h-6 px-2 py-0.5 text-xs bg-gradient-to-r from-blue-500 to-blue-600 text-white hover:from-blue-600 hover:to-blue-700 border-0 rounded-lg transition-all duration-200 shadow-sm hover:shadow font-medium"
-        >Today</button>
+          className="h-8"
+        >
+          Today
+        </Button>
       )}
-      <span className="h-1.5 w-1.5 rounded-full bg-green-500 animate-pulse ml-1" aria-label="Live" />
+      
+      {/* Removed duplicate LIVE indicator - kept only in header */}
     </div>
   );
 }

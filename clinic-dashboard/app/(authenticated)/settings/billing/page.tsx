@@ -14,8 +14,8 @@ export default function BillingSettingsPage() {
           </svg>
         </div>
         <div className="flex-1">
-          <h1 className="text-2xl font-bold tracking-tight text-gray-900">Subscription & Billing</h1>
-          <p className="text-sm text-gray-600 mt-1">Manage your plan, payment methods, and invoices</p>
+          <h1 className="text-2xl font-bold tracking-tight text-foreground">Subscription & Billing</h1>
+          <p className="text-sm text-muted-foreground mt-1">Manage your plan, payment methods, and invoices</p>
         </div>
       </div>
 
@@ -26,8 +26,8 @@ export default function BillingSettingsPage() {
           <CardContent className="space-y-5 pt-6">
             <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-4">
               <div className="flex-1 min-w-0">
-                <h2 className="text-base font-semibold">Current Plan</h2>
-                <p className="text-sm text-gray-600 break-words">Professional — ₹999/month, renews on 28 Oct 2025</p>
+                <h2 className="text-base font-semibold text-foreground">Current Plan</h2>
+                <p className="text-sm text-muted-foreground break-words">Professional — ₹999/month, renews on 28 Oct 2025</p>
               </div>
               <div className="flex gap-2 flex-shrink-0">
                 <Button size="sm" variant="secondary">
@@ -38,7 +38,7 @@ export default function BillingSettingsPage() {
                 </Button>
               </div>
             </div>
-            <ul className="text-sm text-gray-700 list-disc pl-5">
+            <ul className="text-sm text-foreground list-disc pl-5">
               <li>Unlimited queues and appointments</li>
               <li>Automated reminders (WhatsApp/SMS/Email)</li>
               <li>Priority support</li>
@@ -48,11 +48,11 @@ export default function BillingSettingsPage() {
 
         <Card variant="outline">
           <CardContent className="space-y-4 pt-6">
-            <h2 className="text-base font-semibold">Payment Method</h2>
-            <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 rounded-md border border-sem-border p-4">
+            <h2 className="text-base font-semibold text-foreground">Payment Method</h2>
+            <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 rounded-md border border-border p-4">
               <div className="text-sm flex-1 min-w-0">
-                <div className="font-medium">Visa •••• 4242</div>
-                <div className="text-gray-600">Expires 04/27</div>
+                <div className="font-medium text-foreground">Visa •••• 4242</div>
+                <div className="text-muted-foreground">Expires 04/27</div>
               </div>
               <Button size="sm" variant="outline" className="flex-shrink-0 w-full sm:w-auto">
                 Update
@@ -67,11 +67,11 @@ export default function BillingSettingsPage() {
 
         <Card variant="outline">
           <CardContent className="space-y-4 pt-6">
-            <h2 className="text-base font-semibold">Billing History</h2>
+            <h2 className="text-base font-semibold text-foreground">Billing History</h2>
             <div className="overflow-x-auto -mx-6 px-6 sm:mx-0 sm:px-0">
               <table className="min-w-full text-sm">
               <thead>
-                <tr className="text-left text-gray-600">
+                <tr className="text-left text-muted-foreground">
                   <th className="py-2">Date</th>
                   <th className="py-2">Description</th>
                   <th className="py-2">Amount</th>
@@ -79,7 +79,7 @@ export default function BillingSettingsPage() {
                   <th className="py-2">Invoice</th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-sem-border">
+              <tbody className="divide-y divide-border">
                 {[1, 2, 3].map((i) => (
                   <tr key={i}>
                     <td className="py-2">28 Sep 2025</td>
