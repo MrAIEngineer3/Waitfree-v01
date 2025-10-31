@@ -39,7 +39,6 @@ interface UserRecord {
 
 interface ClinicRecord {
   name?: string | null;
-  shareCode?: string | null;
 }
 
 interface Doctor {
@@ -123,16 +122,64 @@ export default function ClinicContextProvider({ children }: ClinicContextProvide
 
   const loadClinicShareCode = useCallback(async (clinic: string) => {
     const key = ['clinicShareCodes', clinic];
+    const toMillis = (value: unknown): number | null => {
+      if (!value || typeof value !== 'object') {
+        return null;
+      }
+      const withToMillis = value as { toMillis?: () => number };
+      if (typeof withToMillis.toMillis === 'function') {
+        try {
+          return withToMillis.toMillis();
+        } catch {
+          return null;
+        }
+      }
+      const seconds = (value as { seconds?: unknown }).seconds;
+      if (typeof seconds === 'number') {
+        const nanosecondsRaw = (value as { nanoseconds?: unknown }).nanoseconds;
+        const nanoseconds = typeof nanosecondsRaw === 'number' ? nanosecondsRaw : 0;
+        return seconds * 1_000 + Math.floor(nanoseconds / 1_000_000);
+      }
+      if (value instanceof Date) {
+        return value.getTime();
+      }
+      return null;
+    };
+
     const findActiveShareCode = (rows: Array<{ id: string; data: Record<string, unknown> | undefined }>) => {
+      let bestId: string | null = null;
+      let bestPriority = -1;
+      let bestTimestamp = -1;
+
       for (const row of rows) {
         const data = row.data ?? {};
         const statusRaw = typeof data.status === 'string' ? data.status.toLowerCase() : 'active';
         const disabled = data.disabled === true;
-        if (!disabled && statusRaw !== 'disabled' && statusRaw !== 'revoked') {
-          return row.id;
+        if (disabled || statusRaw === 'disabled' || statusRaw === 'revoked') {
+          continue;
+        }
+
+        const issuedBy = typeof (data as { issuedBy?: unknown }).issuedBy === 'string';
+        const issuedAtValue = (data as { issuedAt?: unknown }).issuedAt;
+        const updatedAtValue = (data as { updatedAt?: unknown }).updatedAt;
+        const issuedAt = toMillis(issuedAtValue);
+        const updatedAt = toMillis(updatedAtValue);
+
+        const priority = issuedBy ? 3 : issuedAt !== null ? 2 : 1;
+        const latestTimestamp = issuedAt ?? updatedAt ?? 0;
+
+        if (
+          bestId === null
+          || priority > bestPriority
+          || (priority === bestPriority && latestTimestamp > bestTimestamp)
+        ) {
+          bestId = row.id;
+          bestPriority = priority;
+          bestTimestamp = latestTimestamp;
         }
       }
-      return null;
+
+      return bestId;
     };
 
     try {
@@ -142,14 +189,7 @@ export default function ClinicContextProvider({ children }: ClinicContextProvide
           const codes = collection(db, 'clinicShareCodes');
           const canonicalQuery = query(codes, where('canonicalClinicId', '==', clinic), limit(5));
           const canonicalSnap = await getDocs(canonicalQuery);
-          const canonical = findActiveShareCode(canonicalSnap.docs.map((docSnap) => ({ id: docSnap.id, data: docSnap.data() as Record<string, unknown> | undefined })));
-          if (canonical) {
-            return canonical;
-          }
-
-          const legacyQuery = query(codes, where('clinicId', '==', clinic), limit(5));
-          const legacySnap = await getDocs(legacyQuery);
-          return findActiveShareCode(legacySnap.docs.map((docSnap) => ({ id: docSnap.id, data: docSnap.data() as Record<string, unknown> | undefined })));
+          return findActiveShareCode(canonicalSnap.docs.map((docSnap) => ({ id: docSnap.id, data: docSnap.data() as Record<string, unknown> | undefined })));
         },
         { freshMs: 5 * 60_000 }
       );
@@ -174,10 +214,10 @@ export default function ClinicContextProvider({ children }: ClinicContextProvide
     }
     const path = ['clinics', clinicId, 'settings', 'notifications'];
     try {
-      const ref = doc(db, 'clinics', clinicId, 'settings', 'notifications');
-      const snap = await getDoc(ref);
-  const next = snap.exists() ? (snap.data() as NotificationSettingsDoc) : null;
-  setCachedValue(path, next);
+        const ref = doc(db, 'clinics', clinicId, 'settings', 'notifications');
+        const snap = await getDoc(ref);
+        const next = snap.exists() ? (snap.data() as NotificationSettingsDoc) : null;
+        setCachedValue(path, next);
       if (latestClinicRef.current === clinicId) {
         setNotificationSettings(next);
       }
@@ -272,9 +312,9 @@ export default function ClinicContextProvider({ children }: ClinicContextProvide
         setClinicShareCode(null);
         setDoctorId(null);
         setDoctor(null);
-        setQueue(null);
-  setClinicName(null);
-  setNotificationSettings(undefined);
+          setQueue(null);
+          setClinicName(null);
+          setNotificationSettings(undefined);
         return;
       }
 
@@ -323,10 +363,6 @@ export default function ClinicContextProvider({ children }: ClinicContextProvide
           }
           const clinicData = (clinicSnap.data() as ClinicRecord | undefined) ?? {};
           setClinicName(clinicData.name ?? null);
-          const shareCodeRaw = typeof clinicData.shareCode === 'string' ? clinicData.shareCode.trim() : '';
-          const normalizedShareCode = shareCodeRaw ? shareCodeRaw.replace(/\s+/g, '').toUpperCase() : null;
-          setClinicShareCode(normalizedShareCode);
-          setCachedValue(cacheKey, normalizedShareCode);
         });
 
         unsubscribeDoctor = detach(unsubscribeDoctor);

@@ -324,11 +324,12 @@ const normalizeClinicShareCode = (value) => {
         return null;
     }
     const compact = trimmed.replace(/\s+/g, '');
-    const normalized = compact.toUpperCase();
-    if (!/^[A-Z0-9-]{3,16}$/.test(normalized)) {
+    const alphanumeric = compact.replace(/-/g, '');
+    const normalized = alphanumeric.toUpperCase();
+    if (normalized.length !== 8 || /[^A-Z0-9]/.test(normalized)) {
         return null;
     }
-    return normalized;
+    return `${normalized.slice(0, 4)}-${normalized.slice(4)}`;
 };
 const loadClinicByShareCode = (shareCode) => {
     const existing = clinicShareCodeCache.get(shareCode);
@@ -408,23 +409,6 @@ const resolveClinicIdentifier = async (value, options = {}) => {
                 error: error instanceof Error ? { message: error.message, stack: error.stack } : String(error)
             });
             throw new functions.https.HttpsError('internal', 'Failed to resolve clinic code');
-        }
-        if (options.allowSlugFallback === false) {
-            throw new functions.https.HttpsError('not-found', 'Clinic code not recognized');
-        }
-        const fallbackSlug = sanitizeFirestoreId(requestedId);
-        if (fallbackSlug) {
-            functions.logger.debug('Clinic share code not found, falling back to slug', {
-                requestedId,
-                shareCodeNormalized,
-                fallbackSlug
-            });
-            return {
-                clinicId: fallbackSlug,
-                resolution: 'canonical',
-                shareCode: null,
-                requestedId
-            };
         }
         throw new functions.https.HttpsError('not-found', 'Clinic code not recognized');
     }
@@ -872,7 +856,7 @@ const joinQueueHandler = async (data, _context) => {
         if (!rawClinicId || !rawDoctorId || !patientData) {
             throw new functions.https.HttpsError('invalid-argument', 'Missing required fields: clinicId, doctorId, and patientData are required.');
         }
-        const clinicResolution = await resolveClinicIdentifier(rawClinicId, { allowSlugFallback: false });
+        const clinicResolution = await resolveClinicIdentifier(rawClinicId);
         const clinicId = clinicResolution.clinicId;
         const doctorId = sanitizeFirestoreId(rawDoctorId);
         if (!doctorId) {
@@ -2791,7 +2775,7 @@ const updateClinicSchedulingSettingsHandler = async (data, context) => {
 exports.updateClinicSchedulingSettings = createV2Callable(updateClinicSchedulingSettingsHandler);
 const baseRequestDoctorOnlineNotificationHandler = (0, requestDoctorOnlineNotification_1.createRequestDoctorOnlineNotificationHandler)();
 const requestDoctorOnlineNotificationHandler = async (data, context) => {
-    const clinicResolution = await resolveClinicIdentifier(data?.clinicId, { allowSlugFallback: false });
+    const clinicResolution = await resolveClinicIdentifier(data?.clinicId);
     const canonicalClinicId = clinicResolution.clinicId;
     if (clinicResolution.shareCode) {
         functions.logger.debug('requestDoctorOnlineNotification clinic resolved via share code', {
