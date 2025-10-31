@@ -317,7 +317,7 @@ export const buildBackfillPlan = async (
           plan.linksToAttach += 1;
 
           try {
-            const phoneHash = computePatientPhoneHash(normalizedPhone);
+            const phoneHash = await computePatientPhoneHash(normalizedPhone);
             const identityKey = `${clinicId}#${phoneHash.version}#${phoneHash.hash}`;
             identityKeys.add(identityKey);
 

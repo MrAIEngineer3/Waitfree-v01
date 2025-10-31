@@ -122,7 +122,9 @@ const runInBackground = (taskName, task) => {
 const regionalFunctions = functions.region('asia-south1');
 // Runtime options keep latency in check; warm pools opt-in via environment if required later.
 const callableTimeoutSeconds = 60;
-const callableMemory = '512MiB';
+const callableMemory = '256MiB';
+const callableCpu = 0.25;
+const callableMaxInstances = 1;
 const minInstancesEnv = process.env.FUNCTIONS_MIN_INSTANCES;
 const parsedMinInstances = minInstancesEnv ? Number(minInstancesEnv) : NaN;
 let warmPoolMinInstances;
@@ -136,7 +138,9 @@ else {
 const v2GlobalOptions = {
     region: 'asia-south1',
     timeoutSeconds: callableTimeoutSeconds,
-    memory: callableMemory
+    memory: callableMemory,
+    cpu: callableCpu,
+    maxInstances: callableMaxInstances
 };
 if (typeof warmPoolMinInstances === 'number') {
     v2GlobalOptions.minInstances = warmPoolMinInstances;
@@ -167,7 +171,7 @@ const adaptCallableContext = (request) => {
         rawRequest: request.rawRequest
     };
 };
-const createV2Callable = (handler) => (0, https_1.onCall)((request) => handler(request.data, adaptCallableContext(request)));
+const createV2Callable = (handler, options) => (0, https_1.onCall)(options ?? {}, (request) => handler(request.data, adaptCallableContext(request)));
 const mapSchedulingError = (error, action) => {
     if (error instanceof mutations_1.ValidationError) {
         throw new functions.https.HttpsError('invalid-argument', error.message);
@@ -674,7 +678,7 @@ const debugRuntimeFlagsHandler = async (_data, _ctx) => {
         resolverFlag
     };
 };
-exports.debugRuntimeFlags = createV2Callable(debugRuntimeFlagsHandler);
+exports.debugRuntimeFlags = createV2Callable(debugRuntimeFlagsHandler, { maxInstances: 1 });
 /** DEBUG: Show resolved Patient PWA base URL */
 const debugPatientPwaBaseUrlHandler = async (_data, _ctx) => {
     await ensureDebugAccess(_ctx, null, false);
@@ -688,7 +692,7 @@ const debugPatientPwaBaseUrlHandler = async (_data, _ctx) => {
         return { error: e?.message || String(e) };
     }
 };
-exports.debugPatientPwaBaseUrl = createV2Callable(debugPatientPwaBaseUrlHandler);
+exports.debugPatientPwaBaseUrl = createV2Callable(debugPatientPwaBaseUrlHandler, { maxInstances: 1 });
 /** DEBUG: Force recompute for a queue (engine default-on). data: { clinicId, doctorId, queueId } */
 const debugRecomputeHandler = async (data, _ctx) => {
     const { clinicId, doctorId, queueId } = data || {};
@@ -710,7 +714,7 @@ const debugRecomputeHandler = async (data, _ctx) => {
     const result = await (0, notificationEngine_1.recomputeQueueNotifications)({ clinicId, doctorId, queueId });
     return { success: true, result };
 };
-exports.debugRecompute = createV2Callable(debugRecomputeHandler);
+exports.debugRecompute = createV2Callable(debugRecomputeHandler, { maxInstances: 1 });
 /** DEBUG: Fetch patient doc raw (no auth). data: { clinicId, doctorId, queueId, patientId } */
 const debugGetPatientHandler = async (data, _ctx) => {
     const { clinicId, doctorId, queueId, patientId } = data || {};
@@ -730,7 +734,7 @@ const debugGetPatientHandler = async (data, _ctx) => {
         return { found: false };
     return { found: true, data: snap.data() };
 };
-exports.debugGetPatient = createV2Callable(debugGetPatientHandler);
+exports.debugGetPatient = createV2Callable(debugGetPatientHandler, { maxInstances: 1 });
 // NOTE: Staff privilege checks are enforced via ensureStaffAccess for protected operations.
 // Simple HTTPS callable function example
 const pingHandler = async (data, context) => {
@@ -1441,18 +1445,34 @@ const getPatientViewHandler = async (data, _context) => {
     }
 };
 exports.getPatientView = createV2Callable(getPatientViewHandler);
+const isSignBlobPermissionError = (error) => {
+    if (!error || typeof error !== 'object') {
+        return false;
+    }
+    const candidate = error;
+    const code = candidate.errorInfo?.code ?? candidate.code;
+    if (code !== 'auth/insufficient-permission') {
+        return false;
+    }
+    const message = candidate.errorInfo?.message ?? candidate.message;
+    return typeof message === 'string' && message.includes('iam.serviceAccounts.signBlob');
+};
 const createPatientSessionHandler = async (data, _context) => {
+    const { clinicId: rawClinicId, doctorId: rawDoctorId, queueId: rawQueueId, patientId: rawPatientId, token } = data || {};
+    let clinicId = null;
+    let doctorId = null;
+    let queueId = null;
+    let patientId = null;
     try {
-        const { clinicId: rawClinicId, doctorId: rawDoctorId, queueId: rawQueueId, patientId: rawPatientId, token } = data || {};
         if (!rawClinicId || !rawDoctorId || !rawQueueId || !rawPatientId || !token) {
             throw new functions.https.HttpsError('invalid-argument', 'Missing required fields: clinicId, doctorId, queueId, patientId, token');
         }
         const clinicResolution = await resolveClinicIdentifier(rawClinicId, { allowShareCodeLookup: false });
-        const clinicId = clinicResolution.clinicId;
-        const doctorId = sanitizeFirestoreId(rawDoctorId);
-        const queueId = sanitizeFirestoreId(rawQueueId);
-        const patientId = sanitizeFirestoreId(rawPatientId);
-        if (!doctorId || !queueId || !patientId) {
+        clinicId = clinicResolution.clinicId;
+        doctorId = sanitizeFirestoreId(rawDoctorId);
+        queueId = sanitizeFirestoreId(rawQueueId);
+        patientId = sanitizeFirestoreId(rawPatientId);
+        if (!clinicId || !doctorId || !queueId || !patientId) {
             throw new functions.https.HttpsError('invalid-argument', 'Invalid doctor, queue, or patient identifier');
         }
         const db = firebaseAdmin_1.admin.firestore();
@@ -1494,6 +1514,20 @@ const createPatientSessionHandler = async (data, _context) => {
         };
     }
     catch (error) {
+        if (isSignBlobPermissionError(error)) {
+            functions.logger.error('createPatientSession missing iam.serviceAccounts.signBlob permission', {
+                clinicId: clinicId ?? null,
+                doctorId: doctorId ?? null,
+                queueId: queueId ?? null,
+                patientId: patientId ?? null,
+                rawClinicId: rawClinicId ?? null,
+                rawDoctorId: rawDoctorId ?? null,
+                rawQueueId: rawQueueId ?? null,
+                rawPatientId: rawPatientId ?? null,
+                errorMessage: error instanceof Error ? error.message : String(error)
+            });
+            throw new functions.https.HttpsError('failed-precondition', 'Service misconfiguration detected. Please try again in a few minutes.');
+        }
         functions.logger.error('Error in createPatientSession function:', error);
         if (error instanceof functions.https.HttpsError) {
             throw error;

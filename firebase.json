@@ -1,7 +1,10 @@
 {
   "functions": {
     "source": "functions",
-    "runtime": "nodejs22"
+    "runtime": "nodejs22",
+    "secrets": [
+      "PATIENT_PHONE_HASH_SECRET"
+    ]
   },
   "firestore": {
     "rules": "firestore.rules",

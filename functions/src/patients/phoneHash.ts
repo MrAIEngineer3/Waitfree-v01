@@ -1,11 +1,12 @@
 import crypto from 'crypto';
 import { admin } from '../firebaseAdmin';
+import { loadSecretBuffer } from '../secrets';
 import { PATIENT_PHONE_LOOKUP_COLLECTION, PHONE_HASH_DEFAULT_VERSION } from './constants';
 import type { PatientPhoneHash } from './types';
 
 const hashSecretCache = new Map<string, Buffer>();
 
-const resolveSecretForVersion = (version: string): Buffer => {
+const resolveSecretForVersion = async (version: string): Promise<Buffer> => {
   const cacheKey = version;
   const cached = hashSecretCache.get(cacheKey);
   if (cached) {
@@ -13,12 +14,11 @@ const resolveSecretForVersion = (version: string): Buffer => {
   }
 
   const envName = version === 'v1' ? 'PATIENT_PHONE_HASH_SECRET' : `PATIENT_PHONE_HASH_SECRET_${version.toUpperCase()}`;
-  const secret = process.env[envName];
-  if (!secret || secret.trim().length === 0) {
+  const buffer = await loadSecretBuffer(envName);
+  if (!buffer) {
     throw new Error(`Missing phone hash secret for version ${version}. Set ${envName}.`);
   }
 
-  const buffer = Buffer.from(secret, 'utf8');
   hashSecretCache.set(cacheKey, buffer);
   return buffer;
 };
@@ -31,9 +31,9 @@ const resolveActiveVersion = (): string => {
   return PHONE_HASH_DEFAULT_VERSION;
 };
 
-export const computePatientPhoneHash = (normalizedPhone: string, version?: string): PatientPhoneHash => {
+export const computePatientPhoneHash = async (normalizedPhone: string, version?: string): Promise<PatientPhoneHash> => {
   const hashVersion = version ?? resolveActiveVersion();
-  const secret = resolveSecretForVersion(hashVersion);
+  const secret = await resolveSecretForVersion(hashVersion);
   const hmac = crypto.createHmac('sha256', secret);
   hmac.update(normalizedPhone);
   const digest = hmac.digest('hex');

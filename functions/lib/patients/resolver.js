@@ -30,7 +30,7 @@ const resolvePatientForQueue = async (request) => {
     const db = firebaseAdmin_1.admin.firestore();
     let phoneHash = null;
     if (phone) {
-        phoneHash = (0, phoneHash_1.computePatientPhoneHash)(phone);
+        phoneHash = await (0, phoneHash_1.computePatientPhoneHash)(phone);
     }
     const serverTimestamp = firestore_1.FieldValue.serverTimestamp();
     const nowTimestamp = firestore_1.Timestamp.now();

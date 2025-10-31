@@ -206,7 +206,7 @@ const formatResumeToken = (info) => {
                     };
                     let phoneHash = null;
                     try {
-                        phoneHash = (0, phoneHash_1.computePatientPhoneHash)(normalizedPhone);
+                        phoneHash = await (0, phoneHash_1.computePatientPhoneHash)(normalizedPhone);
                     }
                     catch (error) {
                         invalidPhones += 1;

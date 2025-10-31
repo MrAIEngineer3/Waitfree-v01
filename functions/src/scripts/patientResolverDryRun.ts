@@ -233,7 +233,7 @@ const formatResumeToken = (info: { clinicId: string; doctorId: string; queueId: 
 
           let phoneHash: PatientPhoneHash | null = null;
           try {
-            phoneHash = computePatientPhoneHash(normalizedPhone);
+            phoneHash = await computePatientPhoneHash(normalizedPhone);
           } catch (error) {
             invalidPhones += 1;
             console.warn('Failed to compute phone hash', {
