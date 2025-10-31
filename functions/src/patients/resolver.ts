@@ -50,7 +50,7 @@ export const resolvePatientForQueue = async (request: PatientResolverRequest): P
   const db = admin.firestore();
   let phoneHash: PatientPhoneHash | null = null;
   if (phone) {
-    phoneHash = computePatientPhoneHash(phone);
+    phoneHash = await computePatientPhoneHash(phone);
   }
 
   const serverTimestamp = FieldValue.serverTimestamp();

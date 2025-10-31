@@ -251,7 +251,7 @@ const buildBackfillPlan = async (db, options) => {
                     normalizedPhones += 1;
                     plan.linksToAttach += 1;
                     try {
-                        const phoneHash = (0, phoneHash_1.computePatientPhoneHash)(normalizedPhone);
+                        const phoneHash = await (0, phoneHash_1.computePatientPhoneHash)(normalizedPhone);
                         const identityKey = `${clinicId}#${phoneHash.version}#${phoneHash.hash}`;
                         identityKeys.add(identityKey);
                         const existing = duplicateMap.get(identityKey);
