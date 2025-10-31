@@ -1,23 +1,23 @@
 "use client";
-import { Sheet, SheetContent, SheetTrigger } from './ui/sheet';
 import { signOut } from 'firebase/auth';
+import { doc, onSnapshot, type FirestoreError } from 'firebase/firestore';
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
 import { useEffect, useState } from 'react';
+import { auth, db } from '../lib/firebase';
 import { useClinicContext } from './ClinicContext';
 import ClinicJoinQR from './ClinicJoinQR';
 import DoctorPicker from './DoctorPicker';
 import DoctorStatusToggle from './DoctorStatusToggle';
 import EnvWarningBanner from './EnvWarningBanner';
+import Logo from './Logo';
 import ModernSidebar from './ModernSidebar';
-import { Badge } from './ui/Badge';
-import { Button } from './ui/Button';
 import { ThemeToggle } from './theme-toggle';
 import { Avatar, AvatarFallback, AvatarImage } from './ui/avatar';
-import { auth, db } from '../lib/firebase';
-import { doc, onSnapshot, type FirestoreError } from 'firebase/firestore';
+import { Badge } from './ui/Badge';
+import { Button } from './ui/Button';
 import { Separator } from './ui/separator';
-import Logo from './Logo';
+import { Sheet, SheetContent, SheetTrigger } from './ui/sheet';
 
 interface NavItem {
   label: string;
@@ -354,7 +354,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
                         <span className="text-sm font-medium text-foreground">Theme</span>
                         <ThemeToggle />
                       </div>
-                      {clinicId && (
+                      {clinicShareCode && (
                         <button
                           onClick={() => { 
                             setShowJoinQr(true);
@@ -409,21 +409,23 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
                   <h1 className="text-sm font-medium text-foreground truncate">
                     {clinicName || 'Clinic'}
                   </h1>
-                  {shareCodeDisplay ? (
-                    <Badge
-                      variant="secondary"
-                      className="hidden sm:inline-flex text-[10px] font-mono tracking-widest uppercase px-2 py-0.5"
-                    >
-                      {shareCodeDisplay}
-                    </Badge>
-                  ) : clinicId ? (
-                    <Badge
-                      variant="secondary"
-                      className="hidden sm:inline-flex text-[10px] font-mono uppercase px-2 py-0.5"
-                    >
-                      {clinicId}
-                    </Badge>
-                  ) : null}
+                  {clinicId && (
+                    shareCodeDisplay ? (
+                      <Badge
+                        variant="secondary"
+                        className="hidden sm:inline-flex text-[10px] font-mono tracking-widest uppercase px-2 py-0.5"
+                      >
+                        {shareCodeDisplay}
+                      </Badge>
+                    ) : (
+                      <Badge
+                        variant="secondary"
+                        className="hidden sm:inline-flex text-[10px] uppercase px-2 py-0.5 opacity-70"
+                      >
+                        Generating code…
+                      </Badge>
+                    )
+                  )}
                   {queueStatus && (
                     <Badge 
                       variant={queueStatus === 'active' ? 'success' : queueStatus === 'paused' ? 'warning' : 'destructive'}
@@ -450,7 +452,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
             
             {/* RIGHT: Action Buttons */}
             <div className="hidden md:flex items-center gap-2 flex-shrink-0">
-              {clinicId && (
+              {clinicShareCode && (
                 <Button
                   size="sm"
                   variant="ghost"
@@ -473,7 +475,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
 
             {/* Mobile - Minimal right section */}
             <div className="md:hidden flex items-center gap-2 flex-shrink-0">
-              {clinicId && (
+              {clinicShareCode && (
                 <Button
                   size="sm"
                   variant="ghost"

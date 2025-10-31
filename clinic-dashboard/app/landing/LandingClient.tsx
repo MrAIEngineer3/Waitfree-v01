@@ -3,12 +3,12 @@ import { onAuthStateChanged, User } from 'firebase/auth';
 import { doc, onSnapshot } from 'firebase/firestore';
 import { useRouter } from 'next/navigation';
 import { useCallback, useEffect, useRef, useState } from 'react';
+import Logo from '../../components/Logo';
 import { Badge } from '../../components/ui/Badge';
+import { BentoCard, BentoGrid } from '../../components/ui/bento-grid';
 import { Button } from '../../components/ui/Button';
 import { Card, CardContent } from '../../components/ui/Card';
 import { auth, db } from '../../lib/firebase';
-import Logo from '../../components/Logo';
-import { BentoCard, BentoGrid } from '../../components/ui/bento-grid';
 
 export default function LandingClient() {
   const router = useRouter();
@@ -23,52 +23,6 @@ export default function LandingClient() {
   const [mousePosition, setMousePosition] = useState({ x: 0, y: 0 });
   const heroRef = useRef<HTMLElement>(null);
   const isMapped = !!(mapping?.clinicId && mapping?.doctorId);
-  const socialLinks = [
-    { label: 'LinkedIn', href: 'https://www.linkedin.com', icon: (
-      <svg className="h-5 w-5" viewBox="0 0 24 24" aria-hidden="true" fill="currentColor">
-        <path d="M4.98 3.5C4.98 4.88 3.88 6 2.5 6S0 4.88 0 3.5 1.12 1 2.5 1s2.48 1.12 2.48 2.5zM.24 8.25h4.52V24H.24zM8.54 8.25h4.33v2.14h.06c.6-1.14 2.07-2.33 4.26-2.33 4.55 0 5.39 3 5.39 6.91V24h-4.7v-7.76c0-1.85-.03-4.23-2.58-4.23-2.58 0-2.98 2.02-2.98 4.1V24h-4.7z" />
-      </svg>
-    ) },
-    { label: 'Instagram', href: 'https://www.instagram.com', icon: (
-      <svg className="h-5 w-5" viewBox="0 0 24 24" aria-hidden="true" fill="currentColor">
-        <path d="M7 2C4.243 2 2 4.243 2 7v10c0 2.757 2.243 5 5 5h10c2.757 0 5-2.243 5-5V7c0-2.757-2.243-5-5-5H7zm0 2h10c1.654 0 3 1.346 3 3v10c0 1.654-1.346 3-3 3H7c-1.654 0-3-1.346-3-3V7c0-1.654 1.346-3 3-3zm10 1.5a1.5 1.5 0 100 3 1.5 1.5 0 000-3zM12 7a5 5 0 100 10 5 5 0 000-10zm0 2a3 3 0 110 6 3 3 0 010-6z" />
-      </svg>
-    ) },
-    { label: 'YouTube', href: 'https://www.youtube.com', icon: (
-      <svg className="h-5 w-5" viewBox="0 0 24 24" aria-hidden="true" fill="currentColor">
-        <path d="M21.8 8.001a2.748 2.748 0 00-1.936-1.949C18.225 5.666 12 5.666 12 5.666s-6.225 0-7.864.386A2.748 2.748 0 002.2 8.001C1.82 9.657 1.82 12 1.82 12s0 2.343.38 3.999a2.748 2.748 0 001.936 1.949c1.639.386 7.864.386 7.864.386s6.225 0 7.864-.386a2.748 2.748 0 001.936-1.949c.38-1.656.38-3.999.38-3.999s0-2.343-.38-3.999zM10.2 14.567V9.433L14.73 12l-4.53 2.567z" />
-      </svg>
-    ) }
-  ];
-  const footerNav = [
-    {
-      title: 'Product',
-      links: [
-        { label: 'Overview', href: '#features' },
-        { label: 'Live demos', href: '#how' },
-        { label: 'Pricing', href: '#contact' },
-        { label: 'Security', href: '#features' }
-      ]
-    },
-    {
-      title: 'Resources',
-      links: [
-        { label: 'Implementation', href: '#how' },
-        { label: 'Guides', href: '#problems' },
-        { label: 'Status', href: '#stats-section' },
-        { label: 'Support', href: '#contact' }
-      ]
-    },
-    {
-      title: 'Company',
-      links: [
-        { label: 'About', href: '#main' },
-        { label: 'Careers', href: '#contact' },
-        { label: 'Press', href: '#features' },
-        { label: 'Legal', href: '#privacy' }
-      ]
-    }
-  ];
 
   // Smooth scroll handler
   const handleSmoothScroll = useCallback((e: React.MouseEvent<HTMLAnchorElement>, targetId: string) => {

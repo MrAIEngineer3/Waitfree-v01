@@ -68,6 +68,22 @@ export default function ClinicJoinQR({ clinicId, clinicShareCode, className }: P
 
   const svgWrapperRef = useRef<HTMLDivElement>(null);
 
+  if (!shareCodeParam) {
+    return (
+      <div className={className}>
+        <div className="rounded-xl border border-border bg-card/70 backdrop-blur-sm shadow-sm overflow-hidden">
+          <div className="px-4 py-3 border-b border-border bg-gradient-to-r from-blue-50 to-indigo-50 dark:from-blue-950/30 dark:to-indigo-950/30">
+            <h3 className="text-sm font-semibold text-foreground">Patient Join QR</h3>
+            <p className="text-xs text-muted-foreground">Share code is being generated. Please check again in a few seconds.</p>
+          </div>
+          <div className="p-4 text-sm text-muted-foreground text-center">
+            We will show the QR and share code as soon as it is ready.
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   const copyLink = async () => {
     try {
       await navigator.clipboard.writeText(url);
@@ -100,8 +116,7 @@ export default function ClinicJoinQR({ clinicId, clinicShareCode, className }: P
         const pngUrl = canvas.toDataURL('image/png');
         const a = document.createElement('a');
         a.href = pngUrl;
-  const filenameId = shareCodeParam ?? clinicId;
-  a.download = `waitfree-join-${filenameId}.png`;
+        a.download = `waitfree-join-${shareCodeParam}.png`;
         document.body.appendChild(a);
         a.click();
         document.body.removeChild(a);
@@ -123,9 +138,7 @@ export default function ClinicJoinQR({ clinicId, clinicShareCode, className }: P
     const w = window.open('', '_blank', 'width=600,height=800');
     if (!w) return;
     const title = 'WaitFree Patient Join QR';
-    const metaBlock = shareCodeDisplay
-      ? `<div class="meta">Clinic Code: ${shareCodeDisplay}</div>`
-      : `<div class="meta">Clinic ID: ${clinicId}</div>`;
+    const metaBlock = `<div class="meta">Clinic Code: ${shareCodeDisplay}</div>`;
 
     const doc = `<!doctype html>
       <html>
@@ -172,24 +185,18 @@ export default function ClinicJoinQR({ clinicId, clinicShareCode, className }: P
           <div className="text-[11px] text-muted-foreground break-all text-center max-w-full">
             {url}
           </div>
-          {shareCodeDisplay ? (
-            <div className="text-xs font-semibold text-foreground text-center">
-              Clinic code: <span className="font-mono tracking-widest">{shareCodeDisplay}</span>
-            </div>
-          ) : (
-            <div className="text-xs font-semibold text-foreground text-center">
-              Clinic ID: <span className="font-mono">{clinicId}</span>
-            </div>
-          )}
+          <div className="text-xs font-semibold text-foreground text-center">
+            Clinic code: <span className="font-mono tracking-widest">{shareCodeDisplay}</span>
+          </div>
           <div className="flex gap-2 flex-wrap justify-center">
             <button onClick={copyLink} className="h-8 px-3 text-xs font-medium text-foreground bg-background hover:bg-accent border border-border rounded-lg shadow-sm">Copy link</button>
             <button onClick={downloadPng} className="h-8 px-3 text-xs font-medium text-foreground bg-background hover:bg-accent border border-border rounded-lg shadow-sm">Download PNG</button>
             <button onClick={printQR} className="h-8 px-3 text-xs font-medium text-white bg-blue-600 hover:bg-blue-700 dark:bg-blue-500 dark:hover:bg-blue-600 rounded-lg shadow-sm">Print</button>
           </div>
           <div className="text-[11px] text-muted-foreground text-center">
-            No scanner? Open the patient app and enter {shareCodeDisplay ? 'clinic code' : 'clinic ID'}:
+            No scanner? Open the patient app and enter the clinic code:
             {' '}
-            <span className="font-mono">{shareCodeDisplay ?? clinicId}</span>
+            <span className="font-mono">{shareCodeDisplay}</span>
           </div>
         </div>
       </div>

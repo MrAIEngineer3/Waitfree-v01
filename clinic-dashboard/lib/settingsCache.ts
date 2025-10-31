@@ -66,6 +66,12 @@ export function clearClinicCache(clinicId: string): void {
   }
 }
 
+export function clearCachedValue(pathSegments: string[]): void {
+  const key = makeKey(pathSegments);
+  dataCache.delete(key);
+  pendingLoads.delete(key);
+}
+
 export function primeCache<T>(pathSegments: string[], value: T): void {
   const key = makeKey(pathSegments);
   if (!dataCache.has(key)) {
