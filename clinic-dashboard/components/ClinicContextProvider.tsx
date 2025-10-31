@@ -93,6 +93,7 @@ export default function ClinicContextProvider({ children }: ClinicContextProvide
   const attemptedCreateRef = useRef<Set<string>>(new Set());
   const latestClinicRef = useRef<string | null>(null);
   const shareCodeRetryRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const latestShareCodeRef = useRef<string | null>(null);
 
   const loadNotificationSettings = useCallback(async (clinic: string) => {
     const path = ['clinics', clinic, 'settings', 'notifications'];
@@ -202,8 +203,9 @@ export default function ClinicContextProvider({ children }: ClinicContextProvide
             clearTimeout(shareCodeRetryRef.current);
             shareCodeRetryRef.current = null;
           }
-          setClinicShareCode(normalized);
-        } else {
+          setCachedValue(key, normalized);
+          setClinicShareCode((prev) => (prev === normalized ? prev : normalized));
+        } else if (!latestShareCodeRef.current) {
           clearCachedValue(key);
           if (shareCodeRetryRef.current) {
             clearTimeout(shareCodeRetryRef.current);
@@ -217,12 +219,18 @@ export default function ClinicContextProvider({ children }: ClinicContextProvide
       }
     } catch (error) {
       clearCachedValue(key);
-      if (shareCodeRetryRef.current) {
-        clearTimeout(shareCodeRetryRef.current);
-        shareCodeRetryRef.current = null;
-      }
-      if (latestClinicRef.current === clinic) {
-        setClinicShareCode(null);
+      if (!latestShareCodeRef.current) {
+        if (shareCodeRetryRef.current) {
+          clearTimeout(shareCodeRetryRef.current);
+        }
+        shareCodeRetryRef.current = setTimeout(() => {
+          if (latestClinicRef.current === clinic) {
+            void loadClinicShareCode(clinic);
+          }
+        }, 4000);
+        if (latestClinicRef.current === clinic) {
+          setClinicShareCode(null);
+        }
       }
       if (process.env.NODE_ENV === 'development') {
         const reason = isPermissionDeniedError(error) ? 'permission-denied' : 'unknown';
@@ -442,6 +450,10 @@ export default function ClinicContextProvider({ children }: ClinicContextProvide
       }
     };
   }, [loadNotificationSettings, loadClinicShareCode, todayKey]);
+
+  useEffect(() => {
+    latestShareCodeRef.current = clinicShareCode;
+  }, [clinicShareCode]);
 
   const contextValue = useMemo(
     () => ({
