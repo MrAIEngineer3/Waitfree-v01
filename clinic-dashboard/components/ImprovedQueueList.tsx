@@ -2,13 +2,13 @@
 
 import { collection, onSnapshot, query } from 'firebase/firestore';
 import { httpsCallable } from 'firebase/functions';
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { toast } from 'sonner';
 import { db, functions } from '../lib/firebase';
 import { queueProfilingEnabled, recordRender } from '../lib/profiling';
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "./ui/alert-dialog";
-import { Button } from './ui/Button';
 import { Badge } from './ui/Badge';
+import { Button } from './ui/Button';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from './ui/Table';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from './ui/tabs';
 
@@ -150,7 +150,7 @@ export default function ImprovedQueueList({
     }
   };
 
-  const handleQueueStatusEvent = (mode: 'pause' | 'resume' | 'end' | 'restart', targetStatus: 'paused' | 'active' | 'ended') => {
+  const handleQueueStatusEvent = useCallback((mode: 'pause' | 'resume' | 'end' | 'restart', targetStatus: 'paused' | 'active' | 'ended') => {
     if (isReadOnly) {
       toast.error('This queue is read-only for the selected date.');
       return;
@@ -160,7 +160,7 @@ export default function ImprovedQueueList({
       return;
     }
     setStatusDialog({ mode, targetStatus });
-  };
+  }, [clinicId, doctorId, isReadOnly]);
 
   useEffect(() => {
     if (typeof window === 'undefined') return;
@@ -182,7 +182,7 @@ export default function ImprovedQueueList({
       window.removeEventListener('endQueue', handleEnd);
       window.removeEventListener('restartQueue', handleRestart);
     };
-  }, [queueStatus, clinicId, doctorId, queueId, isReadOnly]);
+  }, [queueStatus, clinicId, doctorId, queueId, isReadOnly, handleQueueStatusEvent]);
   const handleCallPatient = async (patientId: string) => {
     if (!clinicId || !doctorId || !queueId) return;
     if (queueInactive) {

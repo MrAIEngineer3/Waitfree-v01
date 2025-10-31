@@ -1,14 +1,14 @@
 "use client";
 
+import { cn } from '@/lib/utils';
+import { doc, onSnapshot, type FirestoreError } from 'firebase/firestore';
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
-import { cn } from '@/lib/utils';
-import { useClinicContext } from './ClinicContext';
 import { useEffect, useState } from 'react';
 import { auth, db } from '../lib/firebase';
-import { doc, onSnapshot, type FirestoreError } from 'firebase/firestore';
-import SidebarProfile from './SidebarProfile';
+import { useClinicContext } from './ClinicContext';
 import Logo from './Logo';
+import SidebarProfile from './SidebarProfile';
 
 interface NavItem {
   label: string;
@@ -143,7 +143,7 @@ interface ModernSidebarProps {
 export default function ModernSidebar({ collapsed = false, onToggle }: ModernSidebarProps) {
   const pathname = usePathname();
   const router = useRouter();
-  const { doctorId, doctorName, clinicName } = useClinicContext();
+  const { doctorName, clinicName } = useClinicContext();
   const [doctorData, setDoctorData] = useState<{ specialty?: string; photoURL?: string }>({});
 
   // Fetch doctor profile data (specialty, photo) while keeping listeners in sync with auth state

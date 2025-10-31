@@ -4,7 +4,7 @@ import type { Timestamp, Unsubscribe } from 'firebase/firestore';
 import { collection, doc, getDoc, getDocs, limit, onSnapshot, query, serverTimestamp, setDoc, where } from 'firebase/firestore';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { auth, db } from '../lib/firebase';
-import { clearClinicCache, prefetchValue, setCachedValue } from '../lib/settingsCache';
+import { clearCachedValue, clearClinicCache, prefetchValue, setCachedValue } from '../lib/settingsCache';
 import type { NotificationSettingsDoc } from '../types/settings';
 import ClinicContext from './ClinicContext';
 
@@ -92,6 +92,7 @@ export default function ClinicContextProvider({ children }: ClinicContextProvide
   const todayKey = new Date().toISOString().split('T')[0];
   const attemptedCreateRef = useRef<Set<string>>(new Set());
   const latestClinicRef = useRef<string | null>(null);
+  const shareCodeRetryRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const loadNotificationSettings = useCallback(async (clinic: string) => {
     const path = ['clinics', clinic, 'settings', 'notifications'];
@@ -195,9 +196,31 @@ export default function ClinicContextProvider({ children }: ClinicContextProvide
       );
 
       if (latestClinicRef.current === clinic) {
-        setClinicShareCode(code ? code.toUpperCase() : null);
+        if (code) {
+          const normalized = code.toUpperCase();
+          if (shareCodeRetryRef.current) {
+            clearTimeout(shareCodeRetryRef.current);
+            shareCodeRetryRef.current = null;
+          }
+          setClinicShareCode(normalized);
+        } else {
+          clearCachedValue(key);
+          if (shareCodeRetryRef.current) {
+            clearTimeout(shareCodeRetryRef.current);
+          }
+          shareCodeRetryRef.current = setTimeout(() => {
+            if (latestClinicRef.current === clinic) {
+              void loadClinicShareCode(clinic);
+            }
+          }, 2000);
+        }
       }
     } catch (error) {
+      clearCachedValue(key);
+      if (shareCodeRetryRef.current) {
+        clearTimeout(shareCodeRetryRef.current);
+        shareCodeRetryRef.current = null;
+      }
       if (latestClinicRef.current === clinic) {
         setClinicShareCode(null);
       }
@@ -308,6 +331,10 @@ export default function ClinicContextProvider({ children }: ClinicContextProvide
           clearClinicCache(latestClinicRef.current);
         }
         latestClinicRef.current = null;
+        if (shareCodeRetryRef.current) {
+          clearTimeout(shareCodeRetryRef.current);
+          shareCodeRetryRef.current = null;
+        }
         setClinicId(null);
         setClinicShareCode(null);
         setDoctorId(null);
@@ -345,6 +372,10 @@ export default function ClinicContextProvider({ children }: ClinicContextProvide
             clearClinicCache(latestClinicRef.current);
           }
           latestClinicRef.current = nextClinicId;
+          if (shareCodeRetryRef.current) {
+            clearTimeout(shareCodeRetryRef.current);
+            shareCodeRetryRef.current = null;
+          }
           setNotificationSettings(undefined);
           setClinicShareCode(null);
           void loadNotificationSettings(nextClinicId);
@@ -363,6 +394,17 @@ export default function ClinicContextProvider({ children }: ClinicContextProvide
           }
           const clinicData = (clinicSnap.data() as ClinicRecord | undefined) ?? {};
           setClinicName(clinicData.name ?? null);
+          const shareCodeValue = (clinicData as { shareCode?: unknown }).shareCode;
+          const shareCodeRaw = typeof shareCodeValue === 'string' ? shareCodeValue.trim() : '';
+          if (shareCodeRaw) {
+            const normalized = shareCodeRaw.toUpperCase();
+            if (shareCodeRetryRef.current) {
+              clearTimeout(shareCodeRetryRef.current);
+              shareCodeRetryRef.current = null;
+            }
+            setClinicShareCode((prev) => (prev === normalized ? prev : normalized));
+            setCachedValue(cacheKey, normalized);
+          }
         });
 
         unsubscribeDoctor = detach(unsubscribeDoctor);
@@ -394,6 +436,10 @@ export default function ClinicContextProvider({ children }: ClinicContextProvide
       unsubscribeQueue = detach(unsubscribeQueue);
       unsubscribeClinic = detach(unsubscribeClinic);
       unsubscribeUserDoc = detach(unsubscribeUserDoc);
+      if (shareCodeRetryRef.current) {
+        clearTimeout(shareCodeRetryRef.current);
+        shareCodeRetryRef.current = null;
+      }
     };
   }, [loadNotificationSettings, loadClinicShareCode, todayKey]);
 
