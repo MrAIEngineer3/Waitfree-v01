@@ -14,21 +14,21 @@ import { recomputeQueueNotifications } from './notificationEngine';
 import { sendNotification } from './notifier';
 import type { PatientMetadataInput, PatientResolverFlagSnapshot, PatientResolverResult, QueuePatientLink } from './patients';
 import {
-    buildQueuePatientLink,
-    currentPatientResolverFlagSnapshot,
-    isPatientResolverV1Enabled,
-    normalizePatientFullName,
-    resolvePatientForQueue
+  buildQueuePatientLink,
+  currentPatientResolverFlagSnapshot,
+  isPatientResolverV1Enabled,
+  normalizePatientFullName,
+  resolvePatientForQueue
 } from './patients';
 import { resolveDoctorAvailability, resolveManyDoctorAvailability } from './scheduling/availability';
 import {
-    createDoctorScheduleOverride as applyCreateScheduleOverride,
-    deleteDoctorScheduleOverride as applyDeleteScheduleOverride,
-    setDoctorRealTimeStatus as applySetDoctorRealTimeStatus,
-    updateDoctorDefaultRota as applyUpdateDoctorDefaultRota,
-    updateDoctorScheduleOverride as applyUpdateScheduleOverride,
-    NotFoundError as SchedulingNotFoundError,
-    ValidationError as SchedulingValidationError
+  createDoctorScheduleOverride as applyCreateScheduleOverride,
+  deleteDoctorScheduleOverride as applyDeleteScheduleOverride,
+  setDoctorRealTimeStatus as applySetDoctorRealTimeStatus,
+  updateDoctorDefaultRota as applyUpdateDoctorDefaultRota,
+  updateDoctorScheduleOverride as applyUpdateScheduleOverride,
+  NotFoundError as SchedulingNotFoundError,
+  ValidationError as SchedulingValidationError
 } from './scheduling/mutations';
 import { dispatchDoctorOnlineNotifications } from './scheduling/notificationQueue';
 import { createRequestDoctorOnlineNotificationHandler } from './scheduling/requestDoctorOnlineNotification';
@@ -103,10 +103,19 @@ const runInBackground = (taskName: string, task: () => Promise<unknown>) => {
 const regionalFunctions = functions.region('asia-south1');
 
 // Runtime options keep latency in check; warm pools opt-in via environment if required later.
+// CRITICAL HIGH-TRAFFIC functions: Maximum resources for user-facing operations
 const callableTimeoutSeconds = 60;
-const callableMemory = '256MiB';
-const callableCpu = 0.25;
+const criticalMemory = '1GiB';
+const criticalCpu = 1;
 const callableMaxInstances = 1;
+
+// Standard functions: Moderate resources for general operations
+const standardMemory = '512MiB';
+const standardCpu = 0.5;
+
+// Less frequently used functions: Minimal resources to stay within quota
+const lessFrequentMemory = '256MiB';
+const lessFrequentCpu = 0.25;
 
 const minInstancesEnv = process.env.FUNCTIONS_MIN_INSTANCES;
 const parsedMinInstances = minInstancesEnv ? Number(minInstancesEnv) : NaN;
@@ -121,8 +130,8 @@ if (!Number.isNaN(parsedMinInstances) && parsedMinInstances > 0) {
 const v2GlobalOptions: GlobalOptions = {
   region: 'asia-south1',
   timeoutSeconds: callableTimeoutSeconds,
-  memory: callableMemory,
-  cpu: callableCpu,
+  memory: standardMemory,  // Default to standard tier
+  cpu: standardCpu,        // 0.5 CPU for most functions
   maxInstances: callableMaxInstances
 };
 if (typeof warmPoolMinInstances === 'number') {
@@ -978,7 +987,7 @@ const debugRuntimeFlagsHandler = async (_data: unknown, _ctx: CallableCtx) => {
     resolverFlag
   };
 };
-export const debugRuntimeFlags = createV2Callable(debugRuntimeFlagsHandler, { maxInstances: 1 });
+export const debugRuntimeFlags = createV2Callable(debugRuntimeFlagsHandler, { maxInstances: 1, memory: lessFrequentMemory, cpu: lessFrequentCpu });
 
 /** DEBUG: Show resolved Patient PWA base URL */
 const debugPatientPwaBaseUrlHandler = async (_data: unknown, _ctx: CallableCtx) => {
@@ -992,7 +1001,7 @@ const debugPatientPwaBaseUrlHandler = async (_data: unknown, _ctx: CallableCtx) 
     return { error: e?.message || String(e) };
   }
 };
-export const debugPatientPwaBaseUrl = createV2Callable(debugPatientPwaBaseUrlHandler, { maxInstances: 1 });
+export const debugPatientPwaBaseUrl = createV2Callable(debugPatientPwaBaseUrlHandler, { maxInstances: 1, memory: lessFrequentMemory, cpu: lessFrequentCpu });
 
 /** DEBUG: Force recompute for a queue (engine default-on). data: { clinicId, doctorId, queueId } */
 const debugRecomputeHandler = async (data: any, _ctx: CallableCtx) => {
@@ -1018,7 +1027,7 @@ const debugRecomputeHandler = async (data: any, _ctx: CallableCtx) => {
   const result = await recomputeQueueNotifications({ clinicId, doctorId, queueId });
   return { success: true, result };
 };
-export const debugRecompute = createV2Callable(debugRecomputeHandler, { maxInstances: 1 });
+export const debugRecompute = createV2Callable(debugRecomputeHandler, { maxInstances: 1, memory: lessFrequentMemory, cpu: lessFrequentCpu });
 
 /** DEBUG: Fetch patient doc raw (no auth). data: { clinicId, doctorId, queueId, patientId } */
 const debugGetPatientHandler = async (data: any, _ctx: CallableCtx) => {
@@ -1040,7 +1049,7 @@ const debugGetPatientHandler = async (data: any, _ctx: CallableCtx) => {
   if (!snap.exists) return { found: false };
   return { found: true, data: snap.data() };
 };
-export const debugGetPatient = createV2Callable(debugGetPatientHandler, { maxInstances: 1 });
+export const debugGetPatient = createV2Callable(debugGetPatientHandler, { maxInstances: 1, memory: lessFrequentMemory, cpu: lessFrequentCpu });
 
 // NOTE: Staff privilege checks are enforced via ensureStaffAccess for protected operations.
 
@@ -1065,121 +1074,9 @@ export const ping = createV2Callable(pingHandler);
 // Only returns masked/length info to avoid leaking secrets.
 // Removed devShowAdminSecret (dev-only, unused)
 
-// Firestore trigger example (adjust collection as needed)
-export const onNewPatient = regionalFunctions.firestore
-  .document('patients/{patientId}')
-  .onCreate(async (snap, ctx) => {
-    const data = snap.data();
-    functions.logger.info('New patient created', { id: ctx.params.patientId, data });
-  });
-
-/**
- * Firestore Trigger that fires when a patient's status is updated
- * Specifically monitors for status changes to 'in-progress' to send notifications
- */
-export const onPatientStatusChange = regionalFunctions.firestore
-  .document('clinics/{clinicId}/doctors/{doctorId}/queues/{queueId}/patients/{patientId}')
-  .onUpdate(async (change, context) => {
-    try {
-      // Get the patient data before and after the change
-      const beforeData = change.before.data();
-      const afterData = change.after.data();
-      // Engine is always on now; legacy trigger suppressed permanently.
-      functions.logger.debug('onPatientStatusChange legacy handler permanently suppressed (engine default)', {
-        patientId: context.params.patientId,
-        beforeStatus: beforeData.status,
-        afterStatus: afterData.status
-      });
-      return null;
-
-      // Check if the status field actually changed
-      if (beforeData.status === afterData.status) {
-        functions.logger.info('Patient document updated but status unchanged', {
-          patientId: context.params.patientId,
-          status: afterData.status
-        });
-        return null;
-      }
-
-      // Check if the status changed TO 'in-progress'
-      if (afterData.status === 'in-progress') {
-        // Extract patient details for logging and future notification sending
-        const patientName = afterData.name || 'Unknown Patient';
-        const phoneNumber = afterData.phone || 'Unknown Phone';
-
-        functions.logger.info(
-          `Patient ${patientName}'s turn is next. Preparing to send notification to ${phoneNumber}.`,
-          {
-            patientId: context.params.patientId,
-            clinicId: context.params.clinicId,
-            doctorId: context.params.doctorId,
-            queueId: context.params.queueId,
-            patientName,
-            phoneNumber,
-            previousStatus: beforeData.status,
-            newStatus: afterData.status
-          }
-        );
-
-        // Mark and send a 'now' notification if not already sent. We record this on the patient doc
-        // using a `notifications.now` flag so we don't duplicate sends.
-        try {
-          const patientRef = change.after.ref;
-          const patientSnapLatest = await patientRef.get();
-          const p = patientSnapLatest.data() as any;
-          const already = p?.notifications?.now === true;
-          if (!already) {
-            const canSend = await isNotificationEnabled({
-              clinicId: context.params.clinicId,
-              channel: 'whatsapp',
-              event: 'tokenUpdates'
-            });
-
-            if (!canSend) {
-              functions.logger.info('Skipping now notification because clinic disabled token updates', {
-                clinicId: context.params.clinicId,
-                doctorId: context.params.doctorId,
-                queueId: context.params.queueId,
-                patientId: context.params.patientId
-              });
-            } else {
-              await patientRef.set({ notifications: { ...(p?.notifications || {}), now: true } }, { merge: true });
-              await sendNotification({
-                to: p?.phone || 'unknown',
-                type: 'now',
-                payload: { name: p?.name, tokenNumber: p?.tokenNumber, clinicId: context.params.clinicId, doctorId: context.params.doctorId }
-              });
-            }
-          } else {
-            functions.logger.info('Now notification already sent for patient', { patientId: context.params.patientId });
-          }
-        } catch (e) {
-          functions.logger.warn('Failed to send or mark now notification', e);
-        }
-        return null;
-      } else {
-        // Status changed to something other than 'in-progress'
-        functions.logger.info(
-          `Status changed to ${afterData.status}. No notification sent.`,
-          {
-            patientId: context.params.patientId,
-            previousStatus: beforeData.status,
-            newStatus: afterData.status
-          }
-        );
-        return null;
-      }
-
-    } catch (error) {
-      functions.logger.error('Error in onPatientStatusChange function:', error, {
-        patientId: context.params.patientId,
-        clinicId: context.params.clinicId,
-        doctorId: context.params.doctorId,
-        queueId: context.params.queueId
-      });
-      return null;
-    }
-  });
+// Removed redundant v1 Firestore triggers:
+// - onNewPatient: monitored non-existent top-level 'patients/' collection (patients are nested under queues)
+// - onPatientStatusChange: permanently suppressed, replaced by notificationEngine in updatePatientStatus
 
 /**
  * Callable Cloud Function to add a patient to a queue.
@@ -1472,7 +1369,7 @@ const joinQueueHandler = async (data: JoinQueueRequest, _context: CallableCtx): 
   }
 };
 
-export const joinQueue = createV2Callable(joinQueueHandler);
+export const joinQueue = createV2Callable(joinQueueHandler, { memory: criticalMemory, cpu: criticalCpu });
 
 const manualAddPatientHandler = async (data: ManualAddPatientRequest, context: CallableCtx): Promise<ManualAddPatientResponse> => {
   const authUid = context.auth?.uid ?? null;
@@ -1780,7 +1677,7 @@ const manualAddPatientHandler = async (data: ManualAddPatientRequest, context: C
   }
 };
 
-export const manualAddPatient = createV2Callable(manualAddPatientHandler);
+export const manualAddPatient = createV2Callable(manualAddPatientHandler, { memory: criticalMemory, cpu: criticalCpu });
 
 /**
  * Callable Cloud Function to return a patient's view after validating a short-lived token.
@@ -2460,7 +2357,7 @@ const updatePatientStatusHandler = async (data: UpdatePatientStatusRequest, cont
   }
 };
 
-export const updatePatientStatus = createV2Callable(updatePatientStatusHandler);
+export const updatePatientStatus = createV2Callable(updatePatientStatusHandler, { memory: criticalMemory, cpu: criticalCpu });
 
 let updatePatientStatusForCancel: typeof updatePatientStatusHandler = updatePatientStatusHandler;
 
@@ -2788,8 +2685,8 @@ const createStatusUpdateHandler = (targetStatus: PatientStatus) =>
     return updatePatientStatusHandler({ ...data, newStatus: targetStatus }, context);
   };
 
-export const callPatient = createV2Callable(createStatusUpdateHandler('in-progress'));
-export const completePatient = createV2Callable(createStatusUpdateHandler('completed'));
+export const callPatient = createV2Callable(createStatusUpdateHandler('in-progress'), { memory: criticalMemory, cpu: criticalCpu });
+export const completePatient = createV2Callable(createStatusUpdateHandler('completed'), { memory: criticalMemory, cpu: criticalCpu });
 export const cancelPatient = createV2Callable(createStatusUpdateHandler('cancelled'));
 export const uncallPatient = createV2Callable(createStatusUpdateHandler('waiting'));
 
@@ -3094,7 +2991,7 @@ const setQueueAutoAdvanceHandler = async (data: SetQueueAutoAdvanceRequest, _con
   }
 };
 
-export const setQueueAutoAdvance = createV2Callable(setQueueAutoAdvanceHandler);
+export const setQueueAutoAdvance = createV2Callable(setQueueAutoAdvanceHandler, { memory: lessFrequentMemory, cpu: lessFrequentCpu });
 
 const setRealTimeStatusHandler = async (data: SetRealTimeStatusRequest, context: CallableCtx) => {
   if (!context.auth) {
@@ -3301,7 +3198,7 @@ const getClinicDoctorAvailabilityHandler = async (data: GetClinicDoctorAvailabil
   };
 };
 
-export const getClinicDoctorAvailability = createV2Callable(getClinicDoctorAvailabilityHandler);
+export const getClinicDoctorAvailability = createV2Callable(getClinicDoctorAvailabilityHandler, { memory: criticalMemory, cpu: criticalCpu });
 
 const getClinicSchedulingSettingsHandler = async (
   data: GetClinicSchedulingSettingsRequest,
@@ -3372,7 +3269,7 @@ const updateClinicSchedulingSettingsHandler = async (
   };
 };
 
-export const updateClinicSchedulingSettings = createV2Callable(updateClinicSchedulingSettingsHandler);
+export const updateClinicSchedulingSettings = createV2Callable(updateClinicSchedulingSettingsHandler, { memory: lessFrequentMemory, cpu: lessFrequentCpu });
 
 const baseRequestDoctorOnlineNotificationHandler = createRequestDoctorOnlineNotificationHandler();
 
@@ -3400,7 +3297,7 @@ const requestDoctorOnlineNotificationHandler = async (
   );
 };
 
-export const requestDoctorOnlineNotification = createV2Callable(requestDoctorOnlineNotificationHandler);
+export const requestDoctorOnlineNotification = createV2Callable(requestDoctorOnlineNotificationHandler, { memory: lessFrequentMemory, cpu: lessFrequentCpu });
 
 const updateDefaultRotaHandler = async (data: UpdateDefaultRotaRequest, context: CallableCtx) => {
   if (!context.auth) {
@@ -3521,7 +3418,7 @@ const createOverrideHandler = async (data: CreateOverrideRequest, context: Calla
   }
 };
 
-export const createDoctorScheduleOverride = createV2Callable(createOverrideHandler);
+export const createDoctorScheduleOverride = createV2Callable(createOverrideHandler, { memory: lessFrequentMemory, cpu: lessFrequentCpu });
 
 const updateOverrideHandler = async (data: CreateOverrideRequest, context: CallableCtx) => {
   if (!context.auth) {
@@ -3585,7 +3482,7 @@ const updateOverrideHandler = async (data: CreateOverrideRequest, context: Calla
   }
 };
 
-export const updateDoctorScheduleOverride = createV2Callable(updateOverrideHandler);
+export const updateDoctorScheduleOverride = createV2Callable(updateOverrideHandler, { memory: lessFrequentMemory, cpu: lessFrequentCpu });
 
 const deleteOverrideHandler = async (data: { clinicId?: string; doctorId?: string; overrideId?: string }, context: CallableCtx) => {
   if (!context.auth) {
@@ -3632,7 +3529,7 @@ const deleteOverrideHandler = async (data: { clinicId?: string; doctorId?: strin
   }
 };
 
-export const deleteDoctorScheduleOverride = createV2Callable(deleteOverrideHandler);
+export const deleteDoctorScheduleOverride = createV2Callable(deleteOverrideHandler, { memory: lessFrequentMemory, cpu: lessFrequentCpu });
 
 /**
  * Server-Sent Events (SSE) patient stream for a given queue.
@@ -3723,4 +3620,4 @@ const bootstrapClinicAccountHandler = async (data: BootstrapClinicAccountRequest
   }
 };
 
-export const bootstrapClinicAccount = createV2Callable(bootstrapClinicAccountHandler);
+export const bootstrapClinicAccount = createV2Callable(bootstrapClinicAccountHandler, { memory: lessFrequentMemory, cpu: lessFrequentCpu });

@@ -39,7 +39,7 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
 };
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.bootstrapClinicAccount = exports.deleteDoctorScheduleOverride = exports.updateDoctorScheduleOverride = exports.createDoctorScheduleOverride = exports.updateDoctorDefaultRota = exports.requestDoctorOnlineNotification = exports.updateClinicSchedulingSettings = exports.getClinicSchedulingSettings = exports.getClinicDoctorAvailability = exports.setDoctorRealTimeStatus = exports.setQueueAutoAdvance = exports.updateQueueStatus = exports.advanceQueue = exports.uncallPatient = exports.cancelPatient = exports.completePatient = exports.callPatient = exports.__test__ = exports.patientRejoinQueue = exports.patientCancelToken = exports.updatePatientStatus = exports.createPatientSession = exports.getPatientView = exports.manualAddPatient = exports.joinQueue = exports.onPatientStatusChange = exports.onNewPatient = exports.ping = exports.debugGetPatient = exports.debugRecompute = exports.debugPatientPwaBaseUrl = exports.debugRuntimeFlags = void 0;
+exports.bootstrapClinicAccount = exports.deleteDoctorScheduleOverride = exports.updateDoctorScheduleOverride = exports.createDoctorScheduleOverride = exports.updateDoctorDefaultRota = exports.requestDoctorOnlineNotification = exports.updateClinicSchedulingSettings = exports.getClinicSchedulingSettings = exports.getClinicDoctorAvailability = exports.setDoctorRealTimeStatus = exports.setQueueAutoAdvance = exports.updateQueueStatus = exports.advanceQueue = exports.uncallPatient = exports.cancelPatient = exports.completePatient = exports.callPatient = exports.__test__ = exports.patientRejoinQueue = exports.patientCancelToken = exports.updatePatientStatus = exports.createPatientSession = exports.getPatientView = exports.manualAddPatient = exports.joinQueue = exports.ping = exports.debugGetPatient = exports.debugRecompute = exports.debugPatientPwaBaseUrl = exports.debugRuntimeFlags = void 0;
 const firestore_1 = require("@google-cloud/firestore");
 // Ensure local .env variables are loaded when running in emulator / local scripts
 const crypto_1 = __importDefault(require("crypto"));
@@ -121,10 +121,17 @@ const runInBackground = (taskName, task) => {
 // Configure region for all functions
 const regionalFunctions = functions.region('asia-south1');
 // Runtime options keep latency in check; warm pools opt-in via environment if required later.
+// CRITICAL HIGH-TRAFFIC functions: Maximum resources for user-facing operations
 const callableTimeoutSeconds = 60;
-const callableMemory = '256MiB';
-const callableCpu = 0.25;
+const criticalMemory = '1GiB';
+const criticalCpu = 1;
 const callableMaxInstances = 1;
+// Standard functions: Moderate resources for general operations
+const standardMemory = '512MiB';
+const standardCpu = 0.5;
+// Less frequently used functions: Minimal resources to stay within quota
+const lessFrequentMemory = '256MiB';
+const lessFrequentCpu = 0.25;
 const minInstancesEnv = process.env.FUNCTIONS_MIN_INSTANCES;
 const parsedMinInstances = minInstancesEnv ? Number(minInstancesEnv) : NaN;
 let warmPoolMinInstances;
@@ -138,8 +145,8 @@ else {
 const v2GlobalOptions = {
     region: 'asia-south1',
     timeoutSeconds: callableTimeoutSeconds,
-    memory: callableMemory,
-    cpu: callableCpu,
+    memory: standardMemory, // Default to standard tier
+    cpu: standardCpu, // 0.5 CPU for most functions
     maxInstances: callableMaxInstances
 };
 if (typeof warmPoolMinInstances === 'number') {
@@ -662,7 +669,7 @@ const debugRuntimeFlagsHandler = async (_data, _ctx) => {
         resolverFlag
     };
 };
-exports.debugRuntimeFlags = createV2Callable(debugRuntimeFlagsHandler, { maxInstances: 1 });
+exports.debugRuntimeFlags = createV2Callable(debugRuntimeFlagsHandler, { maxInstances: 1, memory: lessFrequentMemory, cpu: lessFrequentCpu });
 /** DEBUG: Show resolved Patient PWA base URL */
 const debugPatientPwaBaseUrlHandler = async (_data, _ctx) => {
     await ensureDebugAccess(_ctx, null, false);
@@ -676,7 +683,7 @@ const debugPatientPwaBaseUrlHandler = async (_data, _ctx) => {
         return { error: e?.message || String(e) };
     }
 };
-exports.debugPatientPwaBaseUrl = createV2Callable(debugPatientPwaBaseUrlHandler, { maxInstances: 1 });
+exports.debugPatientPwaBaseUrl = createV2Callable(debugPatientPwaBaseUrlHandler, { maxInstances: 1, memory: lessFrequentMemory, cpu: lessFrequentCpu });
 /** DEBUG: Force recompute for a queue (engine default-on). data: { clinicId, doctorId, queueId } */
 const debugRecomputeHandler = async (data, _ctx) => {
     const { clinicId, doctorId, queueId } = data || {};
@@ -698,7 +705,7 @@ const debugRecomputeHandler = async (data, _ctx) => {
     const result = await (0, notificationEngine_1.recomputeQueueNotifications)({ clinicId, doctorId, queueId });
     return { success: true, result };
 };
-exports.debugRecompute = createV2Callable(debugRecomputeHandler, { maxInstances: 1 });
+exports.debugRecompute = createV2Callable(debugRecomputeHandler, { maxInstances: 1, memory: lessFrequentMemory, cpu: lessFrequentCpu });
 /** DEBUG: Fetch patient doc raw (no auth). data: { clinicId, doctorId, queueId, patientId } */
 const debugGetPatientHandler = async (data, _ctx) => {
     const { clinicId, doctorId, queueId, patientId } = data || {};
@@ -718,7 +725,7 @@ const debugGetPatientHandler = async (data, _ctx) => {
         return { found: false };
     return { found: true, data: snap.data() };
 };
-exports.debugGetPatient = createV2Callable(debugGetPatientHandler, { maxInstances: 1 });
+exports.debugGetPatient = createV2Callable(debugGetPatientHandler, { maxInstances: 1, memory: lessFrequentMemory, cpu: lessFrequentCpu });
 // NOTE: Staff privilege checks are enforced via ensureStaffAccess for protected operations.
 // Simple HTTPS callable function example
 const pingHandler = async (data, context) => {
@@ -734,113 +741,9 @@ exports.ping = createV2Callable(pingHandler);
 // Dev-only diagnostic: report whether the functions runtime can see the admin secret.
 // Only returns masked/length info to avoid leaking secrets.
 // Removed devShowAdminSecret (dev-only, unused)
-// Firestore trigger example (adjust collection as needed)
-exports.onNewPatient = regionalFunctions.firestore
-    .document('patients/{patientId}')
-    .onCreate(async (snap, ctx) => {
-    const data = snap.data();
-    functions.logger.info('New patient created', { id: ctx.params.patientId, data });
-});
-/**
- * Firestore Trigger that fires when a patient's status is updated
- * Specifically monitors for status changes to 'in-progress' to send notifications
- */
-exports.onPatientStatusChange = regionalFunctions.firestore
-    .document('clinics/{clinicId}/doctors/{doctorId}/queues/{queueId}/patients/{patientId}')
-    .onUpdate(async (change, context) => {
-    try {
-        // Get the patient data before and after the change
-        const beforeData = change.before.data();
-        const afterData = change.after.data();
-        // Engine is always on now; legacy trigger suppressed permanently.
-        functions.logger.debug('onPatientStatusChange legacy handler permanently suppressed (engine default)', {
-            patientId: context.params.patientId,
-            beforeStatus: beforeData.status,
-            afterStatus: afterData.status
-        });
-        return null;
-        // Check if the status field actually changed
-        if (beforeData.status === afterData.status) {
-            functions.logger.info('Patient document updated but status unchanged', {
-                patientId: context.params.patientId,
-                status: afterData.status
-            });
-            return null;
-        }
-        // Check if the status changed TO 'in-progress'
-        if (afterData.status === 'in-progress') {
-            // Extract patient details for logging and future notification sending
-            const patientName = afterData.name || 'Unknown Patient';
-            const phoneNumber = afterData.phone || 'Unknown Phone';
-            functions.logger.info(`Patient ${patientName}'s turn is next. Preparing to send notification to ${phoneNumber}.`, {
-                patientId: context.params.patientId,
-                clinicId: context.params.clinicId,
-                doctorId: context.params.doctorId,
-                queueId: context.params.queueId,
-                patientName,
-                phoneNumber,
-                previousStatus: beforeData.status,
-                newStatus: afterData.status
-            });
-            // Mark and send a 'now' notification if not already sent. We record this on the patient doc
-            // using a `notifications.now` flag so we don't duplicate sends.
-            try {
-                const patientRef = change.after.ref;
-                const patientSnapLatest = await patientRef.get();
-                const p = patientSnapLatest.data();
-                const already = p?.notifications?.now === true;
-                if (!already) {
-                    const canSend = await (0, notificationPreferences_1.isNotificationEnabled)({
-                        clinicId: context.params.clinicId,
-                        channel: 'whatsapp',
-                        event: 'tokenUpdates'
-                    });
-                    if (!canSend) {
-                        functions.logger.info('Skipping now notification because clinic disabled token updates', {
-                            clinicId: context.params.clinicId,
-                            doctorId: context.params.doctorId,
-                            queueId: context.params.queueId,
-                            patientId: context.params.patientId
-                        });
-                    }
-                    else {
-                        await patientRef.set({ notifications: { ...(p?.notifications || {}), now: true } }, { merge: true });
-                        await (0, notifier_1.sendNotification)({
-                            to: p?.phone || 'unknown',
-                            type: 'now',
-                            payload: { name: p?.name, tokenNumber: p?.tokenNumber, clinicId: context.params.clinicId, doctorId: context.params.doctorId }
-                        });
-                    }
-                }
-                else {
-                    functions.logger.info('Now notification already sent for patient', { patientId: context.params.patientId });
-                }
-            }
-            catch (e) {
-                functions.logger.warn('Failed to send or mark now notification', e);
-            }
-            return null;
-        }
-        else {
-            // Status changed to something other than 'in-progress'
-            functions.logger.info(`Status changed to ${afterData.status}. No notification sent.`, {
-                patientId: context.params.patientId,
-                previousStatus: beforeData.status,
-                newStatus: afterData.status
-            });
-            return null;
-        }
-    }
-    catch (error) {
-        functions.logger.error('Error in onPatientStatusChange function:', error, {
-            patientId: context.params.patientId,
-            clinicId: context.params.clinicId,
-            doctorId: context.params.doctorId,
-            queueId: context.params.queueId
-        });
-        return null;
-    }
-});
+// Removed redundant v1 Firestore triggers:
+// - onNewPatient: monitored non-existent top-level 'patients/' collection (patients are nested under queues)
+// - onPatientStatusChange: permanently suppressed, replaced by notificationEngine in updatePatientStatus
 /**
  * Callable Cloud Function to add a patient to a queue.
  * This is invoked from the client SDK and handles auth and data serialization.
@@ -1096,7 +999,7 @@ const joinQueueHandler = async (data, _context) => {
         throw new functions.https.HttpsError('internal', 'An internal error occurred while trying to join the queue.');
     }
 };
-exports.joinQueue = createV2Callable(joinQueueHandler);
+exports.joinQueue = createV2Callable(joinQueueHandler, { memory: criticalMemory, cpu: criticalCpu });
 const manualAddPatientHandler = async (data, context) => {
     const authUid = context.auth?.uid ?? null;
     const span = (0, timing_1.startTiming)('manualAddPatient', {
@@ -1378,7 +1281,7 @@ const manualAddPatientHandler = async (data, context) => {
         throw new functions.https.HttpsError('internal', 'Failed to manually add patient');
     }
 };
-exports.manualAddPatient = createV2Callable(manualAddPatientHandler);
+exports.manualAddPatient = createV2Callable(manualAddPatientHandler, { memory: criticalMemory, cpu: criticalCpu });
 /**
  * Callable Cloud Function to return a patient's view after validating a short-lived token.
  * Expected data: { clinicId, doctorId, queueId, patientId, token }
@@ -2009,7 +1912,7 @@ const updatePatientStatusHandler = async (data, context) => {
         throw new functions.https.HttpsError('internal', 'Internal server error occurred while updating patient status.');
     }
 };
-exports.updatePatientStatus = createV2Callable(updatePatientStatusHandler);
+exports.updatePatientStatus = createV2Callable(updatePatientStatusHandler, { memory: criticalMemory, cpu: criticalCpu });
 let updatePatientStatusForCancel = updatePatientStatusHandler;
 const patientCancelTokenHandler = async (data, _context) => {
     const span = (0, timing_1.startTiming)('patientCancelToken', {
@@ -2292,8 +2195,8 @@ exports.__test__ = {
 const createStatusUpdateHandler = (targetStatus) => async (data, context) => {
     return updatePatientStatusHandler({ ...data, newStatus: targetStatus }, context);
 };
-exports.callPatient = createV2Callable(createStatusUpdateHandler('in-progress'));
-exports.completePatient = createV2Callable(createStatusUpdateHandler('completed'));
+exports.callPatient = createV2Callable(createStatusUpdateHandler('in-progress'), { memory: criticalMemory, cpu: criticalCpu });
+exports.completePatient = createV2Callable(createStatusUpdateHandler('completed'), { memory: criticalMemory, cpu: criticalCpu });
 exports.cancelPatient = createV2Callable(createStatusUpdateHandler('cancelled'));
 exports.uncallPatient = createV2Callable(createStatusUpdateHandler('waiting'));
 const advanceQueueHandler = async (data, context) => {
@@ -2549,7 +2452,7 @@ const setQueueAutoAdvanceHandler = async (data, _context) => {
         throw new functions.https.HttpsError('internal', 'Failed to update autoAdvance');
     }
 };
-exports.setQueueAutoAdvance = createV2Callable(setQueueAutoAdvanceHandler);
+exports.setQueueAutoAdvance = createV2Callable(setQueueAutoAdvanceHandler, { memory: lessFrequentMemory, cpu: lessFrequentCpu });
 const setRealTimeStatusHandler = async (data, context) => {
     if (!context.auth) {
         throw new functions.https.HttpsError('unauthenticated', 'Authentication required');
@@ -2720,7 +2623,7 @@ const getClinicDoctorAvailabilityHandler = async (data, _context) => {
         requestedDoctorIds: providedDoctorIds ? targetDoctorIds : undefined
     };
 };
-exports.getClinicDoctorAvailability = createV2Callable(getClinicDoctorAvailabilityHandler);
+exports.getClinicDoctorAvailability = createV2Callable(getClinicDoctorAvailabilityHandler, { memory: criticalMemory, cpu: criticalCpu });
 const getClinicSchedulingSettingsHandler = async (data, _context) => {
     const clinicResolution = await resolveClinicIdentifier(data?.clinicId);
     const clinicId = clinicResolution.clinicId;
@@ -2772,7 +2675,7 @@ const updateClinicSchedulingSettingsHandler = async (data, context) => {
         settings
     };
 };
-exports.updateClinicSchedulingSettings = createV2Callable(updateClinicSchedulingSettingsHandler);
+exports.updateClinicSchedulingSettings = createV2Callable(updateClinicSchedulingSettingsHandler, { memory: lessFrequentMemory, cpu: lessFrequentCpu });
 const baseRequestDoctorOnlineNotificationHandler = (0, requestDoctorOnlineNotification_1.createRequestDoctorOnlineNotificationHandler)();
 const requestDoctorOnlineNotificationHandler = async (data, context) => {
     const clinicResolution = await resolveClinicIdentifier(data?.clinicId);
@@ -2789,7 +2692,7 @@ const requestDoctorOnlineNotificationHandler = async (data, context) => {
         clinicId: canonicalClinicId
     }, context);
 };
-exports.requestDoctorOnlineNotification = createV2Callable(requestDoctorOnlineNotificationHandler);
+exports.requestDoctorOnlineNotification = createV2Callable(requestDoctorOnlineNotificationHandler, { memory: lessFrequentMemory, cpu: lessFrequentCpu });
 const updateDefaultRotaHandler = async (data, context) => {
     if (!context.auth) {
         throw new functions.https.HttpsError('unauthenticated', 'Authentication required');
@@ -2892,7 +2795,7 @@ const createOverrideHandler = async (data, context) => {
         mapSchedulingError(error, 'create schedule override');
     }
 };
-exports.createDoctorScheduleOverride = createV2Callable(createOverrideHandler);
+exports.createDoctorScheduleOverride = createV2Callable(createOverrideHandler, { memory: lessFrequentMemory, cpu: lessFrequentCpu });
 const updateOverrideHandler = async (data, context) => {
     if (!context.auth) {
         throw new functions.https.HttpsError('unauthenticated', 'Authentication required');
@@ -2947,7 +2850,7 @@ const updateOverrideHandler = async (data, context) => {
         mapSchedulingError(error, 'update schedule override');
     }
 };
-exports.updateDoctorScheduleOverride = createV2Callable(updateOverrideHandler);
+exports.updateDoctorScheduleOverride = createV2Callable(updateOverrideHandler, { memory: lessFrequentMemory, cpu: lessFrequentCpu });
 const deleteOverrideHandler = async (data, context) => {
     if (!context.auth) {
         throw new functions.https.HttpsError('unauthenticated', 'Authentication required');
@@ -2986,7 +2889,7 @@ const deleteOverrideHandler = async (data, context) => {
         mapSchedulingError(error, 'delete schedule override');
     }
 };
-exports.deleteDoctorScheduleOverride = createV2Callable(deleteOverrideHandler);
+exports.deleteDoctorScheduleOverride = createV2Callable(deleteOverrideHandler, { memory: lessFrequentMemory, cpu: lessFrequentCpu });
 /**
  * Server-Sent Events (SSE) patient stream for a given queue.
  * URL params: /sse/clinics/{clinicId}/doctors/{doctorId}/queues/{queueId}/patients
@@ -3069,5 +2972,5 @@ const bootstrapClinicAccountHandler = async (data, _context) => {
         throw new functions.https.HttpsError('internal', 'Failed to bootstrap clinic account');
     }
 };
-exports.bootstrapClinicAccount = createV2Callable(bootstrapClinicAccountHandler);
+exports.bootstrapClinicAccount = createV2Callable(bootstrapClinicAccountHandler, { memory: lessFrequentMemory, cpu: lessFrequentCpu });
 //# sourceMappingURL=index.js.map
