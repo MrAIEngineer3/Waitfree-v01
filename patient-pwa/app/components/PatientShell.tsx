@@ -2,9 +2,9 @@
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import React from 'react';
-import SiteFooter from './SiteFooter';
 import Logo from '../../components/Logo';
 import { useJoinScanner } from './JoinScannerProvider';
+import SiteFooter from './SiteFooter';
 
 interface PatientShellProps { children: React.ReactNode; }
 
@@ -39,7 +39,7 @@ export default function PatientShell({ children }: PatientShellProps) {
                       key={item.href}
                       type="button"
                       onClick={openScanner}
-                      className="px-4 py-2 text-sm font-medium rounded-full transition-colors text-gray-600 hover:text-gray-900 hover:bg-gray-200/50 focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-gray-900"
+                      className="px-4 py-2 text-sm font-medium rounded-full transition-colors text-gray-600 hover:text-gray-900 hover:bg-gray-200/50 focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-gray-900 cursor-pointer"
                     >
                       {item.label}
                     </button>

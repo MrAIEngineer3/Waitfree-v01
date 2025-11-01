@@ -233,7 +233,7 @@ function QRCodeScanner({ onScan, onError, onCancel }: QRCodeScannerProps) {
               <button
                 type="button"
                 onClick={handleRetry}
-                className="wf-btn-secondary"
+                className="wf-btn-secondary cursor-pointer"
               >
                 Retry
               </button>
@@ -241,7 +241,7 @@ function QRCodeScanner({ onScan, onError, onCancel }: QRCodeScannerProps) {
             <button
               type="button"
               onClick={handleCancel}
-              className="wf-btn-primary"
+              className="wf-btn-primary cursor-pointer"
             >
               {error ? 'Close' : 'Cancel'}
             </button>
@@ -277,7 +277,7 @@ function ClinicIdEntry() {
         type="submit" 
         disabled={!clinicId.trim()}
         aria-label="Go to clinic" 
-        className="absolute h-9 w-9 top-1.5 right-1.5 flex items-center justify-center bg-gray-800 text-white rounded-full hover:bg-gray-900 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+        className="absolute h-9 w-9 top-1.5 right-1.5 flex items-center justify-center bg-gray-800 text-white rounded-full hover:bg-gray-900 transition-colors disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
       >
         <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
           <path d="M5 12h14"/>
@@ -362,7 +362,7 @@ function HeroSection() {
           <button 
             type="button" 
             onClick={() => setScanning(true)}
-            className="btn-primary text-white font-semibold h-12 px-4 rounded-full shadow-lg w-auto max-w-[180px]"
+            className="btn-primary text-white font-semibold h-12 px-4 rounded-full shadow-lg w-auto max-w-[180px] cursor-pointer"
           >
             Scan QR Code
           </button>
@@ -598,7 +598,7 @@ function CtaSection() {
           <p className="max-w-2xl mx-auto mt-4 text-sm sm:text-base text-gray-300">Experience calmer, smarter, patient-centric waiting. No guesswork, no crowding—just timely care.</p>
           <button 
             onClick={() => window.scrollTo({ top: 0, behavior: 'smooth' })}
-            className="mt-8 inline-block btn-primary text-white font-semibold py-3 px-8 rounded-full shadow-lg"
+            className="mt-8 inline-block btn-primary text-white font-semibold py-3 px-8 rounded-full shadow-lg cursor-pointer"
           >
             Get Started for Free
           </button>

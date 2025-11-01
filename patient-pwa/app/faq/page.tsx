@@ -1,6 +1,6 @@
 "use client";
-import Link from 'next/link';
 import { Card, CardContent } from '@/components/ui/card';
+import Link from 'next/link';
 import { useState } from 'react';
 
 export default function FAQPage() {
@@ -81,7 +81,7 @@ export default function FAQPage() {
             >
               <button
                 onClick={() => setExpandedIndex(isExpanded ? null : index)}
-                className="w-full text-left"
+                className="w-full text-left cursor-pointer"
               >
                 <Card className="border border-gray-200/60 bg-white/80 backdrop-blur-xl shadow-sm hover:shadow-xl hover:border-gray-300/60 transition-all duration-300 overflow-hidden">
                   <CardContent className="p-6 sm:p-8">
