@@ -189,9 +189,9 @@ export default function ClinicJoinQR({ clinicId, clinicShareCode, className }: P
             Clinic code: <span className="font-mono tracking-widest">{shareCodeDisplay}</span>
           </div>
           <div className="flex gap-2 flex-wrap justify-center">
-            <button onClick={copyLink} className="h-8 px-3 text-xs font-medium text-foreground bg-background hover:bg-accent border border-border rounded-lg shadow-sm">Copy link</button>
-            <button onClick={downloadPng} className="h-8 px-3 text-xs font-medium text-foreground bg-background hover:bg-accent border border-border rounded-lg shadow-sm">Download PNG</button>
-            <button onClick={printQR} className="h-8 px-3 text-xs font-medium text-white bg-blue-600 hover:bg-blue-700 dark:bg-blue-500 dark:hover:bg-blue-600 rounded-lg shadow-sm">Print</button>
+            <button onClick={copyLink} className="h-8 px-3 text-xs font-medium text-foreground bg-background hover:bg-accent border border-border rounded-lg shadow-sm cursor-pointer">Copy link</button>
+            <button onClick={downloadPng} className="h-8 px-3 text-xs font-medium text-foreground bg-background hover:bg-accent border border-border rounded-lg shadow-sm cursor-pointer">Download PNG</button>
+            <button onClick={printQR} className="h-8 px-3 text-xs font-medium text-white bg-blue-600 hover:bg-blue-700 dark:bg-blue-500 dark:hover:bg-blue-600 rounded-lg shadow-sm cursor-pointer">Print</button>
           </div>
           <div className="text-[11px] text-muted-foreground text-center">
             No scanner? Open the patient app and enter the clinic code:

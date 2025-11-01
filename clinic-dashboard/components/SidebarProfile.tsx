@@ -61,7 +61,7 @@ export default function SidebarProfile({
         <DropdownMenuTrigger asChild>
           <button
             className={cn(
-              "w-full flex items-center rounded-lg hover:bg-accent transition-colors",
+              "w-full flex items-center rounded-lg hover:bg-accent transition-colors cursor-pointer",
               collapsed ? "justify-center p-2" : "gap-3 p-2"
             )}
           >

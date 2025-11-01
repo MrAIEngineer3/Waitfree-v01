@@ -212,7 +212,7 @@ export default function ModernSidebar({ collapsed = false, onToggle }: ModernSid
         <button
           onClick={onToggle}
           className={cn(
-            "hidden lg:flex h-7 w-7 items-center justify-center rounded-md border border-border bg-background hover:bg-accent transition-colors flex-shrink-0",
+            "hidden lg:flex h-7 w-7 items-center justify-center rounded-md border border-border bg-background hover:bg-accent transition-colors flex-shrink-0 cursor-pointer",
             collapsed && "mx-auto"
           )}
           aria-label={collapsed ? "Expand sidebar" : "Collapse sidebar"}

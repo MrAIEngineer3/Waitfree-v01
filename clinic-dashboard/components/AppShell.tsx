@@ -278,7 +278,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
                   <SheetTrigger asChild>
                     <button
                       aria-label="Open menu"
-                      className="inline-flex items-center justify-center h-9 w-9 rounded-md border border-input bg-background text-foreground hover:bg-accent active:bg-accent/80 shadow-sm"
+                      className="inline-flex items-center justify-center h-9 w-9 rounded-md border border-input bg-background text-foreground hover:bg-accent active:bg-accent/80 shadow-sm cursor-pointer"
                     >
                       <svg className="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                         <line x1="3" y1="6" x2="21" y2="6" />
@@ -360,7 +360,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
                             setShowJoinQr(true);
                             setMobileMenuOpen(false);
                           }}
-                          className="h-10 w-full inline-flex items-center justify-center gap-2 rounded-md border border-input bg-background text-foreground hover:bg-accent active:bg-accent/80 shadow-sm"
+                          className="h-10 w-full inline-flex items-center justify-center gap-2 rounded-md border border-input bg-background text-foreground hover:bg-accent active:bg-accent/80 shadow-sm cursor-pointer"
                         >
                           <svg className="w-4 h-4 text-muted-foreground" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
                             <path d="M3 3h7v7H3zM14 3h7v7h-7zM3 14h7v7H3zM17 17h.01M14 14h7v7h-7z" />
@@ -373,7 +373,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
                           signOut(auth);
                           setMobileMenuOpen(false);
                         }}
-                        className="h-10 w-full inline-flex items-center justify-center gap-2 rounded-md border border-input bg-background text-foreground hover:bg-accent active:bg-accent/80 shadow-sm"
+                        className="h-10 w-full inline-flex items-center justify-center gap-2 rounded-md border border-input bg-background text-foreground hover:bg-accent active:bg-accent/80 shadow-sm cursor-pointer"
                       >
                         Sign out
                       </button>
