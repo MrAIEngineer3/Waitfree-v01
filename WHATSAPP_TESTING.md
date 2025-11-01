@@ -1,5 +1,7 @@
 # 🧪 Twilio WhatsApp Testing Guide
 
+**Last Updated:** November 1, 2025
+
 ## 📋 Testing Modes
 
 ### 1. **Debug Mode (No Twilio credentials)**
