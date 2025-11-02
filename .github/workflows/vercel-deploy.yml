@@ -1,0 +1,39 @@
+name: Vercel Production Deployment
+
+on:
+  push:
+    branches:
+      - master
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        # This will create two parallel jobs: one for 'PWA' and one for 'DASHBOARD'
+        project: [ 'PWA', 'DASHBOARD' ]
+
+    steps:
+      - uses: actions/checkout@v3
+
+      - name: Deploy Patient PWA
+        # This step will ONLY run for the 'PWA' job
+        if: matrix.project == 'PWA'
+        uses: amondnet/vercel-action@v25
+        with:
+          vercel-token: ${{ secrets.VERCEL_TOKEN }}
+          vercel-org-id: ${{ secrets.VERCEL_ORG_ID }}
+          vercel-project-id: ${{ secrets.VERCEL_PROJECT_ID_PWA }}
+          vercel-args: '--prod'
+          working-directory: 'patient-pwa' # The folder for the PWA
+
+      - name: Deploy Clinic Dashboard
+        # This step will ONLY run for the 'DASHBOARD' job
+        if: matrix.project == 'DASHBOARD'
+        uses: amondnet/vercel-action@v25
+        with:
+          vercel-token: ${{ secrets.VERCEL_TOKEN }}
+          vercel-org-id: ${{ secrets.VERCEL_ORG_ID }}
+          vercel-project-id: ${{ secrets.VERCEL_PROJECT_ID_DASHBOARD }}
+          vercel-args: '--prod'
+          working-directory: 'clinic-dashboard' # The folder for the Dashboard
