@@ -15,7 +15,7 @@
     "lint": "eslint",
     "test": "vitest run",
     "test:watch": "vitest watch",
-  "test:e2e": "npm run build && firebase emulators:exec --only auth,firestore,functions,storage \"vitest run --config vitest.e2e.config.ts\"",
+    "test:e2e": "npm run build && firebase emulators:exec --only auth,firestore,functions,storage \"vitest run --config vitest.e2e.config.ts\"",
     "phase1:test": "npm run build && node lib/scripts/phase1Test.js",
     "phase2:test": "npm run build && node lib/scripts/phase2Test.js",
     "patient:flag": "npm run build && node lib/scripts/seedPatientResolverFlag.js",
@@ -24,32 +24,32 @@
     "patient:seed-test": "npm run build && node lib/scripts/seedResolverTestClinic.js"
   },
   "dependencies": {
-    "@google-cloud/firestore": "^7",
+    "@google-cloud/firestore": "^7.11.6",
+    "@google-cloud/secret-manager": "^5.6.0",
     "@types/cors": "^2.8.19",
     "cors": "^2.8.5",
     "dotenv": "^16.4.5",
-    "firebase-admin": "^12",
-      "firebase-functions": "^6",
-      "@google-cloud/secret-manager": "^5.6.0",
+    "firebase-admin": "^12.7.0",
+    "firebase-functions": "^6.6.0",
     "google-libphonenumber": "^3.2.43",
     "luxon": "^3.7.2",
     "node-fetch": "^2.7.0",
-    "twilio": "^5.10.2",
+    "twilio": "^5.10.4",
     "ulid": "^2.3.0"
   },
   "devDependencies": {
-    "@eslint/js": "^9.36.0",
+    "@eslint/js": "^9.39.0",
     "@types/luxon": "^3.7.1",
-    "@types/node": "^20",
+    "@types/node": "^20.19.24",
     "@types/node-fetch": "^2.6.13",
-    "@typescript-eslint/eslint-plugin": "^8.46.1",
-    "@typescript-eslint/parser": "^8.46.1",
-    "eslint": "^9",
+    "@typescript-eslint/eslint-plugin": "^8.46.2",
+    "@typescript-eslint/parser": "^8.46.2",
+    "eslint": "^9.39.0",
     "firebase": "^11.0.1",
     "globals": "^14.0.0",
     "rimraf": "^5.0.10",
-    "typescript": "^5.9.2",
-    "vitest": "^4.0.4"
+    "typescript": "^5.9.3",
+    "vitest": "^4.0.6"
   },
   "overrides": {
     "esbuild": "^0.25.1"
