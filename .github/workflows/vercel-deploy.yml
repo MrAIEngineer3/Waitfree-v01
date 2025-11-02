@@ -19,21 +19,21 @@ jobs:
       - name: Deploy Patient PWA
         # This step will ONLY run for the 'PWA' job
         if: matrix.project == 'PWA'
-        uses: amondnet/vercel-action@v25
+        uses: vercel/vercel-action@v1
         with:
-          vercel-token: ${{ secrets.VERCEL_TOKEN }}
-          vercel-org-id: ${{ secrets.VERCEL_ORG_ID }}
-          vercel-project-id: ${{ secrets.VERCEL_PROJECT_ID_PWA }}
-          vercel-args: '--prod'
-          working-directory: 'patient-pwa' # The folder for the PWA
+          token: ${{ secrets.VERCEL_TOKEN }}
+          orgId: ${{ secrets.VERCEL_ORG_ID }}
+          projectId: ${{ secrets.VERCEL_PROJECT_ID_PWA }}
+          workingDirectory: 'patient-pwa' # The folder for the PWA
+          production: true # This replaces 'vercel-args: --prod'
 
       - name: Deploy Clinic Dashboard
         # This step will ONLY run for the 'DASHBOARD' job
         if: matrix.project == 'DASHBOARD'
-        uses: amondnet/vercel-action@v25
+        uses: vercel/vercel-action@v1
         with:
-          vercel-token: ${{ secrets.VERCEL_TOKEN }}
-          vercel-org-id: ${{ secrets.VERCEL_ORG_ID }}
-          vercel-project-id: ${{ secrets.VERCEL_PROJECT_ID_DASHBOARD }}
-          vercel-args: '--prod'
-          working-directory: 'clinic-dashboard' # The folder for the Dashboard
+          token: ${{ secrets.VERCEL_TOKEN }}
+          orgId: ${{ secrets.VERCEL_ORG_ID }}
+          projectId: ${{ secrets.VERCEL_PROJECT_ID_DASHBOARD }}
+          workingDirectory: 'clinic-dashboard' # The folder for the Dashboard
+          production: true # This replaces 'vercel-args: --prod'
