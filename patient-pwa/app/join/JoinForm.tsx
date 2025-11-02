@@ -1,5 +1,7 @@
 'use client';
 
+import { useDoctorAvailability } from '@/lib/hooks/use-doctor-availability';
+import { useJoinQueue } from '@/lib/hooks/use-join-queue';
 import { httpsCallable } from 'firebase/functions';
 import { useRouter } from 'next/navigation';
 import { useEffect, useMemo, useRef, useState } from 'react';
@@ -241,6 +243,7 @@ function describeAvailability(availability: DoctorAvailabilityPayload | null | u
 
 export default function JoinForm() {
   const router = useRouter();
+  const joinQueueMutation = useJoinQueue();
 
   const [name, setName] = useState('');
   const [age, setAge] = useState('');
@@ -270,6 +273,15 @@ export default function JoinForm() {
 
   const initOnceRef = useRef(false);
   const isMountedRef = useRef(false);
+
+  // TanStack Query hook for doctor availability with caching
+  // This provides instant loading from cache and automatic background refetch
+  const doctorAvailabilityQuery = useDoctorAvailability({
+    clinicId,
+    doctorIds: doctorId ? [doctorId] : undefined,
+    enabled: !!clinicId && status === 'valid',
+    staleTime: 30000, // 30 seconds
+  });
 
   const getCurrentAvailability = () => {
     if (!doctorId) return null;
@@ -330,7 +342,7 @@ export default function JoinForm() {
     ? 'We will message you once check-ins reopen.'
     : 'We will send a WhatsApp message to your phone number once the doctor comes online.';
 
-  const handleJoinQueue = async (event: React.FormEvent<HTMLFormElement>) => {
+  const handleJoinQueue = (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     setError('');
 
@@ -368,36 +380,8 @@ export default function JoinForm() {
 
     setIsLoading(true);
 
-    try {
-      interface JoinQueuePayload {
-        clinicId: string;
-        doctorId: string;
-        patientData: {
-          name: string;
-          age: number;
-          phone: string;
-        };
-      }
-
-      interface JoinQueueResult {
-        patientId: string;
-        queueId: string;
-        doctorId: string;
-        clinicId: string;
-        accessToken?: string;
-        patientIdentityId?: string;
-        patientResolver?: {
-          version: string;
-          matchType: string;
-          confidence: string;
-          requiresReview: boolean;
-          metadataVersion: number;
-          ambiguityId?: string | null;
-        } | null;
-      }
-
-      const joinFn = httpsCallable<JoinQueuePayload, JoinQueueResult>(functions, 'joinQueue');
-      const { data } = await joinFn({
+    joinQueueMutation.mutate(
+      {
         clinicId,
         doctorId,
         patientData: {
@@ -405,59 +389,48 @@ export default function JoinForm() {
           age: validation.sanitized.age ?? Number.parseInt(age, 10),
           phone: validation.sanitized.phone ?? phone.replace(/\D+/g, ''),
         },
-      });
+      },
+      {
+        onSuccess: (data) => {
+          const { patientId, queueId, doctorId: dId, clinicId: cId, accessToken } = data;
+          
+          const joinUrl = `/queue/${cId}/${dId}/${queueId}/${patientId}${
+            accessToken ? `?t=${encodeURIComponent(accessToken)}` : ''
+          }`;
+          router.push(joinUrl);
+          toast.success('You have been added to the queue.');
+        },
+        onError: (err) => {
+          const targetDoctorId = doctorId;
 
-      if (!data?.patientId) {
-        const message = 'Failed to join queue. Please try again.';
-        setError(message);
-        toast.error(message);
-        return;
+          if (isCallableError(err) && err.code === 'failed-precondition') {
+            const details =
+              typeof err.details === 'object' && err.details !== null
+                ? (err.details as Record<string, unknown>)
+                : undefined;
+            const availabilityPayload = deserializeAvailabilityPayload(details?.availability);
+
+            if (availabilityPayload && targetDoctorId) {
+              setAvailabilityByDoctor((prev) => ({ ...prev, [targetDoctorId]: availabilityPayload }));
+            }
+
+            const message =
+              availabilityPayload?.message ??
+              (err instanceof Error ? err.message : 'Doctor is currently unavailable.');
+            setError(message);
+            // Toast already handled by mutation hook
+            if (targetDoctorId) encourageNotification(targetDoctorId);
+          } else {
+            const message = err instanceof Error ? err.message : 'Failed to join queue. Please try again.';
+            setError(message);
+            // Toast already handled by mutation hook
+          }
+        },
+        onSettled: () => {
+          setIsLoading(false);
+        },
       }
-
-      const { patientId, queueId, doctorId: dId, clinicId: cId, accessToken } = data;
-
-      try {
-        if (accessToken && patientId) {
-          sessionStorage.setItem(`patientToken:${patientId}`, accessToken);
-        }
-      } catch (storageError) {
-        console.warn('Failed to store access token in sessionStorage', storageError);
-      }
-
-      const joinUrl = `/queue/${cId}/${dId}/${queueId}/${patientId}${
-        accessToken ? `?t=${encodeURIComponent(accessToken)}` : ''
-      }`;
-      router.push(joinUrl);
-      toast.success('You have been added to the queue.');
-    } catch (err) {
-      console.error('Error calling joinQueue callable function:', err);
-      const targetDoctorId = doctorId;
-
-      if (isCallableError(err) && err.code === 'failed-precondition') {
-        const details =
-          typeof err.details === 'object' && err.details !== null
-            ? (err.details as Record<string, unknown>)
-            : undefined;
-        const availabilityPayload = deserializeAvailabilityPayload(details?.availability);
-
-        if (availabilityPayload && targetDoctorId) {
-          setAvailabilityByDoctor((prev) => ({ ...prev, [targetDoctorId]: availabilityPayload }));
-        }
-
-        const message =
-          availabilityPayload?.message ??
-          (err instanceof Error ? err.message : 'Doctor is currently unavailable.');
-        setError(message);
-        toast.error(message);
-        if (targetDoctorId) encourageNotification(targetDoctorId);
-      } else {
-        const message = err instanceof Error ? err.message : 'Failed to join queue. Please try again.';
-        setError(message);
-        toast.error(message);
-      }
-    } finally {
-      setIsLoading(false);
-    }
+    );
   };
 
   const handleNotifyDoctorOnline = async () => {
@@ -798,6 +771,54 @@ export default function JoinForm() {
       isMountedRef.current = false;
     };
   }, []);
+
+  // Sync TanStack Query data with component state
+  // This updates availability when query succeeds (either from cache or network)
+  useEffect(() => {
+    if (doctorAvailabilityQuery.data) {
+      const { clinic, doctors: doctorEntries } = doctorAvailabilityQuery.data;
+      
+      // Update clinic data if available
+      if (clinic) {
+        setClinicData(clinic);
+      }
+
+      // Update availability map
+      const availabilityMap = doctorEntries.reduce<Record<string, DoctorAvailabilityPayload>>((acc, entry) => {
+        acc[entry.doctorId] = entry.availability;
+        return acc;
+      }, {});
+
+      if (Object.keys(availabilityMap).length > 0) {
+        setAvailabilityByDoctor((prev) => ({ ...prev, ...availabilityMap }));
+        setAvailabilityError(null);
+      }
+
+      // Update doctors list
+      const resolvedDoctors: DoctorListEntry[] = doctorEntries.map((entry: ClinicDoctorAvailabilityEntry) => ({
+        id: entry.doctorId,
+        name: entry.profile?.name ?? entry.doctorId,
+        specialty: entry.profile?.specialty ?? 'General Practice',
+        availability: entry.availability,
+      }));
+
+      if (resolvedDoctors.length > 0) {
+        setDoctors(resolvedDoctors);
+      }
+    }
+
+    if (doctorAvailabilityQuery.error) {
+      console.error('[useDoctorAvailability] Query error:', doctorAvailabilityQuery.error);
+      setAvailabilityError(
+        doctorAvailabilityQuery.error instanceof Error
+          ? doctorAvailabilityQuery.error.message
+          : 'Failed to load doctor availability.'
+      );
+    }
+
+    // Update loading state based on query status
+    setDoctorsLoading(doctorAvailabilityQuery.isLoading || doctorAvailabilityQuery.isFetching);
+  }, [doctorAvailabilityQuery.data, doctorAvailabilityQuery.error, doctorAvailabilityQuery.isLoading, doctorAvailabilityQuery.isFetching]);
 
   useEffect(() => {
     if (status !== 'loading') return;

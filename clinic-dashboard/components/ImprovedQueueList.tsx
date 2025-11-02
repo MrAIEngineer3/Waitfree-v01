@@ -5,6 +5,7 @@ import { httpsCallable } from 'firebase/functions';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { toast } from 'sonner';
 import { db, functions } from '../lib/firebase';
+import { useCallPatient, useCancelPatient, useCompletePatient, useUncallPatient } from '../lib/hooks/use-queue-mutations';
 import { queueProfilingEnabled, recordRender } from '../lib/profiling';
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "./ui/alert-dialog";
 import { Badge } from './ui/Badge';
@@ -121,6 +122,12 @@ export default function ImprovedQueueList({
   const doctorId = doctorIdProp;
   const queueId = dayKey;
 
+  // TanStack Query mutation hooks for optimistic updates
+  const callPatientMutation = useCallPatient(clinicId || '', doctorId || '', queueId);
+  const completePatientMutation = useCompletePatient(clinicId || '', doctorId || '', queueId);
+  const cancelPatientMutation = useCancelPatient(clinicId || '', doctorId || '', queueId);
+  const uncallPatientMutation = useUncallPatient(clinicId || '', doctorId || '', queueId);
+
   const endedFlag = queueStatus === 'ended' || queueStatus === 'closed';
   const isReadOnly = dayKey !== new Date().toISOString().split('T')[0] || endedFlag;
   const queueInactive = queueStatus === 'paused' || endedFlag;
@@ -183,7 +190,7 @@ export default function ImprovedQueueList({
       window.removeEventListener('restartQueue', handleRestart);
     };
   }, [queueStatus, clinicId, doctorId, queueId, isReadOnly, handleQueueStatusEvent]);
-  const handleCallPatient = async (patientId: string) => {
+  const handleCallPatient = (patientId: string) => {
     if (!clinicId || !doctorId || !queueId) return;
     if (queueInactive) {
       toast.error('Queue is not active. Resume it before calling patients.');
@@ -191,21 +198,15 @@ export default function ImprovedQueueList({
     }
     setLoadingPatientIds(prev => new Set(prev).add(patientId));
     
-    try {
-      const updatePatientStatus = httpsCallable(functions, 'updatePatientStatus');
-      await updatePatientStatus({ clinicId, doctorId, queueId, patientId, newStatus: 'in-progress' });
-      const patient = patients.find(p => p.id === patientId);
-      toast.success(`${patient?.name || 'Patient'} has been called`);
-    } catch (error) {
-      console.error('Error calling patient:', error);
-      toast.error(getErrorMessage(error, 'Failed to call patient'));
-    } finally {
-      setLoadingPatientIds(prev => {
-        const next = new Set(prev);
-        next.delete(patientId);
-        return next;
-      });
-    }
+    callPatientMutation.mutate(patientId, {
+      onSettled: () => {
+        setLoadingPatientIds(prev => {
+          const next = new Set(prev);
+          next.delete(patientId);
+          return next;
+        });
+      }
+    });
   };
 
   const requestCompletePatient = (patientId: string) => {
@@ -215,22 +216,16 @@ export default function ImprovedQueueList({
     setShowCompleteModal(true);
   };
 
-  const handleCompletePatient = async () => {
+  const handleCompletePatient = () => {
     if (!clinicId || !doctorId || !queueId || !completePatientId) return;
     setIsCompletingPatient(true);
     
-    try {
-      const updatePatientStatus = httpsCallable(functions, 'updatePatientStatus');
-      await updatePatientStatus({ clinicId, doctorId, queueId, patientId: completePatientId, newStatus: 'completed' });
-      const patient = patients.find(p => p.id === completePatientId);
-      toast.success(`${patient?.name || 'Patient'} marked as completed`);
-      setShowCompleteModal(false);
-    } catch (error) {
-      console.error('Error completing patient:', error);
-      toast.error(getErrorMessage(error, 'Failed to complete patient'));
-    } finally {
-      setIsCompletingPatient(false);
-    }
+    completePatientMutation.mutate(completePatientId, {
+      onSettled: () => {
+        setIsCompletingPatient(false);
+        setShowCompleteModal(false);
+      }
+    });
   };
 
   const requestCancelPatient = (patientId: string) => {
@@ -240,22 +235,16 @@ export default function ImprovedQueueList({
     setShowCancelModal(true);
   };
 
-  const handleCancelPatient = async () => {
+  const handleCancelPatient = () => {
     if (!clinicId || !doctorId || !queueId || !cancelPatientId) return;
     setIsCancellingPatient(true);
     
-    try {
-      const updatePatientStatus = httpsCallable(functions, 'updatePatientStatus');
-      await updatePatientStatus({ clinicId, doctorId, queueId, patientId: cancelPatientId, newStatus: 'cancelled' });
-      const patient = patients.find(p => p.id === cancelPatientId);
-      toast.success(`${patient?.name || 'Patient'} has been cancelled`);
-      setShowCancelModal(false);
-    } catch (error) {
-      console.error('Error cancelling patient:', error);
-      toast.error(getErrorMessage(error, 'Failed to cancel patient'));
-    } finally {
-      setIsCancellingPatient(false);
-    }
+    cancelPatientMutation.mutate(cancelPatientId, {
+      onSettled: () => {
+        setIsCancellingPatient(false);
+        setShowCancelModal(false);
+      }
+    });
   };
 
   const requestUncallPatient = (patientId: string) => {
@@ -265,22 +254,16 @@ export default function ImprovedQueueList({
     setShowUncallModal(true);
   };
 
-  const handleUncallPatient = async () => {
+  const handleUncallPatient = () => {
     if (!clinicId || !doctorId || !queueId || !uncallPatientId) return;
     setIsUncallingPatient(true);
     
-    try {
-      const updatePatientStatus = httpsCallable(functions, 'updatePatientStatus');
-      await updatePatientStatus({ clinicId, doctorId, queueId, patientId: uncallPatientId, newStatus: 'waiting' });
-      const patient = patients.find(p => p.id === uncallPatientId);
-      toast.success(`${patient?.name || 'Patient'} returned to waiting`);
-      setShowUncallModal(false);
-    } catch (error) {
-      console.error('Error uncalling patient:', error);
-      toast.error(getErrorMessage(error, 'Failed to uncall patient'));
-    } finally {
-      setIsUncallingPatient(false);
-    }
+    uncallPatientMutation.mutate(uncallPatientId, {
+      onSettled: () => {
+        setIsUncallingPatient(false);
+        setShowUncallModal(false);
+      }
+    });
   };
 
   const handleNextPatient = async () => {

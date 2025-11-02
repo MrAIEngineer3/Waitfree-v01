@@ -2,27 +2,27 @@
 
 export const dynamic = "force-dynamic";
 
+import {
+    AlertDialog,
+    AlertDialogAction,
+    AlertDialogCancel,
+    AlertDialogContent,
+    AlertDialogDescription,
+    AlertDialogFooter,
+    AlertDialogHeader,
+    AlertDialogTitle,
+    AlertDialogTrigger
+} from '@/components/ui/alert-dialog';
+import { Button } from '@/components/ui/button';
+import { useRejoinQueue } from '@/lib/hooks/use-join-queue';
 import { signInWithCustomToken } from 'firebase/auth';
 import { doc, onSnapshot, type DocumentData, type Timestamp } from 'firebase/firestore';
 import { httpsCallable } from 'firebase/functions';
-import { useParams, useRouter } from 'next/navigation';
+import { useParams } from 'next/navigation';
 import { useEffect, useRef, useState } from 'react';
 import { toast } from 'sonner';
-import { Button } from '@/components/ui/button';
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-  AlertDialogTrigger
-} from '@/components/ui/alert-dialog';
 import { auth, db, functions } from '../../../../../../lib/firebase';
 import { ensurePatientToken } from './tokenStorage';
-import { buildRejoinRedirectUrl } from './rejoinUtils';
 
 interface Patient {
   id: string;
@@ -73,21 +73,6 @@ interface PatientCancelTokenResult {
   message?: string;
 }
 
-type PatientRejoinQueuePayload = PatientCancelTokenPayload;
-
-interface PatientRejoinQueueResult {
-  success: boolean;
-  status: Patient['status'];
-  message?: string;
-  rejoin?: {
-    clinicId: string;
-    doctorId: string;
-    queueId: string;
-    patientId: string;
-    accessToken: string;
-  };
-}
-
 interface CreatePatientSessionPayload {
   clinicId: string;
   doctorId: string;
@@ -104,7 +89,7 @@ interface CreatePatientSessionResult {
 
 export default function QueueStatus() {
   const params = useParams<{ clinicId: string; doctorId: string; queueId: string; patientId: string }>();
-  const router = useRouter();
+  const rejoinQueueMutation = useRejoinQueue();
   const clinicId = params?.clinicId;
   const doctorId = params?.doctorId;
   const queueId = params?.queueId;
@@ -334,7 +319,7 @@ export default function QueueStatus() {
     }
   };
 
-  const handleRejoinQueue = async () => {
+  const handleRejoinQueue = () => {
     if (!clinicId || !doctorId || !queueId || !patientId) {
       setActionError('Missing queue information.');
       return;
@@ -347,43 +332,26 @@ export default function QueueStatus() {
     setActionError(null);
     setActionState('rejoining');
 
-    try {
-      const rejoinFn = httpsCallable<PatientRejoinQueuePayload, PatientRejoinQueueResult>(functions, 'patientRejoinQueue');
-      const { data } = await rejoinFn({ clinicId, doctorId, queueId, patientId, token: accessToken });
-
-      if (data?.success && data.rejoin) {
-        const { clinicId: newClinicId, doctorId: newDoctorId, queueId: newQueueId, patientId: newPatientId, accessToken: newToken } = data.rejoin;
-
-        if (newToken) {
-          try {
-            sessionStorage.setItem(`patientToken:${newPatientId}`, newToken);
-          } catch (storageErr) {
-            console.warn('Failed to store new access token', storageErr);
+    rejoinQueueMutation.mutate(
+      { clinicId, doctorId, queueId, patientId },
+      {
+        onSuccess: (data) => {
+          if (data?.success && data.queueId) {
+            // Rejoin successful - stay on same page as queue will update via listener
+            setActionState('idle');
+          } else {
+            const fallback = data?.message ?? 'Unable to rejoin the queue. Please try again.';
+            setActionError(fallback);
+            setActionState('idle');
           }
-        }
-
-        toast.success('You have rejoined the queue. Redirecting you to your updated token.');
-        const nextUrl = buildRejoinRedirectUrl({
-          clinicId: newClinicId,
-          doctorId: newDoctorId,
-          queueId: newQueueId,
-          patientId: newPatientId,
-          accessToken: newToken
-        });
-        router.push(nextUrl);
-        return;
+        },
+        onError: (err) => {
+          const message = err instanceof Error ? err.message : 'Failed to rejoin queue. Please try again.';
+          setActionError(message);
+          setActionState('idle');
+        },
       }
-
-      const fallback = data?.message ?? 'Unable to rejoin the queue. Please try again.';
-      setActionError(fallback);
-      toast.error(fallback);
-    } catch (err) {
-      const message = (err as { message?: string })?.message ?? 'Unable to rejoin the queue. Please try again.';
-      setActionError(message);
-      toast.error(message);
-    } finally {
-      setActionState('idle');
-    }
+    );
   };
 
   // Calculate derived values (status-aware)

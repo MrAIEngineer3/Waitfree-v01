@@ -1,8 +1,9 @@
+import { ThemeProvider } from "@/components/theme-provider";
+import { ReactQueryProvider } from "@/lib/react-query";
 import type { Metadata } from "next";
 import { Inter } from "next/font/google";
-import "./globals.css";
 import { Toaster } from "sonner";
-import { ThemeProvider } from "@/components/theme-provider";
+import "./globals.css";
 
 const inter = Inter({
   variable: "--font-inter",
@@ -19,16 +20,18 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
   return (
     <html lang="en" suppressHydrationWarning>
       <body className={`${inter.variable} antialiased min-h-screen bg-background text-foreground`}>
-        <ThemeProvider
-          attribute="class"
-          defaultTheme="light"
-          enableSystem
-          disableTransitionOnChange={false}
-          storageKey="waitfree-theme"
-        >
-          {children}
-          <Toaster />
-        </ThemeProvider>
+        <ReactQueryProvider>
+          <ThemeProvider
+            attribute="class"
+            defaultTheme="light"
+            enableSystem
+            disableTransitionOnChange={false}
+            storageKey="waitfree-theme"
+          >
+            {children}
+            <Toaster />
+          </ThemeProvider>
+        </ReactQueryProvider>
       </body>
     </html>
   );
