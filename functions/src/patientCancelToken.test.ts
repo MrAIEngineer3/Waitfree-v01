@@ -131,9 +131,12 @@ describe('patientCancelTokenHandler', () => {
       ...callData,
       newStatus: 'cancelled'
     }, expect.any(Object));
-    expect(patientDocRef.set).toHaveBeenCalledWith(expect.objectContaining({
-      cancellation: expect.objectContaining({ cancelledBy: 'patient-self' })
-    }), { merge: true });
+
+    await vi.waitFor(() => {
+      expect(patientDocRef.set).toHaveBeenCalledWith(expect.objectContaining({
+        cancellation: expect.objectContaining({ cancelledBy: 'patient-self' })
+      }), { merge: true });
+    });
   });
 
   it('rejects when the token hash does not match', async () => {

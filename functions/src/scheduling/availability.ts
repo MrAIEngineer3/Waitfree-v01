@@ -3,19 +3,30 @@ import { DateTime } from 'luxon';
 import { loadDoctorSchedulingSnapshot } from './firestore';
 import { loadClinicSchedulingSettings } from './settings';
 import {
-  AvailabilityReasonCode,
-  BlockerOverride,
-  DAY_OF_WEEK_ORDER,
-  DayOfWeek,
-  DefaultWeeklyRota,
-  DoctorAvailabilityResult,
-  ExceptionOverride,
-  ResolveDoctorAvailabilityInput,
-  ResolveManyDoctorAvailabilityInput,
-  ScheduleLayer,
-  ScheduleOverride
+    AvailabilityReasonCode,
+    BlockerOverride,
+    DAY_OF_WEEK_ORDER,
+    DayOfWeek,
+    DefaultWeeklyRota,
+    DoctorAvailabilityResult,
+    ExceptionOverride,
+    ResolveDoctorAvailabilityInput,
+    ResolveManyDoctorAvailabilityInput,
+    ScheduleLayer,
+    ScheduleOverride
 } from './types';
 import { ParsedTimeRange, parseTimeBlock } from './utils';
+
+const AVAILABILITY_CACHE_TTL_MS = 30 * 1000; // 30 seconds reuse window
+
+type AvailabilityCacheEntry = {
+  data: DoctorAvailabilityResult;
+  expiresAt: number;
+};
+
+const availabilityCache = new Map<string, AvailabilityCacheEntry>();
+
+const buildAvailabilityCacheKey = (clinicId: string, doctorId: string): string => `${clinicId}::${doctorId}`;
 
 const getDayKey = (dt: DateTime): DayOfWeek => {
   const index = dt.weekday - 1; // Luxon weekday: 1 = Monday ... 7 = Sunday
@@ -257,6 +268,34 @@ export const resolveDoctorAvailability = async (
   const { clinicId, doctorId } = input;
   const reference = input.reference ?? new Date();
   const computedAt = new Date();
+  const cacheEligible = !input.settings && !input.reference;
+  const cacheKey = cacheEligible ? buildAvailabilityCacheKey(clinicId, doctorId) : null;
+  const now = Date.now();
+
+  if (cacheKey) {
+    const cached = availabilityCache.get(cacheKey);
+    if (cached) {
+      if (cached.expiresAt > now) {
+        const cachedData = cached.data;
+        return {
+          ...cachedData,
+          computedAt: new Date()
+        };
+      }
+      availabilityCache.delete(cacheKey);
+    }
+  }
+
+  const finalizeResult = (result: DoctorAvailabilityResult): DoctorAvailabilityResult => {
+    if (cacheKey) {
+      availabilityCache.set(cacheKey, {
+        data: result,
+        expiresAt: now + AVAILABILITY_CACHE_TTL_MS
+      });
+    }
+    return result;
+  };
+
   const settings = input.settings ?? (await loadClinicSchedulingSettings(clinicId));
   const manualCheckInRequired = settings.manualCheckInRequired === true;
   const allowOfflineSignups = settings.allowOfflineSignups === true;
@@ -278,7 +317,7 @@ export const resolveDoctorAvailability = async (
   const realTimeOnline = realTime?.online === true;
 
   if (!realTimeOnline) {
-    return {
+    return finalizeResult({
       clinicId,
       doctorId,
       status: 'UNAVAILABLE',
@@ -288,13 +327,13 @@ export const resolveDoctorAvailability = async (
       realTimeStatus: realTime ?? undefined,
       message: buildReasonMessage('REALTIME_OFFLINE', {}),
       debug: mergeDebug({ realTimePresent: !!realTime, realTimeOnline })
-    };
+    });
   }
 
   const referenceMillis = reference.getTime();
   const activeBlocker = findActiveBlocker(overrides, referenceMillis);
   if (activeBlocker) {
-    return {
+    return finalizeResult({
       clinicId,
       doctorId,
       status: 'UNAVAILABLE',
@@ -306,12 +345,12 @@ export const resolveDoctorAvailability = async (
       nextAvailableAt: activeBlocker.end.toDate(),
       message: buildReasonMessage('BLOCKER', { rota: document.defaultRota, override: activeBlocker }),
       debug: mergeDebug({ activeBlocker: activeBlocker.id })
-    };
+    });
   }
 
   const activeException = findActiveException(overrides, referenceMillis);
   if (activeException) {
-    return {
+    return finalizeResult({
       clinicId,
       doctorId,
       status: 'AVAILABLE',
@@ -322,7 +361,7 @@ export const resolveDoctorAvailability = async (
       realTimeStatus: realTime ?? undefined,
       message: buildReasonMessage('EXCEPTION_AVAILABLE', { rota: document.defaultRota }),
       debug: mergeDebug({ activeException: activeException.id })
-    };
+    });
   }
 
   const defaultResolution = resolveFromDefaultRota(
@@ -334,14 +373,14 @@ export const resolveDoctorAvailability = async (
   );
 
   if (defaultResolution.status === 'AVAILABLE') {
-    return {
+    return finalizeResult({
       ...defaultResolution,
       realTimeStatus: realTime ?? undefined,
       debug: mergeDebug(defaultResolution.debug)
-    };
+    });
   }
 
-  return {
+  return finalizeResult({
     clinicId,
     doctorId,
     status: 'AVAILABLE',
@@ -355,7 +394,7 @@ export const resolveDoctorAvailability = async (
       scheduleLayer: defaultResolution.layer,
       scheduleReason: defaultResolution.reasonCode
     })
-  };
+  });
 };
 
 export const resolveManyDoctorAvailability = async (

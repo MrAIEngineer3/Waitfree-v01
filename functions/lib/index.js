@@ -116,6 +116,248 @@ const runInBackground = (taskName, task) => {
         }
     });
 };
+// Persist resolver metadata without blocking the main response path.
+const persistResolverDataAsync = (docRef, update, context) => {
+    runInBackground(`patientResolver.persist.${context.source}`, async () => {
+        const span = (0, timing_1.startTiming)('patientResolver.persist', {
+            clinicId: context.clinicId,
+            doctorId: context.doctorId,
+            queueId: context.queueId,
+            patientId: context.patientId,
+            source: context.source
+        });
+        try {
+            await docRef.set(update, { merge: true });
+            span.succeed({ persisted: true });
+            functions.logger.debug('Patient resolver data persisted', context);
+        }
+        catch (err) {
+            span.fail({ error: err instanceof Error ? err.message : String(err) });
+            functions.logger.warn('Failed to persist patient resolver data', {
+                ...context,
+                error: err instanceof Error ? err.message : String(err)
+            });
+        }
+    });
+};
+const schedulePhase1CompletionProcessing = (db, options) => {
+    runInBackground('updatePatientStatus.phase1Completion', async () => {
+        const span = (0, timing_1.startTiming)('updatePatientStatus.phase1Completion', {
+            clinicId: options.clinicId,
+            doctorId: options.doctorId,
+            queueId: options.queueId,
+            patientId: options.patientId,
+            mode: 'background'
+        });
+        const phaseStarted = process.hrtime.bigint();
+        let serviceDurationMs;
+        try {
+            const patientSnap = options.preloadedPatientSnap ?? (await options.patientDocRef.get());
+            const latest = patientSnap.data();
+            const svc = latest?.service || {};
+            if (svc.startedAt && svc.completedAt && !svc.serviceDurationMs) {
+                try {
+                    if (typeof svc.startedAt.toMillis === 'function' && typeof svc.completedAt.toMillis === 'function') {
+                        serviceDurationMs = svc.completedAt.toMillis() - svc.startedAt.toMillis();
+                    }
+                }
+                catch (err) {
+                    functions.logger.warn('Failed to compute service duration', {
+                        clinicId: options.clinicId,
+                        doctorId: options.doctorId,
+                        queueId: options.queueId,
+                        patientId: options.patientId,
+                        error: err instanceof Error ? err.message : String(err)
+                    });
+                }
+            }
+            if (serviceDurationMs && serviceDurationMs > 0 && !svc.serviceDurationMs) {
+                try {
+                    await patientSnap.ref.set({ service: { ...svc, serviceDurationMs } }, { merge: true });
+                    functions.logger.debug('Phase1 wrote serviceDurationMs (background)', {
+                        patientId: options.patientId,
+                        serviceDurationMs
+                    });
+                }
+                catch (err) {
+                    functions.logger.warn('Phase1 failed to persist serviceDurationMs', {
+                        clinicId: options.clinicId,
+                        doctorId: options.doctorId,
+                        queueId: options.queueId,
+                        patientId: options.patientId,
+                        error: err instanceof Error ? err.message : String(err)
+                    });
+                }
+            }
+            if (serviceDurationMs && serviceDurationMs > 0) {
+                const emaSpan = (0, timing_1.startTiming)('updatePatientStatus.phase1Completion.updateQueueAvg', {
+                    clinicId: options.clinicId,
+                    doctorId: options.doctorId,
+                    queueId: options.queueId,
+                    patientId: options.patientId,
+                    serviceDurationMs
+                });
+                try {
+                    await db.runTransaction(async (tx) => {
+                        const qDoc = await tx.get(options.queueDocRef);
+                        if (qDoc.exists) {
+                            const qd = qDoc.data() || {};
+                            const oldAvg = qd?.metrics?.avgServiceMs;
+                            const alpha = 0.2;
+                            const newAvg = oldAvg ? Math.round(oldAvg * (1 - alpha) + serviceDurationMs * alpha) : serviceDurationMs;
+                            const metrics = { ...(qd.metrics || {}), avgServiceMs: newAvg, updatedAt: firestore_1.FieldValue.serverTimestamp() };
+                            tx.set(options.queueDocRef, { metrics }, { merge: true });
+                            functions.logger.debug('Phase1 updated queue avgServiceMs (background)', {
+                                queueId: options.queueId,
+                                newAvg,
+                                serviceDurationMs
+                            });
+                        }
+                    });
+                    emaSpan.succeed({ updated: true });
+                }
+                catch (err) {
+                    emaSpan.fail({ error: err instanceof Error ? err.message : String(err) });
+                    functions.logger.warn('Phase1 failed to update queue average service time', {
+                        clinicId: options.clinicId,
+                        doctorId: options.doctorId,
+                        queueId: options.queueId,
+                        patientId: options.patientId,
+                        error: err instanceof Error ? err.message : String(err)
+                    });
+                }
+            }
+            const latestPatient = latest || {};
+            const alreadyCompletedNotified = latestPatient?.notifications?.completed === true;
+            if (!alreadyCompletedNotified) {
+                runInBackground('updatePatientStatus.completedNotification', async () => {
+                    const completedSpan = (0, timing_1.startTiming)('updatePatientStatus.phase1Completion.completedNotification', {
+                        clinicId: options.clinicId,
+                        doctorId: options.doctorId,
+                        queueId: options.queueId,
+                        patientId: options.patientId
+                    });
+                    try {
+                        const canSendCompleted = await (0, notificationPreferences_1.isNotificationEnabled)({
+                            clinicId: options.clinicId,
+                            channel: 'whatsapp',
+                            event: 'tokenUpdates'
+                        });
+                        if (!canSendCompleted) {
+                            functions.logger.info('Skipping completed notification because clinic disabled token updates', {
+                                clinicId: options.clinicId,
+                                doctorId: options.doctorId,
+                                queueId: options.queueId,
+                                patientId: options.patientId
+                            });
+                            completedSpan.succeed({ skipped: 'disabled-by-preferences' });
+                            return;
+                        }
+                        try {
+                            await patientSnap.ref.set({ notifications: { ...(latestPatient?.notifications || {}), completed: true } }, { merge: true });
+                        }
+                        catch (flagErr) {
+                            functions.logger.warn('Failed to mark completed notification flag', {
+                                clinicId: options.clinicId,
+                                doctorId: options.doctorId,
+                                queueId: options.queueId,
+                                patientId: options.patientId,
+                                error: flagErr instanceof Error ? flagErr.message : String(flagErr)
+                            });
+                        }
+                        await (0, notifier_1.sendNotification)({
+                            to: latestPatient?.phone || 'unknown',
+                            type: 'completed',
+                            payload: {
+                                name: latestPatient?.name,
+                                tokenNumber: latestPatient?.tokenNumber,
+                                clinicId: options.clinicId,
+                                doctorId: options.doctorId,
+                                queueId: options.queueId,
+                                serviceDurationMs: serviceDurationMs || null
+                            }
+                        });
+                        functions.logger.debug('Phase1 sent completed notification (background)', { patientId: options.patientId });
+                        completedSpan.succeed({});
+                    }
+                    catch (err) {
+                        completedSpan.fail({ error: err instanceof Error ? err.message : String(err) });
+                        functions.logger.warn('Failed to send completed notification', err);
+                    }
+                });
+            }
+            const phaseFinished = process.hrtime.bigint();
+            const durationMs = Number(phaseFinished - phaseStarted) / 1000000;
+            span.succeed({ serviceDurationMs: serviceDurationMs ?? null, durationMs });
+        }
+        catch (err) {
+            span.fail({ error: err instanceof Error ? err.message : String(err) });
+            functions.logger.warn('Phase1 completion background processing failed', err, {
+                clinicId: options.clinicId,
+                doctorId: options.doctorId,
+                queueId: options.queueId,
+                patientId: options.patientId
+            });
+        }
+    });
+};
+const scheduleAutoAdvancePromotion = (db, options) => {
+    runInBackground('updatePatientStatus.autoAdvance', async () => {
+        const autoSpan = (0, timing_1.startTiming)('updatePatientStatus.autoAdvance', {
+            clinicId: options.clinicId,
+            doctorId: options.doctorId,
+            queueId: options.queueId,
+            patientId: options.patientId,
+            mode: 'background'
+        });
+        try {
+            const queueSnap = options.preloadedQueueSnap ?? (await options.queueDocRef.get());
+            if (!queueSnap.exists) {
+                autoSpan.succeed({ skipped: 'queue-missing' });
+                return;
+            }
+            const qData = queueSnap.data() || {};
+            if (qData.autoAdvance !== true || qData.status === 'ended' || qData.status === 'paused') {
+                autoSpan.succeed({ skipped: 'auto-advance-disabled' });
+                return;
+            }
+            const patientsCollection = options.queueDocRef.collection('patients');
+            const nextSnap = await patientsCollection
+                .where('status', '==', 'waiting')
+                .orderBy('tokenNumber')
+                .limit(1)
+                .get();
+            if (nextSnap.empty) {
+                autoSpan.succeed({ promoted: false });
+                return;
+            }
+            const nextDoc = nextSnap.docs[0];
+            const nextData = nextDoc.data();
+            const nextToken = nextData?.tokenNumber || 0;
+            await Promise.all([
+                nextDoc.ref.update({ status: 'in-progress', updatedAt: firestore_1.FieldValue.serverTimestamp() }),
+                options.queueDocRef.update({ currentToken: nextToken, updatedAt: firestore_1.FieldValue.serverTimestamp() })
+            ]);
+            functions.logger.info('Auto-advance promoted next patient (background)', {
+                nextPatientId: nextDoc.id,
+                nextToken,
+                clinicId: options.clinicId,
+                doctorId: options.doctorId,
+                queueId: options.queueId
+            });
+            autoSpan.succeed({ promoted: true, nextPatientId: nextDoc.id });
+        }
+        catch (err) {
+            autoSpan.fail({ error: err instanceof Error ? err.message : String(err) });
+            functions.logger.warn('Auto-advance failed (background)', err, {
+                clinicId: options.clinicId,
+                doctorId: options.doctorId,
+                queueId: options.queueId,
+                patientId: options.patientId
+            });
+        }
+    });
+};
 // Use cors with a dynamic origin function to validate incoming origin header against allowedOrigins.
 // CORS is not needed for callable functions, so removed.
 // Configure region for all functions
@@ -750,6 +992,11 @@ exports.ping = createV2Callable(pingHandler);
  * Implements secure queue joining with automatic token assignment.
  */
 const joinQueueHandler = async (data, _context) => {
+    const span = (0, timing_1.startTiming)('joinQueue', {
+        clinicId: data?.clinicId ?? null,
+        doctorId: data?.doctorId ?? null
+    });
+    let spanClosed = false;
     try {
         // Extract data from the 'data' parameter provided by the client SDK
         const rawClinicId = data?.clinicId;
@@ -869,23 +1116,24 @@ const joinQueueHandler = async (data, _context) => {
             transaction.set(newPatientRef, newPatientData);
         });
         const patientDocRef = patientsRef.doc(newPatientData.id);
-        // Send "joined" notification (non-blocking)
-        try {
-            const canSendJoined = await (0, notificationPreferences_1.isNotificationEnabled)({
-                clinicId,
-                channel: 'whatsapp',
-                event: 'tokenUpdates'
-            });
-            if (!canSendJoined) {
-                functions.logger.info('Skipping joined notification because clinic disabled token updates', {
+        // Send "joined" notification without blocking the response path
+        runInBackground('joinQueue.sendJoinedNotification', async () => {
+            try {
+                const canSendJoined = await (0, notificationPreferences_1.isNotificationEnabled)({
                     clinicId,
-                    doctorId,
-                    queueId: today,
-                    patientId: newPatientData.id
+                    channel: 'whatsapp',
+                    event: 'tokenUpdates'
                 });
-            }
-            else {
-                // Mark the patient's notifications.joined flag (so emulator/debug shows it) and emit a debug notification
+                if (!canSendJoined) {
+                    functions.logger.info('Skipping joined notification because clinic disabled token updates', {
+                        clinicId,
+                        doctorId,
+                        queueId: today,
+                        patientId: newPatientData.id
+                    });
+                    return;
+                }
+                // Mark the patient's notifications.joined flag (so emulator/debug shows it)
                 try {
                     await patientDocRef.set({ notifications: { joined: true } }, { merge: true });
                 }
@@ -906,10 +1154,10 @@ const joinQueueHandler = async (data, _context) => {
                     }
                 });
             }
-        }
-        catch (notifyErr) {
-            functions.logger.warn('Failed to send joined notification (continuing):', notifyErr);
-        }
+            catch (notifyErr) {
+                functions.logger.warn('Failed to send joined notification (background):', notifyErr);
+            }
+        });
         if (resolverEnabled) {
             try {
                 patientResolverResult = await (0, patients_1.resolvePatientForQueue)({
@@ -950,15 +1198,22 @@ const joinQueueHandler = async (data, _context) => {
                     patientResolver: patientResolverSummary,
                     requiresPatientReview: patientResolverResult.requiresReview === true
                 };
-                await patientDocRef.set(resolverUpdate, { merge: true });
-                functions.logger.info('joinQueue linked patient identity', {
+                persistResolverDataAsync(patientDocRef, resolverUpdate, {
+                    clinicId,
+                    doctorId,
+                    queueId: today,
+                    patientId: newPatientData.id,
+                    source: 'joinQueue'
+                });
+                functions.logger.info('joinQueue resolved patient identity', {
                     clinicId,
                     doctorId,
                     queueId: today,
                     patientDocId: newPatientData.id,
                     patientIdentityId: patientResolverResult.patientId,
                     matchType: patientResolverResult.matchType,
-                    requiresReview: patientResolverResult.requiresReview
+                    requiresReview: patientResolverResult.requiresReview,
+                    persistedAsync: true
                 });
             }
             catch (resolverError) {
@@ -972,8 +1227,7 @@ const joinQueueHandler = async (data, _context) => {
                 });
             }
         }
-        // Return data to the client
-        return {
+        const response = {
             success: true,
             message: 'Successfully joined the queue',
             patientId: newPatientData.id,
@@ -988,9 +1242,17 @@ const joinQueueHandler = async (data, _context) => {
                 }
                 : {})
         };
+        span.succeed({ patientId: newPatientData.id, queueId: today });
+        spanClosed = true;
+        // Return data to the client
+        return response;
     }
     catch (error) {
         functions.logger.error('Error in joinQueue function:', error);
+        if (!spanClosed) {
+            span.fail({ error: error instanceof Error ? error.message : String(error) });
+            spanClosed = true;
+        }
         // Re-throw HttpsError for the client SDK to handle it correctly
         if (error instanceof functions.https.HttpsError) {
             throw error;
@@ -1129,22 +1391,33 @@ const manualAddPatientHandler = async (data, context) => {
         });
         const patientDocRef = queueRef.collection('patients').doc(newPatientId);
         if (phone && !suppressNotification) {
-            const canSendJoined = await (0, notificationPreferences_1.isNotificationEnabled)({
-                clinicId,
-                channel: 'whatsapp',
-                event: 'tokenUpdates'
-            });
-            if (!canSendJoined) {
-                functions.logger.info('Skipping manual joined notification because clinic disabled token updates', {
-                    clinicId,
-                    doctorId,
-                    queueId,
-                    patientId: newPatientId
-                });
-            }
-            else {
+            runInBackground('manualAddPatient.sendJoinedNotification', async () => {
                 try {
-                    await patientDocRef.set({ notifications: { joined: true } }, { merge: true });
+                    const canSendJoined = await (0, notificationPreferences_1.isNotificationEnabled)({
+                        clinicId,
+                        channel: 'whatsapp',
+                        event: 'tokenUpdates'
+                    });
+                    if (!canSendJoined) {
+                        functions.logger.info('Skipping manual joined notification because clinic disabled token updates', {
+                            clinicId,
+                            doctorId,
+                            queueId,
+                            patientId: newPatientId
+                        });
+                        return;
+                    }
+                    try {
+                        await patientDocRef.set({ notifications: { joined: true } }, { merge: true });
+                    }
+                    catch (flagErr) {
+                        functions.logger.warn('Failed to mark manual joined notification flag', flagErr, {
+                            clinicId,
+                            doctorId,
+                            queueId,
+                            patientId: newPatientId
+                        });
+                    }
                     await (0, notifier_1.sendNotification)({
                         to: phone,
                         type: 'joined',
@@ -1160,17 +1433,29 @@ const manualAddPatientHandler = async (data, context) => {
                     });
                 }
                 catch (notifyErr) {
-                    functions.logger.warn('Failed to send manual joined notification', notifyErr);
+                    functions.logger.warn('Failed to send manual joined notification (background)', notifyErr, {
+                        clinicId,
+                        doctorId,
+                        queueId,
+                        patientId: newPatientId
+                    });
                 }
-            }
+            });
         }
         else if (suppressNotification) {
-            try {
-                await patientDocRef.set({ notifications: { joinedSuppressed: true } }, { merge: true });
-            }
-            catch (notifyFlagErr) {
-                functions.logger.warn('Failed to record notification suppression flag', notifyFlagErr);
-            }
+            runInBackground('manualAddPatient.recordJoinedSuppression', async () => {
+                try {
+                    await patientDocRef.set({ notifications: { joinedSuppressed: true } }, { merge: true });
+                }
+                catch (notifyFlagErr) {
+                    functions.logger.warn('Failed to record notification suppression flag', notifyFlagErr, {
+                        clinicId,
+                        doctorId,
+                        queueId,
+                        patientId: newPatientId
+                    });
+                }
+            });
         }
         if (resolverEnabled) {
             try {
@@ -1211,15 +1496,22 @@ const manualAddPatientHandler = async (data, context) => {
                     patientResolver: patientResolverSummary,
                     requiresPatientReview: patientResolverResult.requiresReview === true
                 };
-                await patientDocRef.set(resolverUpdate, { merge: true });
-                functions.logger.info('manualAddPatient linked patient identity', {
+                persistResolverDataAsync(patientDocRef, resolverUpdate, {
+                    clinicId,
+                    doctorId,
+                    queueId,
+                    patientId: newPatientId,
+                    source: 'manualAddPatient'
+                });
+                functions.logger.info('manualAddPatient resolved patient identity', {
                     clinicId,
                     doctorId,
                     queueId,
                     patientDocId: newPatientId,
                     patientIdentityId: patientResolverResult.patientId,
                     matchType: patientResolverResult.matchType,
-                    requiresReview: patientResolverResult.requiresReview
+                    requiresReview: patientResolverResult.requiresReview,
+                    persistedAsync: true
                 });
             }
             catch (resolverError) {
@@ -1439,9 +1731,11 @@ const updatePatientStatusHandler = async (data, context) => {
         queueId: data?.queueId,
         newStatus: data?.newStatus
     });
-    let autoAdvancePromoted = false;
+    let autoAdvancePromoted = null;
     let recomputeTriggered = false;
     let phase1DurationMs = null;
+    let phase1BackgroundScheduled = false;
+    let autoAdvanceScheduled = false;
     let spanClosed = false;
     try {
         // Check authentication and staff claim (supports emulator users/{uid}.staff fallback)
@@ -1543,36 +1837,43 @@ const updatePatientStatusHandler = async (data, context) => {
                     queueId,
                     patientId
                 });
-                let patientDoc;
-                try {
-                    patientDoc = await transaction.get(patientRef);
-                    readPatientSpan.succeed({ found: patientDoc.exists });
-                }
-                catch (readErr) {
+                const patientDocPromise = transaction.get(patientRef)
+                    .then((docSnap) => {
+                    readPatientSpan.succeed({ found: docSnap.exists });
+                    return docSnap;
+                })
+                    .catch((readErr) => {
                     readPatientSpan.fail({ error: readErr instanceof Error ? readErr.message : String(readErr) });
                     throw readErr;
-                }
-                if (!patientDoc.exists) {
-                    throw new functions.https.HttpsError('not-found', 'Patient document not found.');
-                }
-                const patientData = patientDoc.data();
-                // 2. If completing OR moving to in-progress we need queue doc (read now before any write)
-                let queueDoc = null;
+                });
+                // 2. If completing OR moving to in-progress we need queue doc (start read before awaiting patient)
+                let queueDocPromise = null;
+                let readQueueSpan = null;
                 if (newStatus === 'completed' || newStatus === 'in-progress') {
-                    const readQueueSpan = (0, timing_1.startTiming)('updatePatientStatus.transaction.readQueue', {
+                    readQueueSpan = (0, timing_1.startTiming)('updatePatientStatus.transaction.readQueue', {
                         clinicId,
                         doctorId,
                         queueId,
                         newStatus
                     });
-                    try {
-                        queueDoc = await transaction.get(queueRef);
-                        readQueueSpan.succeed({ found: queueDoc.exists });
-                    }
-                    catch (queueErr) {
-                        readQueueSpan.fail({ error: queueErr instanceof Error ? queueErr.message : String(queueErr) });
+                    queueDocPromise = transaction.get(queueRef)
+                        .then((docSnap) => {
+                        readQueueSpan?.succeed({ found: docSnap.exists });
+                        return docSnap;
+                    })
+                        .catch((queueErr) => {
+                        readQueueSpan?.fail({ error: queueErr instanceof Error ? queueErr.message : String(queueErr) });
                         throw queueErr;
-                    }
+                    });
+                }
+                const patientDoc = await patientDocPromise;
+                if (!patientDoc.exists) {
+                    throw new functions.https.HttpsError('not-found', 'Patient document not found.');
+                }
+                const patientData = patientDoc.data();
+                let queueDoc = null;
+                if (queueDocPromise) {
+                    queueDoc = await queueDocPromise;
                     if (!queueDoc.exists) {
                         throw new functions.https.HttpsError('not-found', 'Queue document not found.');
                     }
@@ -1667,219 +1968,84 @@ const updatePatientStatusHandler = async (data, context) => {
             queueId,
             uid: context.auth.uid
         });
+        const queueDocRef = queueRef;
+        const patientDocRef = patientRef;
+        let preloadedPatientSnap = null;
+        let preloadedQueueSnap = null;
+        if (phase1Enabled && newStatus === 'completed') {
+            const [patientSnap, queueSnap] = await Promise.all([
+                patientDocRef.get(),
+                queueDocRef.get()
+            ]);
+            preloadedPatientSnap = patientSnap;
+            preloadedQueueSnap = queueSnap;
+        }
+        else if (newStatus === 'completed') {
+            preloadedQueueSnap = await queueDocRef.get();
+        }
         // Phase 1 post-transaction logic
         // 1. If patient just completed: compute service duration & update queue avg service time; send completed notification once.
         // 2. Legacy staged notifications remain untouched for now (we append completed flow before them to avoid interfering).
-        try {
-            if (phase1Enabled && newStatus === 'completed') {
-                const phaseSpan = (0, timing_1.startTiming)('updatePatientStatus.phase1Completion', {
-                    clinicId,
-                    doctorId,
-                    queueId,
-                    patientId
-                });
-                const phaseStarted = process.hrtime.bigint();
-                try {
-                    const db = firebaseAdmin_1.admin.firestore();
-                    const patientSnap = await db.collection('clinics').doc(clinicId)
-                        .collection('doctors').doc(doctorId)
-                        .collection('queues').doc(queueId)
-                        .collection('patients').doc(patientId).get();
-                    const latest = patientSnap.data();
-                    const svc = latest?.service || {};
-                    let serviceDurationMs;
-                    if (svc.startedAt && svc.completedAt && !svc.serviceDurationMs) {
-                        // Compute duration locally using Timestamp seconds if available
-                        try {
-                            const startedTs = svc.startedAt;
-                            const completedTs = svc.completedAt;
-                            if (startedTs?.toMillis && completedTs?.toMillis) {
-                                serviceDurationMs = completedTs.toMillis() - startedTs.toMillis();
-                            }
-                        }
-                        catch {
-                            /* ignore */
-                        }
-                    }
-                    // Update patient doc with duration if computed
-                    if (serviceDurationMs && !svc.serviceDurationMs) {
-                        await patientSnap.ref.set({ service: { ...svc, serviceDurationMs } }, { merge: true });
-                        functions.logger.debug('Phase1 wrote serviceDurationMs', { patientId, serviceDurationMs });
-                    }
-                    // Update queue average (EMA) if we have a fresh duration
-                    if (serviceDurationMs && serviceDurationMs > 0) {
-                        const queueRef = db.collection('clinics').doc(clinicId)
-                            .collection('doctors').doc(doctorId)
-                            .collection('queues').doc(queueId);
-                        const emaSpan = (0, timing_1.startTiming)('updatePatientStatus.phase1Completion.updateQueueAvg', {
-                            clinicId,
-                            doctorId,
-                            queueId,
-                            patientId
-                        });
-                        try {
-                            await db.runTransaction(async (tx) => {
-                                const qDoc = await tx.get(queueRef);
-                                if (qDoc.exists) {
-                                    const qd = qDoc.data() || {};
-                                    const oldAvg = qd?.metrics?.avgServiceMs;
-                                    const alpha = 0.2; // smoothing factor
-                                    const newAvg = oldAvg ? Math.round(oldAvg * (1 - alpha) + serviceDurationMs * alpha) : serviceDurationMs;
-                                    const metrics = { ...(qd.metrics || {}), avgServiceMs: newAvg, updatedAt: firestore_1.FieldValue.serverTimestamp() };
-                                    tx.set(queueRef, { metrics }, { merge: true });
-                                    functions.logger.debug('Phase1 updated queue avgServiceMs', { queueId, newAvg });
-                                    emaSpan.succeed({ newAvg });
-                                }
-                                else {
-                                    emaSpan.succeed({ skipped: 'queue-missing' });
-                                }
-                            });
-                        }
-                        catch (emaErr) {
-                            emaSpan.fail({ error: emaErr instanceof Error ? emaErr.message : String(emaErr) });
-                            throw emaErr;
-                        }
-                    }
-                    // Send completed notification if not already flagged (notifications.completed)
-                    const alreadyCompletedNotified = latest?.notifications?.completed === true;
-                    if (!alreadyCompletedNotified) {
-                        const completedSpan = (0, timing_1.startTiming)('updatePatientStatus.phase1Completion.completedNotification', {
-                            clinicId,
-                            doctorId,
-                            queueId,
-                            patientId
-                        });
-                        try {
-                            const canSendCompleted = await (0, notificationPreferences_1.isNotificationEnabled)({
-                                clinicId,
-                                channel: 'whatsapp',
-                                event: 'tokenUpdates'
-                            });
-                            if (!canSendCompleted) {
-                                functions.logger.info('Skipping completed notification because clinic disabled token updates', {
-                                    clinicId,
-                                    doctorId,
-                                    queueId,
-                                    patientId
-                                });
-                                completedSpan.succeed({ skipped: 'disabled-by-preferences' });
-                            }
-                            else {
-                                await patientSnap.ref.set({ notifications: { ...(latest?.notifications || {}), completed: true } }, { merge: true });
-                                await (0, notifier_1.sendNotification)({
-                                    to: latest?.phone || 'unknown',
-                                    type: 'completed',
-                                    payload: {
-                                        name: latest?.name,
-                                        tokenNumber: latest?.tokenNumber,
-                                        clinicId, doctorId, queueId,
-                                        serviceDurationMs: serviceDurationMs || null
-                                    }
-                                });
-                                functions.logger.debug('Phase1 sent completed notification', { patientId });
-                                completedSpan.succeed({});
-                            }
-                        }
-                        catch (e) {
-                            completedSpan.fail({ error: e instanceof Error ? e.message : String(e) });
-                            functions.logger.warn('Failed to send completed notification', e);
-                        }
-                    }
-                    const phaseFinished = process.hrtime.bigint();
-                    phase1DurationMs = Number(phaseFinished - phaseStarted) / 1000000;
-                    phaseSpan.succeed({ serviceDurationMs: serviceDurationMs ?? null });
-                }
-                catch (phaseErr) {
-                    phaseSpan.fail({ error: phaseErr instanceof Error ? phaseErr.message : String(phaseErr) });
-                    throw phaseErr;
-                }
-            }
-        }
-        catch (e) {
-            if (phase1DurationMs === null) {
-                phase1DurationMs = 0;
-            }
-            functions.logger.warn('Phase1 completion post-processing failed (non-fatal)', e);
+        if (phase1Enabled && newStatus === 'completed') {
+            schedulePhase1CompletionProcessing(db, {
+                clinicId,
+                doctorId,
+                queueId,
+                patientId,
+                patientDocRef,
+                queueDocRef,
+                preloadedPatientSnap,
+                preloadedQueueSnap
+            });
+            phase1BackgroundScheduled = true;
         }
         // Legacy staged notification logic removed (engine handles position). Only handle cancellation explicitly.
         if (newStatus === 'cancelled') {
-            try {
-                const canSendCancelled = await (0, notificationPreferences_1.isNotificationEnabled)({
-                    clinicId,
-                    channel: 'whatsapp',
-                    event: 'tokenUpdates'
-                });
-                if (!canSendCancelled) {
-                    functions.logger.info('Skipping cancellation notification because clinic disabled token updates', {
+            runInBackground('updatePatientStatus.cancelledNotification', async () => {
+                try {
+                    const canSendCancelled = await (0, notificationPreferences_1.isNotificationEnabled)({
                         clinicId,
-                        doctorId,
-                        queueId,
-                        patientId
+                        channel: 'whatsapp',
+                        event: 'tokenUpdates'
                     });
-                }
-                else {
+                    if (!canSendCancelled) {
+                        functions.logger.info('Skipping cancellation notification because clinic disabled token updates', {
+                            clinicId,
+                            doctorId,
+                            queueId,
+                            patientId
+                        });
+                        return;
+                    }
                     await (0, notifier_1.sendNotification)({
                         to: updatedPatientData?.phone,
                         type: 'cancelled',
                         payload: {
                             name: updatedPatientData?.name,
                             tokenNumber: updatedPatientData?.tokenNumber,
-                            clinicId, doctorId, queueId,
+                            clinicId,
+                            doctorId,
+                            queueId,
                             message: 'Your queue entry has been cancelled. If this was a mistake, please contact the clinic to rejoin.'
                         }
                     });
                 }
-            }
-            catch (e) {
-                functions.logger.warn('Failed to send cancellation notification', e);
-            }
-        }
-        // Server-side auto-advance: if queue has autoAdvance true, promote next waiting patient automatically
-        try {
-            if (newStatus === 'completed') {
-                const autoSpan = (0, timing_1.startTiming)('updatePatientStatus.autoAdvance', {
-                    clinicId,
-                    doctorId,
-                    queueId,
-                    patientId
-                });
-                try {
-                    const queueSnap = await firebaseAdmin_1.admin.firestore().collection('clinics').doc(clinicId)
-                        .collection('doctors').doc(doctorId)
-                        .collection('queues').doc(queueId).get();
-                    const qData = queueSnap.data() || {};
-                    if (qData.autoAdvance === true && qData.status !== 'ended' && qData.status !== 'paused') {
-                        const nextSnap = await firebaseAdmin_1.admin.firestore().collection('clinics').doc(clinicId)
-                            .collection('doctors').doc(doctorId)
-                            .collection('queues').doc(queueId)
-                            .collection('patients')
-                            .where('status', '==', 'waiting')
-                            .orderBy('tokenNumber')
-                            .limit(1)
-                            .get();
-                        if (!nextSnap.empty) {
-                            const nextDoc = nextSnap.docs[0];
-                            const nextData = nextDoc.data();
-                            const nextToken = nextData?.tokenNumber || 0;
-                            await Promise.all([
-                                nextDoc.ref.update({ status: 'in-progress', updatedAt: firestore_1.FieldValue.serverTimestamp() }),
-                                queueRef.update({ currentToken: nextToken, updatedAt: firestore_1.FieldValue.serverTimestamp() })
-                            ]);
-                            functions.logger.info('Auto-advance promoted next patient', { nextPatientId: nextDoc.id, nextToken });
-                            autoAdvancePromoted = true;
-                        }
-                    }
-                    autoSpan.succeed({ promoted: autoAdvancePromoted });
+                catch (e) {
+                    functions.logger.warn('Failed to send cancellation notification', e);
                 }
-                catch (autoInnerErr) {
-                    autoSpan.fail({ error: autoInnerErr instanceof Error ? autoInnerErr.message : String(autoInnerErr) });
-                    throw autoInnerErr;
-                }
-            }
+            });
         }
-        catch (autoErr) {
-            functions.logger.warn('Auto-advance failed (non-fatal)', autoErr);
-            autoAdvancePromoted = false;
+        // Server-side auto-advance: schedule promotion in background so the callable returns immediately
+        if (newStatus === 'completed') {
+            scheduleAutoAdvancePromotion(db, {
+                clinicId,
+                doctorId,
+                queueId,
+                patientId,
+                queueDocRef: queueDocRef,
+                preloadedQueueSnap
+            });
+            autoAdvanceScheduled = true;
         }
         // Phase 2 recompute (top 3 logic) after any status transition of interest
         if (['completed', 'in-progress', 'cancelled'].includes(newStatus)) {
@@ -1890,7 +2056,9 @@ const updatePatientStatusHandler = async (data, context) => {
         span.succeed({
             autoAdvancePromoted,
             recomputeTriggered,
-            phase1DurationMs
+            phase1DurationMs,
+            phase1BackgroundScheduled,
+            autoAdvanceScheduled
         });
         spanClosed = true;
         return {
@@ -1973,18 +2141,20 @@ const patientCancelTokenHandler = async (data, _context) => {
         if (currentStatus === 'cancelled') {
             const existingCancellation = (patientData?.cancellation ?? {});
             if (!existingCancellation?.cancelledAt) {
-                try {
-                    await patientRef.set({
-                        cancellation: {
-                            ...existingCancellation,
-                            cancelledAt: firestore_1.FieldValue.serverTimestamp(),
-                            cancelledBy: existingCancellation?.cancelledBy ?? 'patient-self'
-                        }
-                    }, { merge: true });
-                }
-                catch (patchErr) {
-                    functions.logger.warn('Failed to backfill cancellation metadata', patchErr, { clinicId, doctorId, queueId, patientId });
-                }
+                runInBackground('patientCancelToken.backfillCancelledAt', async () => {
+                    try {
+                        await patientRef.set({
+                            cancellation: {
+                                ...existingCancellation,
+                                cancelledAt: firestore_1.FieldValue.serverTimestamp(),
+                                cancelledBy: existingCancellation?.cancelledBy ?? 'patient-self'
+                            }
+                        }, { merge: true });
+                    }
+                    catch (patchErr) {
+                        functions.logger.warn('Failed to backfill cancellation metadata', patchErr, { clinicId, doctorId, queueId, patientId });
+                    }
+                });
             }
             span.succeed({ status: 'already-cancelled' });
             return {
@@ -2012,12 +2182,14 @@ const patientCancelTokenHandler = async (data, _context) => {
         if (!existingCancellation?.cancelledAt) {
             cancellationPatch.cancellation.cancelledAt = firestore_1.FieldValue.serverTimestamp();
         }
-        try {
-            await patientRef.set(cancellationPatch, { merge: true });
-        }
-        catch (patchErr) {
-            functions.logger.warn('Failed to record cancellation metadata', patchErr, { clinicId, doctorId, queueId, patientId });
-        }
+        runInBackground('patientCancelToken.recordCancellationMetadata', async () => {
+            try {
+                await patientRef.set(cancellationPatch, { merge: true });
+            }
+            catch (patchErr) {
+                functions.logger.warn('Failed to record cancellation metadata', patchErr, { clinicId, doctorId, queueId, patientId });
+            }
+        });
         span.succeed({ status: 'cancelled' });
         return {
             success: true,
@@ -2515,113 +2687,139 @@ const setRealTimeStatusHandler = async (data, context) => {
 };
 exports.setDoctorRealTimeStatus = createV2Callable(setRealTimeStatusHandler);
 const getClinicDoctorAvailabilityHandler = async (data, _context) => {
+    const span = (0, timing_1.startTiming)('getClinicDoctorAvailability', {
+        clinicId: data?.clinicId ?? null,
+        requestedCount: Array.isArray(data?.doctorIds) ? data.doctorIds.length : 0
+    });
+    let spanClosed = false;
     if (!data || typeof data !== 'object') {
+        span.fail({ reason: 'invalid-argument' });
+        spanClosed = true;
         throw new functions.https.HttpsError('invalid-argument', 'Request payload must be an object');
     }
-    const clinicResolution = await resolveClinicIdentifier(data?.clinicId);
-    const clinicId = clinicResolution.clinicId;
-    if (clinicResolution.shareCode) {
-        functions.logger.debug('getClinicDoctorAvailability clinic resolved via share code', {
-            requestedClinicId: clinicResolution.requestedId,
-            clinicId,
-            shareCode: clinicResolution.shareCode
-        });
-    }
-    const providedDoctorIds = Array.isArray(data.doctorIds) ? data.doctorIds : undefined;
-    const sanitizedDoctorIds = providedDoctorIds
-        ? providedDoctorIds
-            .map((value) => sanitizeFirestoreId(value))
-            .filter((value) => typeof value === 'string')
-        : [];
-    if (providedDoctorIds && sanitizedDoctorIds.length === 0) {
-        throw new functions.https.HttpsError('invalid-argument', 'doctorIds must contain valid Firestore identifiers');
-    }
-    const uniqueDoctorIds = Array.from(new Set(sanitizedDoctorIds));
-    const db = firebaseAdmin_1.admin.firestore();
-    const clinicRef = db.collection('clinics').doc(clinicId);
-    const clinicSnap = await clinicRef.get();
-    if (!clinicSnap.exists) {
-        throw new functions.https.HttpsError('not-found', 'Clinic not found');
-    }
-    const pickString = (value) => {
-        if (typeof value !== 'string') {
-            return null;
+    try {
+        const clinicResolution = await resolveClinicIdentifier(data?.clinicId);
+        const clinicId = clinicResolution.clinicId;
+        if (clinicResolution.shareCode) {
+            functions.logger.debug('getClinicDoctorAvailability clinic resolved via share code', {
+                requestedClinicId: clinicResolution.requestedId,
+                clinicId,
+                shareCode: clinicResolution.shareCode
+            });
         }
-        const trimmed = value.trim();
-        return trimmed.length > 0 ? trimmed : null;
-    };
-    const clinicSnapshotData = (clinicSnap.data() ?? {});
-    const clinicSummary = {
-        name: pickString(clinicSnapshotData['name']),
-        address: pickString(clinicSnapshotData['address']),
-        phone: pickString(clinicSnapshotData['phone'])
-    };
-    const clinicInfo = clinicSummary.name || clinicSummary.address || clinicSummary.phone ? clinicSummary : null;
-    const doctorsCollection = clinicRef.collection('doctors');
-    const doctorMetadata = new Map();
-    const extractDoctorProfile = (raw) => {
-        if (!raw) {
-            return null;
+        const providedDoctorIds = Array.isArray(data.doctorIds) ? data.doctorIds : undefined;
+        const sanitizedDoctorIds = providedDoctorIds
+            ? providedDoctorIds
+                .map((value) => sanitizeFirestoreId(value))
+                .filter((value) => typeof value === 'string')
+            : [];
+        if (providedDoctorIds && sanitizedDoctorIds.length === 0) {
+            span.fail({ reason: 'invalid-doctor-ids' });
+            spanClosed = true;
+            throw new functions.https.HttpsError('invalid-argument', 'doctorIds must contain valid Firestore identifiers');
         }
-        const name = typeof raw['name'] === 'string' ? raw['name'] : null;
-        const specialty = typeof raw['specialty'] === 'string' ? raw['specialty'] : null;
-        const avatarUrl = typeof raw['photoUrl'] === 'string' ? raw['photoUrl'] : null;
-        if (!name && !specialty && !avatarUrl) {
-            return null;
+        const uniqueDoctorIds = Array.from(new Set(sanitizedDoctorIds));
+        const db = firebaseAdmin_1.admin.firestore();
+        const clinicRef = db.collection('clinics').doc(clinicId);
+        const clinicSnap = await clinicRef.get();
+        if (!clinicSnap.exists) {
+            span.fail({ reason: 'clinic-not-found' });
+            spanClosed = true;
+            throw new functions.https.HttpsError('not-found', 'Clinic not found');
         }
-        return {
-            name,
-            specialty,
-            avatarUrl
-        };
-    };
-    let targetDoctorIds = uniqueDoctorIds;
-    if (targetDoctorIds.length > 0) {
-        await Promise.all(targetDoctorIds.map(async (doctorId) => {
-            const snap = await doctorsCollection.doc(doctorId).get();
-            if (snap.exists) {
-                doctorMetadata.set(doctorId, snap.data() ?? {});
+        const pickString = (value) => {
+            if (typeof value !== 'string') {
+                return null;
             }
-            else {
-                doctorMetadata.set(doctorId, null);
+            const trimmed = value.trim();
+            return trimmed.length > 0 ? trimmed : null;
+        };
+        const clinicSnapshotData = (clinicSnap.data() ?? {});
+        const clinicSummary = {
+            name: pickString(clinicSnapshotData['name']),
+            address: pickString(clinicSnapshotData['address']),
+            phone: pickString(clinicSnapshotData['phone'])
+        };
+        const clinicInfo = clinicSummary.name || clinicSummary.address || clinicSummary.phone ? clinicSummary : null;
+        const doctorsCollection = clinicRef.collection('doctors');
+        const doctorMetadata = new Map();
+        const extractDoctorProfile = (raw) => {
+            if (!raw) {
+                return null;
             }
-        }));
-    }
-    else {
-        const snapshot = await doctorsCollection.get();
-        targetDoctorIds = snapshot.docs.map((doc) => {
-            doctorMetadata.set(doc.id, doc.data() ?? {});
-            return doc.id;
-        });
-    }
-    if (targetDoctorIds.length === 0) {
-        return {
+            const name = typeof raw['name'] === 'string' ? raw['name'] : null;
+            const specialty = typeof raw['specialty'] === 'string' ? raw['specialty'] : null;
+            const avatarUrl = typeof raw['photoUrl'] === 'string' ? raw['photoUrl'] : null;
+            if (!name && !specialty && !avatarUrl) {
+                return null;
+            }
+            return {
+                name,
+                specialty,
+                avatarUrl
+            };
+        };
+        let targetDoctorIds = uniqueDoctorIds;
+        if (targetDoctorIds.length > 0) {
+            await Promise.all(targetDoctorIds.map(async (doctorId) => {
+                const snap = await doctorsCollection.doc(doctorId).get();
+                if (snap.exists) {
+                    doctorMetadata.set(doctorId, snap.data() ?? {});
+                }
+                else {
+                    doctorMetadata.set(doctorId, null);
+                }
+            }));
+        }
+        else {
+            const snapshot = await doctorsCollection.get();
+            targetDoctorIds = snapshot.docs.map((doc) => {
+                doctorMetadata.set(doc.id, doc.data() ?? {});
+                return doc.id;
+            });
+        }
+        if (targetDoctorIds.length === 0) {
+            const response = {
+                clinicId,
+                count: 0,
+                doctors: [],
+                requestedDoctorIds: providedDoctorIds ? [] : undefined
+            };
+            span.succeed({ count: 0 });
+            spanClosed = true;
+            return response;
+        }
+        const availabilityResults = await (0, availability_1.resolveManyDoctorAvailability)({
             clinicId,
-            count: 0,
-            doctors: [],
-            requestedDoctorIds: providedDoctorIds ? [] : undefined
+            doctorIds: targetDoctorIds
+        });
+        const doctors = availabilityResults.map((result) => {
+            const metadata = doctorMetadata.get(result.doctorId) ?? null;
+            const profile = extractDoctorProfile(metadata);
+            return {
+                doctorId: result.doctorId,
+                profile,
+                availability: serializeAvailability(result)
+            };
+        });
+        const response = {
+            clinicId,
+            clinic: clinicInfo,
+            count: doctors.length,
+            doctors,
+            requestedDoctorIds: providedDoctorIds ? targetDoctorIds : undefined
         };
+        span.succeed({ count: doctors.length });
+        spanClosed = true;
+        return response;
     }
-    const availabilityResults = await (0, availability_1.resolveManyDoctorAvailability)({
-        clinicId,
-        doctorIds: targetDoctorIds
-    });
-    const doctors = availabilityResults.map((result) => {
-        const metadata = doctorMetadata.get(result.doctorId) ?? null;
-        const profile = extractDoctorProfile(metadata);
-        return {
-            doctorId: result.doctorId,
-            profile,
-            availability: serializeAvailability(result)
-        };
-    });
-    return {
-        clinicId,
-        clinic: clinicInfo,
-        count: doctors.length,
-        doctors,
-        requestedDoctorIds: providedDoctorIds ? targetDoctorIds : undefined
-    };
+    catch (error) {
+        if (!spanClosed) {
+            span.fail({ error: error instanceof Error ? error.message : String(error) });
+            spanClosed = true;
+        }
+        throw error;
+    }
 };
 exports.getClinicDoctorAvailability = createV2Callable(getClinicDoctorAvailabilityHandler, { memory: criticalMemory, cpu: criticalCpu });
 const getClinicSchedulingSettingsHandler = async (data, _context) => {

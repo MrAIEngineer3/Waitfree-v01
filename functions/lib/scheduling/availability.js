@@ -6,6 +6,9 @@ const firestore_1 = require("./firestore");
 const settings_1 = require("./settings");
 const types_1 = require("./types");
 const utils_1 = require("./utils");
+const AVAILABILITY_CACHE_TTL_MS = 30 * 1000; // 30 seconds reuse window
+const availabilityCache = new Map();
+const buildAvailabilityCacheKey = (clinicId, doctorId) => `${clinicId}::${doctorId}`;
 const getDayKey = (dt) => {
     const index = dt.weekday - 1; // Luxon weekday: 1 = Monday ... 7 = Sunday
     return types_1.DAY_OF_WEEK_ORDER[index] ?? 'monday';
@@ -191,6 +194,31 @@ const resolveDoctorAvailability = async (input) => {
     const { clinicId, doctorId } = input;
     const reference = input.reference ?? new Date();
     const computedAt = new Date();
+    const cacheEligible = !input.settings && !input.reference;
+    const cacheKey = cacheEligible ? buildAvailabilityCacheKey(clinicId, doctorId) : null;
+    const now = Date.now();
+    if (cacheKey) {
+        const cached = availabilityCache.get(cacheKey);
+        if (cached) {
+            if (cached.expiresAt > now) {
+                const cachedData = cached.data;
+                return {
+                    ...cachedData,
+                    computedAt: new Date()
+                };
+            }
+            availabilityCache.delete(cacheKey);
+        }
+    }
+    const finalizeResult = (result) => {
+        if (cacheKey) {
+            availabilityCache.set(cacheKey, {
+                data: result,
+                expiresAt: now + AVAILABILITY_CACHE_TTL_MS
+            });
+        }
+        return result;
+    };
     const settings = input.settings ?? (await (0, settings_1.loadClinicSchedulingSettings)(clinicId));
     const manualCheckInRequired = settings.manualCheckInRequired === true;
     const allowOfflineSignups = settings.allowOfflineSignups === true;
@@ -208,7 +236,7 @@ const resolveDoctorAvailability = async (input) => {
     const realTime = document.realTimeStatus ?? null;
     const realTimeOnline = realTime?.online === true;
     if (!realTimeOnline) {
-        return {
+        return finalizeResult({
             clinicId,
             doctorId,
             status: 'UNAVAILABLE',
@@ -218,12 +246,12 @@ const resolveDoctorAvailability = async (input) => {
             realTimeStatus: realTime ?? undefined,
             message: buildReasonMessage('REALTIME_OFFLINE', {}),
             debug: mergeDebug({ realTimePresent: !!realTime, realTimeOnline })
-        };
+        });
     }
     const referenceMillis = reference.getTime();
     const activeBlocker = findActiveBlocker(overrides, referenceMillis);
     if (activeBlocker) {
-        return {
+        return finalizeResult({
             clinicId,
             doctorId,
             status: 'UNAVAILABLE',
@@ -235,11 +263,11 @@ const resolveDoctorAvailability = async (input) => {
             nextAvailableAt: activeBlocker.end.toDate(),
             message: buildReasonMessage('BLOCKER', { rota: document.defaultRota, override: activeBlocker }),
             debug: mergeDebug({ activeBlocker: activeBlocker.id })
-        };
+        });
     }
     const activeException = findActiveException(overrides, referenceMillis);
     if (activeException) {
-        return {
+        return finalizeResult({
             clinicId,
             doctorId,
             status: 'AVAILABLE',
@@ -250,17 +278,17 @@ const resolveDoctorAvailability = async (input) => {
             realTimeStatus: realTime ?? undefined,
             message: buildReasonMessage('EXCEPTION_AVAILABLE', { rota: document.defaultRota }),
             debug: mergeDebug({ activeException: activeException.id })
-        };
+        });
     }
     const defaultResolution = resolveFromDefaultRota(clinicId, doctorId, document.defaultRota, overrides, reference);
     if (defaultResolution.status === 'AVAILABLE') {
-        return {
+        return finalizeResult({
             ...defaultResolution,
             realTimeStatus: realTime ?? undefined,
             debug: mergeDebug(defaultResolution.debug)
-        };
+        });
     }
-    return {
+    return finalizeResult({
         clinicId,
         doctorId,
         status: 'AVAILABLE',
@@ -274,7 +302,7 @@ const resolveDoctorAvailability = async (input) => {
             scheduleLayer: defaultResolution.layer,
             scheduleReason: defaultResolution.reasonCode
         })
-    };
+    });
 };
 exports.resolveDoctorAvailability = resolveDoctorAvailability;
 const resolveManyDoctorAvailability = async (input) => {

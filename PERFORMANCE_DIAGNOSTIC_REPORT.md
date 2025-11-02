@@ -110,7 +110,9 @@ TOTAL COLD START OVERHEAD:      6.0s  (BEFORE business logic)
 minInstances: 1  // Keeps 1 instance warm 24/7 → Eliminates cold starts
 ```
 
-**Cost Analysis:**
+**Free Tier Limitation:** Firebase's Spark (free) plan does not allow configuring `minInstances`. The team will revisit this optimization once the project migrates to Blaze tier or another environment that supports warm pools.
+
+**Cost Analysis (for future planning):**
 - Current: $0/month (scale-to-zero)
 - With minInstances:1: ~$15-20/month (~₹1,200-1,600)
 - **User experience improvement: 60-80% latency reduction**
@@ -126,12 +128,12 @@ minInstances: 1  // Keeps 1 instance warm 24/7 → Eliminates cold starts
 **Evidence:** `functions/src/index.ts:1212-1498`
 
 ```typescript
-// CURRENT IMPLEMENTATION (Sequential - 4-6s total):
+// CURRENT IMPLEMENTATION (after Nov 2 fixes - ~3.3-4.0s total):
 const normalizedPatient = sanitizePatientInput(patientData);       // 50ms
 const availability = await resolveDoctorAvailability({...});       // ⏱️ 800ms (BLOCKING)
 await db.runTransaction(async (transaction) => { ... });           // ⏱️ 1200ms (BLOCKING)
 await patientDocRef.set(resolverUpdate, { merge: true });          // ⏱️ 300ms (BLOCKING)
-await sendNotification({...});                                     // ⏱️ 600ms (Twilio API)
+runInBackground('joinQueue.sendJoinedNotification', () => sendNotification({...}));
 ```
 
 **Sequential Execution Timeline:**
@@ -140,12 +142,12 @@ await sendNotification({...});                                     // ⏱️ 600
 50ms   ──► Check Doctor Availability (800ms) ────► Firestore reads
 850ms  ──► Transaction: Create Patient (1200ms) ──► Firestore writes
 2050ms ──► Update Patient Identity (300ms) ───────► Firestore write
-2350ms ──► Send WhatsApp Notification (600ms) ────► Twilio API
-2950ms ──► Response to Client
+2350ms ──► (Notification dispatched in background) ─► Twilio API
+2350ms ──► Response to Client
 ```
 
 **Optimization Opportunity:**
-The notification can be sent **asynchronously** AFTER responding to client:
+The notification now runs in background; remaining improvements come from parallelizing expensive reads/writes where feasible (e.g., overlapping queue + patient lookups inside the transaction).
 
 ```typescript
 // OPTIMIZED (Parallel where possible - 2-3s total):
@@ -234,10 +236,7 @@ The code shows ONE optimized call, but you're experiencing 10s delays. Possible 
 export const getClinicDoctorAvailability = createV2Callable(...)
 ```
 
-**🚨 CRITICAL DISCOVERY:** The function might be defined elsewhere or the deployment is incomplete. This would cause:
-- Function not found errors (handled gracefully with long timeout)
-- Fallback to slower query patterns
-- Client-side retries adding cumulative delay
+**✅ Verification (Nov 2, 2025):** The callable handler is present at `functions/src/index.ts` (~line 3070) and deploys correctly. Measured delays on first invocation are therefore attributable to cold starts and resource throttling, not a missing deployment.
 
 ---
 
@@ -385,14 +384,14 @@ await db.runTransaction(async (transaction) => { ... });
 const SHARE_CODE_CACHE_TTL_MS = 5 * 60 * 1000;
 ```
 
-### 4.2 Anti-Patterns Found ❌
+### 4.2 Anti-Patterns Found ❌ (updated Nov 2, 2025)
 ```typescript
 // 1. Sequential operations that could be parallel
 const availability = await resolveDoctorAvailability({...});  // 800ms
 await db.runTransaction(async (transaction) => { ... });      // 1200ms
 
 // 2. Blocking notification sends in critical path
-await sendNotification({...});  // 600ms - should be background
+//    ✅ Resolved: now dispatched with runInBackground (Nov 2, 2025)
 
 // 3. Multiple sequential Firestore writes
 await patientDocRef.set(resolverUpdate, { merge: true });    // 300ms
@@ -411,7 +410,7 @@ await patientDocRef.set(resolverUpdate, { merge: true });    // 300ms
 | **256MB/0.25 CPU** | Configuration | CRITICAL (70%) | Low (config change) | **P0 - IMMEDIATE** |
 | **No minInstances** | Configuration | CRITICAL (60% cold) | Low (config + cost) | **P0 - IMMEDIATE** |
 | **Sequential backend ops** | Architecture | HIGH (30%) | Medium (refactor) | **P1 - HIGH** |
-| **Missing backend function** | Deployment | HIGH (100% of case) | Medium (verify/deploy) | **P0 - IMMEDIATE** |
+| **Clinic availability callable (verified)** | Deployment | Resolved | — | **✅ Completed (Nov 2, 2025)** |
 | **Notification engine overhead** | Architecture | MODERATE (20%) | High (redesign) | **P2 - MEDIUM** |
 | **Single maxInstance** | Configuration | MODERATE (during load) | Low (config) | **P1 - HIGH** |
 
@@ -450,102 +449,81 @@ const callableMinInstances = 1;       // Keep 1 instance warm 24/7
 - minInstances: ~$15-20/month for 24/7 warm instance
 - **Total: ~$25-30/month for dramatic UX improvement**
 
+**Status (Nov 2, 2025):** Memory/CPU tiers already updated with the three-tier allocation strategy. `minInstances` remains on the backlog because Firebase Spark plan does not support warm pools.
+
 #### 1.2 Verify/Deploy Missing Cloud Function
-**Action:** Search and deploy `getClinicDoctorAvailability` handler
-
-```typescript
-// MISSING FROM functions/src/index.ts - NEEDS IMPLEMENTATION:
-export const getClinicDoctorAvailability = createV2Callable(
-  async (data: GetClinicDoctorAvailabilityRequest, context) => {
-    // Implementation to fetch clinic + doctors + availability
-  }
-);
-```
-
-**Workaround if missing:** Frontend currently calls undefined function, causing 10s timeout. Need to:
-1. Verify function is deployed: `firebase functions:list | grep getClinicDoctorAvailability`
-2. If missing, implement and deploy immediately
-3. Check for typos in function name between frontend/backend
+**Status (Nov 2, 2025):** ✅ Completed. `getClinicDoctorAvailability` handler confirmed at `functions/src/index.ts` (~line 3070) and deployed.
 
 ---
 
 ### Phase 2: Quick Backend Optimizations (Implementation: 4 hours)
 
 #### 2.1 Move Notifications to Background
-**File:** `functions/src/index.ts:1383`
+**Status (Nov 2, 2025):** ✅ Completed for `joinQueue` (joined notifications) and `updatePatientStatus` (completed/cancelled notifications). The new background jobs use `runInBackground(...)` so client responses return immediately while WhatsApp delivery happens asynchronously.
 
-```typescript
-// CURRENT (Blocking):
-await sendNotification({
-  to: normalizedPhone,
-  type: 'joined',
-  payload: { ... }
-});
-
-// OPTIMIZED (Non-blocking):
-runInBackground('joinQueue.sendNotification', async () => {
-  await sendNotification({
-    to: normalizedPhone,
-    type: 'joined',
-    payload: { ... }
-  });
-});
-```
-
-**Expected Impact:** -600ms per join operation (-20%)
+**Expected Impact:** -600ms per join operation (-20%) and -600ms per status update that triggers notifications.
 
 #### 2.2 Parallel Operations Where Possible
-**File:** `functions/src/index.ts:2240-2280`
+**File:** `functions/src/index.ts:1986-2160`
 
 ```typescript
-// CURRENT (Sequential):
-const patientSnap = await db.collection('clinics').doc(clinicId)
-  .collection('doctors').doc(doctorId)
-  .collection('queues').doc(queueId)
-  .collection('patients').doc(patientId).get();
-// ... then process ...
-await patientSnap.ref.set({ service: {...} }, { merge: true });
+// UPDATED (Nov 2, 2025): start transaction reads before awaiting…
+const patientDocPromise = transaction.get(patientRef);
+let queueDocPromise: Promise<DocumentSnapshot> | null = null;
+if (newStatus === 'completed' || newStatus === 'in-progress') {
+  queueDocPromise = transaction.get(queueRef);
+}
 
-// OPTIMIZED (Batch):
-await admin.firestore().batch()
-  .set(patientSnap.ref, { service: {...} }, { merge: true })
-  .commit();
+const patientDoc = await patientDocPromise;
+const queueDoc = queueDocPromise ? await queueDocPromise : null;
+
+// …and preload post-transaction snapshots concurrently when completed
+let preloadedPatientSnap: DocumentSnapshot | null = null;
+let preloadedQueueSnap: DocumentSnapshot | null = null;
+if (newStatus === 'completed' && phase1Enabled) {
+  [preloadedPatientSnap, preloadedQueueSnap] = await Promise.all([
+    patientRef.get(),
+    queueRef.get()
+  ]);
+} else if (newStatus === 'completed') {
+  preloadedQueueSnap = await queueRef.get();
+}
+
+const patientSnap = preloadedPatientSnap ?? (await patientRef.get());
+const queueSnap = preloadedQueueSnap ?? (await queueRef.get());
 ```
 
-**Expected Impact:** -200ms per status update
+**New (Nov 2, 2025):** Patient resolver persistence (`joinQueue`, `manualAddPatient`) now routes through `persistResolverDataAsync`, a background helper that batches resolver writes away from the hot path. Manual add flow also pushes joined-notification dispatch (Twilio + flag write) into `runInBackground` so staff actions return immediately. Patient cancellation flow (`patientCancelToken`) now records metadata asynchronously, matching the rest of the background-first strategy. Phase 1 completion metrics (`schedulePhase1CompletionProcessing`) offload service-duration writes, queue EMA updates, and completion notifications to background workers. Auto-advance promotion relies on `scheduleAutoAdvancePromotion`, so promoting the next waiting patient no longer blocks the callable path.
+
+**Status:** ✅ Transaction reads run in parallel and completed-status flows now reuse preloaded queue/patient snapshots for Phase 1 metrics and auto-advance logic. Resolver metadata persistence now runs via a shared background helper so the callable returns before auxiliary writes complete. Manual “joined” notifications from the staff add flow now dispatch via background workers as well, eliminating the last synchronous Twilio call on that path. Patient-driven cancellation flow now patches metadata in the background to keep the callable snappy. Phase 1 completion metrics (service duration + queue EMA) now execute through `schedulePhase1CompletionProcessing`, a background worker that also triggers the completion WhatsApp notification. Auto-advance promotion is handled by `scheduleAutoAdvancePromotion`, so promoting the next patient no longer delays the callable response. **Next focus:** concentrate on notification engine recompute cost and determine whether a dedicated worker or batching would unlock further latency wins.
 
 ---
 
 ### Phase 3: Advanced Optimizations (Implementation: 2 days)
 
 #### 3.1 Edge Caching for Availability Checks
-Implement short-lived cache (30-60s) for doctor availability:
+**Status (Nov 2, 2025):** ✅ Implemented. `resolveDoctorAvailability` now caches default lookups (where no custom `settings` or `reference` is supplied) for 30 seconds in-memory. Cache hits return immediately with a fresh `computedAt` stamp, while expired entries are evicted lazily. This fits within Spark limits because it is per-instance memory only.
 
 ```typescript
-const AVAILABILITY_CACHE = new Map<string, {
+const AVAILABILITY_CACHE_TTL_MS = 30 * 1000;
+
+const availabilityCache = new Map<string, {
   data: DoctorAvailabilityResult;
   expiresAt: number;
 }>();
 
-export const resolveDoctorAvailability = async (input) => {
-  const cacheKey = `${input.clinicId}:${input.doctorId}`;
-  const cached = AVAILABILITY_CACHE.get(cacheKey);
-  
-  if (cached && cached.expiresAt > Date.now()) {
-    return cached.data;
-  }
-  
-  // ... existing logic ...
-  AVAILABILITY_CACHE.set(cacheKey, {
-    data: result,
-    expiresAt: Date.now() + 30000  // 30s cache
-  });
-  
-  return result;
-};
+const cacheKey = `${clinicId}::${doctorId}`;
+const cached = availabilityCache.get(cacheKey);
+
+if (cached && cached.expiresAt > Date.now()) {
+  return { ...cached.data, computedAt: new Date() };
+}
+
+// ...compute result...
+availabilityCache.set(cacheKey, { data: result, expiresAt: Date.now() + AVAILABILITY_CACHE_TTL_MS });
 ```
 
-**Expected Impact:** -500ms for repeated availability checks
+**Expected Impact:** -400‑500 ms on repeat availability checks during active sessions
 
 #### 3.2 Firestore Connection Pooling
 Enable persistent connections (already done via Firebase Admin SDK, but verify):
@@ -684,6 +662,8 @@ export const joinQueue = createV2Callable(async (data, context) => {
   }
 });
 ```
+
+**Status (Nov 2, 2025):** ✅ Initial timing spans wired in via `startTiming` for `joinQueue` and `getClinicDoctorAvailability` (with success/failure metadata). These metrics flow to structured logs today; a future enhancement is to plumb them into Cloud Monitoring dashboards.
 
 **Dashboard Metrics to Track:**
 1. P50, P95, P99 latency per function
