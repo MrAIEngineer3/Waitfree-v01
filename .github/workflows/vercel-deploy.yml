@@ -5,35 +5,60 @@ on:
     branches:
       - master
 
+# GitHub Actions runs all jobs in parallel by default
 jobs:
-  deploy:
+  # JOB 1: Deploys the Patient PWA
+  deploy-pwa:
     runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        # This will create two parallel jobs: one for 'PWA' and one for 'DASHBOARD'
-        project: [ 'PWA', 'DASHBOARD' ]
-
+    # These env variables are available to all steps in THIS job
+    env:
+      VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
+      VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID_PWA }}
+      VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+      
     steps:
-      - uses: actions/checkout@v3
+      - name: Check out source code
+        uses: actions/checkout@v3
 
-      - name: Deploy Patient PWA
-        # This step will ONLY run for the 'PWA' job
-        if: matrix.project == 'PWA'
-        uses: vercel/vercel-action@v1
-        with:
-          token: ${{ secrets.VERCEL_TOKEN }}
-          orgId: ${{ secrets.VERCEL_ORG_ID }}
-          projectId: ${{ secrets.VERCEL_PROJECT_ID_PWA }}
-          workingDirectory: 'patient-pwa' # The folder for the PWA
-          production: true # This replaces 'vercel-args: --prod'
+      - name: Install Vercel CLI
+        run: npm install -g vercel@latest
 
-      - name: Deploy Clinic Dashboard
-        # This step will ONLY run for the 'DASHBOARD' job
-        if: matrix.project == 'DASHBOARD'
-        uses: vercel/vercel-action@v1
-        with:
-          token: ${{ secrets.VERCEL_TOKEN }}
-          orgId: ${{ secrets.VERCEL_ORG_ID }}
-          projectId: ${{ secrets.VERCEL_PROJECT_ID_DASHBOARD }}
-          workingDirectory: 'clinic-dashboard' # The folder for the Dashboard
-          production: true # This replaces 'vercel-args: --prod'
+      - name: Pull Vercel Environment Information
+        run: vercel pull --yes --environment=production --token=$VERCEL_TOKEN
+        working-directory: 'patient-pwa'
+
+      - name: Build Project Artifacts
+        run: vercel build --prod --token=$VERCEL_TOKEN
+        working-directory: 'patient-pwa'
+
+      - name: Deploy Project Artifacts to Vercel
+        run: vercel deploy --prebuilt --prod --token=$VERCEL_TOKEN
+        working-directory: 'patient-pwa'
+
+  # JOB 2: Deploys the Clinic Dashboard
+  deploy-dashboard:
+    runs-on: ubuntu-latest
+    # These env variables are available to all steps in THIS job
+    env:
+      VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
+      VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID_DASHBOARD }}
+      VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+      
+    steps:
+      - name: Check out source code
+        uses: actions/checkout@v3
+
+      - name: Install Vercel CLI
+        run: npm install -g vercel@latest
+
+      - name: Pull Vercel Environment Information
+        run: vercel pull --yes --environment=production --token=$VERCEL_TOKEN
+        working-directory: 'clinic-dashboard'
+
+      - name: Build Project Artifacts
+        run: vercel build --prod --token=$VERCEL_TOKEN
+        working-directory: 'clinic-dashboard'
+
+      - name: Deploy Project Artifacts to Vercel
+        run: vercel deploy --prebuilt --prod --token=$VERCEL_TOKEN
+        working-directory: 'clinic-dashboard'
