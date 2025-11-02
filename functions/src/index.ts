@@ -1,5 +1,5 @@
-import { FieldValue } from '@google-cloud/firestore';
 import type { DocumentData, DocumentReference, DocumentSnapshot, Firestore } from 'firebase-admin/firestore';
+import { FieldValue } from 'firebase-admin/firestore';
 // Ensure local .env variables are loaded when running in emulator / local scripts
 import crypto from 'crypto';
 import * as functions from 'firebase-functions/v1';
@@ -2407,7 +2407,10 @@ const updatePatientStatusHandler = async (data: UpdatePatientStatusRequest, cont
 
       // 4. Perform writes after all necessary reads gathered
       // Prepare base update
-      const baseUpdate: any = { status: newStatus, updatedAt: FieldValue.serverTimestamp() };
+      const baseUpdate: Record<string, unknown> = {
+        status: newStatus,
+        updatedAt: FieldValue.serverTimestamp()
+      };
 
       // Phase 1: when moving to in-progress, set service.startedAt if not already set
       if (phase1Enabled && newStatus === 'in-progress') {
@@ -2429,7 +2432,35 @@ const updatePatientStatusHandler = async (data: UpdatePatientStatusRequest, cont
         }
       }
 
-      updatedPatientData = { ...patientData, ...baseUpdate };
+      if (newStatus === 'cancelled') {
+        const cancellationActor = (isPatientToken || syntheticPatient) ? 'patient-self' : 'staff';
+        baseUpdate['cancellation.cancelledBy'] = cancellationActor;
+
+        const hadCancelledAt = Boolean((patientData as any)?.cancellation?.cancelledAt);
+        if (!hadCancelledAt) {
+          baseUpdate['cancellation.cancelledAt'] = FieldValue.serverTimestamp();
+        }
+      }
+
+      updatedPatientData = {
+        ...patientData,
+        status: newStatus,
+        updatedAt: FieldValue.serverTimestamp()
+      };
+
+      if (newStatus === 'cancelled') {
+        const cancellationActor = (isPatientToken || syntheticPatient) ? 'patient-self' : 'staff';
+        const existingCancellation = ((patientData as any)?.cancellation ?? {}) as Record<string, unknown>;
+        const existingCancelledAt = existingCancellation['cancelledAt'];
+        updatedPatientData = {
+          ...updatedPatientData,
+          cancellation: {
+            ...existingCancellation,
+            cancelledBy: cancellationActor,
+            cancelledAt: existingCancelledAt ?? FieldValue.serverTimestamp()
+          }
+        };
+      }
       transaction.update(patientRef, baseUpdate);
 
       if (queueDoc) {

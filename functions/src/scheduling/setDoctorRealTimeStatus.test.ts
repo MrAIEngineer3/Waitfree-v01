@@ -1,4 +1,4 @@
-import { describe, it, expect, vi } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 const serverTimestampStub = { __type: 'serverTimestamp' };
 
@@ -90,7 +90,7 @@ const setup = async (initialDoctorState?: Record<string, unknown>) => {
   const serverTimestampMock = vi.fn(() => serverTimestampStub);
   const env = createFirestoreEnv(initialDoctorState);
 
-  vi.doMock('@google-cloud/firestore', () => ({
+  vi.doMock('firebase-admin/firestore', () => ({
     FieldValue: {
       serverTimestamp: serverTimestampMock
     }

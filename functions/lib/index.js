@@ -40,7 +40,7 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
 };
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.bootstrapClinicAccount = exports.deleteDoctorScheduleOverride = exports.updateDoctorScheduleOverride = exports.createDoctorScheduleOverride = exports.updateDoctorDefaultRota = exports.requestDoctorOnlineNotification = exports.updateClinicSchedulingSettings = exports.getClinicSchedulingSettings = exports.getClinicDoctorAvailability = exports.setDoctorRealTimeStatus = exports.setQueueAutoAdvance = exports.updateQueueStatus = exports.advanceQueue = exports.uncallPatient = exports.cancelPatient = exports.completePatient = exports.callPatient = exports.__test__ = exports.patientRejoinQueue = exports.patientCancelToken = exports.updatePatientStatus = exports.createPatientSession = exports.getPatientView = exports.manualAddPatient = exports.joinQueue = exports.ping = exports.debugGetPatient = exports.debugRecompute = exports.debugPatientPwaBaseUrl = exports.debugRuntimeFlags = void 0;
-const firestore_1 = require("@google-cloud/firestore");
+const firestore_1 = require("firebase-admin/firestore");
 // Ensure local .env variables are loaded when running in emulator / local scripts
 const crypto_1 = __importDefault(require("crypto"));
 const functions = __importStar(require("firebase-functions/v1"));
@@ -1910,7 +1910,10 @@ const updatePatientStatusHandler = async (data, context) => {
                 }
                 // 4. Perform writes after all necessary reads gathered
                 // Prepare base update
-                const baseUpdate = { status: newStatus, updatedAt: firestore_1.FieldValue.serverTimestamp() };
+                const baseUpdate = {
+                    status: newStatus,
+                    updatedAt: firestore_1.FieldValue.serverTimestamp()
+                };
                 // Phase 1: when moving to in-progress, set service.startedAt if not already set
                 if (phase1Enabled && newStatus === 'in-progress') {
                     const alreadyStarted = patientData?.service?.startedAt;
@@ -1932,7 +1935,32 @@ const updatePatientStatusHandler = async (data, context) => {
                         functions.logger.debug('Phase1 completed branch skipped (missing startedAt or already completedAt)', { patientId, hasStarted: !!svc.startedAt, hasCompleted: !!svc.completedAt });
                     }
                 }
-                updatedPatientData = { ...patientData, ...baseUpdate };
+                if (newStatus === 'cancelled') {
+                    const cancellationActor = (isPatientToken || syntheticPatient) ? 'patient-self' : 'staff';
+                    baseUpdate['cancellation.cancelledBy'] = cancellationActor;
+                    const hadCancelledAt = Boolean(patientData?.cancellation?.cancelledAt);
+                    if (!hadCancelledAt) {
+                        baseUpdate['cancellation.cancelledAt'] = firestore_1.FieldValue.serverTimestamp();
+                    }
+                }
+                updatedPatientData = {
+                    ...patientData,
+                    status: newStatus,
+                    updatedAt: firestore_1.FieldValue.serverTimestamp()
+                };
+                if (newStatus === 'cancelled') {
+                    const cancellationActor = (isPatientToken || syntheticPatient) ? 'patient-self' : 'staff';
+                    const existingCancellation = (patientData?.cancellation ?? {});
+                    const existingCancelledAt = existingCancellation['cancelledAt'];
+                    updatedPatientData = {
+                        ...updatedPatientData,
+                        cancellation: {
+                            ...existingCancellation,
+                            cancelledBy: cancellationActor,
+                            cancelledAt: existingCancelledAt ?? firestore_1.FieldValue.serverTimestamp()
+                        }
+                    };
+                }
                 transaction.update(patientRef, baseUpdate);
                 if (queueDoc) {
                     const patientTokenNumber = patientData?.tokenNumber || 0;

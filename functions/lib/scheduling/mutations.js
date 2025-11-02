@@ -1,10 +1,9 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.deleteDoctorScheduleOverride = exports.updateDoctorScheduleOverride = exports.createDoctorScheduleOverride = exports.updateDoctorDefaultRota = exports.setDoctorRealTimeStatus = exports.NotFoundError = exports.ValidationError = void 0;
-const firestore_1 = require("@google-cloud/firestore");
-const firebaseAdmin_1 = require("../firebaseAdmin");
+const firestore_1 = require("firebase-admin/firestore");
 const luxon_1 = require("luxon");
-const firestore_2 = require("firebase-admin/firestore");
+const firebaseAdmin_1 = require("../firebaseAdmin");
 const utils_1 = require("./utils");
 const db = firebaseAdmin_1.admin.firestore();
 const MAX_NOTE_LENGTH = 280;
@@ -147,8 +146,8 @@ const sanitizeOverrideInput = (payload) => {
     const note = sliceNote(payload.note);
     const base = {
         type,
-        start: firestore_2.Timestamp.fromDate(start.toJSDate()),
-        end: firestore_2.Timestamp.fromDate(end.toJSDate()),
+        start: firestore_1.Timestamp.fromDate(start.toJSDate()),
+        end: firestore_1.Timestamp.fromDate(end.toJSDate()),
         note: note ?? null
     };
     if (type === 'blocker') {

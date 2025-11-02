@@ -1,18 +1,17 @@
-import { FieldValue } from '@google-cloud/firestore';
-import { admin } from '../firebaseAdmin';
+import { FieldValue, Timestamp } from 'firebase-admin/firestore';
 import { DateTime } from 'luxon';
-import { Timestamp } from 'firebase-admin/firestore';
+import { admin } from '../firebaseAdmin';
 
 import type {
-  DefaultWeeklyRota,
-  RealTimeStatus,
-  ScheduleOverride,
-  OverrideType
+    DefaultWeeklyRota,
+    OverrideType,
+    RealTimeStatus,
+    ScheduleOverride
 } from './types';
 import {
-  ensureValidTimeZone,
-  filterValidDays,
-  normalizeWeekDefinition
+    ensureValidTimeZone,
+    filterValidDays,
+    normalizeWeekDefinition
 } from './utils';
 
 const db = admin.firestore();
@@ -97,7 +96,7 @@ export const setDoctorRealTimeStatus = async (
       online,
       note,
       source,
-  updatedAt: FieldValue.serverTimestamp() as unknown as Timestamp
+      updatedAt: FieldValue.serverTimestamp() as unknown as Timestamp
     };
 
     tx.set(
@@ -163,7 +162,7 @@ export const updateDoctorDefaultRota = async (
       timeZone,
       week: normalized,
       version: nextVersion,
-  updatedAt: FieldValue.serverTimestamp() as unknown as Timestamp
+      updatedAt: FieldValue.serverTimestamp() as unknown as Timestamp
     };
 
     tx.set(
