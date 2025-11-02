@@ -24,13 +24,13 @@ jobs:
         run: npm install -g vercel@latest
 
       - name: Pull Vercel Environment Information
-        run: cd patient-pwa && vercel pull --yes --environment=production --token=$VERCEL_TOKEN
+        run: cd patient-pwa && vercel pull --yes --environment=production --token=$VERCEL_TOKEN --cwd .
 
       - name: Build Project Artifacts
-        run: cd patient-pwa && vercel build --prod --token=$VERCEL_TOKEN
+        run: cd patient-pwa && vercel build --prod --token=$VERCEL_TOKEN --cwd .
 
       - name: Deploy Project Artifacts to Vercel
-        run: cd patient-pwa && vercel deploy --prebuilt --prod --token=$VERCEL_TOKEN
+        run: cd patient-pwa && vercel deploy --prebuilt --prod --token=$VERCEL_TOKEN --cwd .
 
   # JOB 2: Deploys the Clinic Dashboard
   deploy-dashboard:
@@ -49,10 +49,10 @@ jobs:
         run: npm install -g vercel@latest
 
       - name: Pull Vercel Environment Information
-        run: cd clinic-dashboard && vercel pull --yes --environment=production --token=$VERCEL_TOKEN
+        run: cd clinic-dashboard && vercel pull --yes --environment=production --token=$VERCEL_TOKEN --cwd .
 
       - name: Build Project Artifacts
-        run: cd clinic-dashboard && vercel build --prod --token=$VERCEL_TOKEN
+        run: cd clinic-dashboard && vercel build --prod --token=$VERCEL_TOKEN --cwd .
 
       - name: Deploy Project Artifacts to Vercel
-        run: cd clinic-dashboard && vercel deploy --prebuilt --prod --token=$VERCEL_TOKEN
+        run: cd clinic-dashboard && vercel deploy --prebuilt --prod --token=$VERCEL_TOKEN --cwd .
