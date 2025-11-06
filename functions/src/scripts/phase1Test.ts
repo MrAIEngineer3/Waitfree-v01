@@ -2,18 +2,61 @@
 /**
  * Phase 1 local test harness (built by tsc under lib/scripts/phase1Test.js)
  */
-import { admin } from '../firebaseAdmin';
 import fetch from 'node-fetch';
+import { readFileSync } from 'node:fs';
+import path from 'node:path';
+import { admin } from '../firebaseAdmin';
 
-// Embed emulator defaults (no production impact: real deployment sets GOOGLE_APPLICATION_CREDENTIALS / no emulator vars)
-if (!process.env.FIRESTORE_EMULATOR_HOST) {
-  process.env.FIRESTORE_EMULATOR_HOST = 'localhost:8081';
-  console.log('[Harness] FIRESTORE_EMULATOR_HOST defaulted to', process.env.FIRESTORE_EMULATOR_HOST);
-}
-if (!process.env.FIREBASE_AUTH_EMULATOR_HOST) {
-  process.env.FIREBASE_AUTH_EMULATOR_HOST = 'localhost:9098';
-  console.log('[Harness] FIREBASE_AUTH_EMULATOR_HOST defaulted to', process.env.FIREBASE_AUTH_EMULATOR_HOST);
-}
+type EmulatorConfig = {
+  host?: string;
+  port?: number;
+};
+
+type FirebaseJson = {
+  emulators?: Record<string, EmulatorConfig>;
+};
+
+const loadFirebaseJson = (): FirebaseJson => {
+  try {
+    const firebaseJsonPath = path.resolve(__dirname, '..', '..', 'firebase.json');
+    const contents = readFileSync(firebaseJsonPath, 'utf8');
+    return JSON.parse(contents) as FirebaseJson;
+  } catch {
+    return {};
+  }
+};
+
+const firebaseJson = loadFirebaseJson();
+
+const getEmulatorHost = (service: string, fallback: string): string => {
+  const config = firebaseJson.emulators?.[service];
+  if (!config) {
+    return fallback;
+  }
+  const host = config.host ?? '127.0.0.1';
+  const port = config.port;
+  if (!port) {
+    return fallback;
+  }
+  return `${host}:${port}`;
+};
+
+const normalizeHost = (value: string): string =>
+  value.startsWith('http://') || value.startsWith('https://') ? value.replace(/^https?:\/\//, '') : value;
+
+const authHostRaw = process.env.FIREBASE_AUTH_EMULATOR_HOST || getEmulatorHost('auth', '127.0.0.1:9099');
+process.env.FIREBASE_AUTH_EMULATOR_HOST = authHostRaw;
+
+const firestoreHostRaw = process.env.FIRESTORE_EMULATOR_HOST || getEmulatorHost('firestore', '127.0.0.1:8080');
+process.env.FIRESTORE_EMULATOR_HOST = firestoreHostRaw;
+
+const functionsFallbackHost = getEmulatorHost('functions', '127.0.0.1:5001');
+const functionsOrigin =
+  process.env.FIREBASE_FUNCTIONS_EMULATOR_ORIGIN ||
+  process.env.FUNCTIONS_EMULATOR ||
+  (process.env.FUNCTIONS_EMULATOR_HOST ? `http://${process.env.FUNCTIONS_EMULATOR_HOST}` : `http://${functionsFallbackHost}`);
+
+const authHost = normalizeHost(authHostRaw);
 
 // Determine projectId: prefer explicit emulator vars, then GCLOUD_PROJECT, finally fallback known default
 const projectId = process.env.FIREBASE_EMULATOR_PROJECT_ID || process.env.GCLOUD_PROJECT || 'waitfree-9b06e';
@@ -23,16 +66,18 @@ if (!admin.apps.length) {
 
 interface JoinResult { patientId: string; queueId: string; clinicId: string; doctorId: string; }
 
-const host = process.env.FUNCTIONS_HOST || 'http://localhost:5002';
 const region = 'asia-south1';
+const functionsBaseUrl = `${functionsOrigin.replace(/\/$/, '')}/${projectId}/${region}`;
 console.log('[Harness] Using projectId =', projectId);
+console.log('[Harness] Functions origin =', functionsOrigin);
+console.log('[Harness] Firestore host =', firestoreHostRaw);
+console.log('[Harness] Auth host =', authHost);
 
 let authIdToken: string | null = null;
 
 async function ensureAuth() {
   if (authIdToken) return authIdToken;
   // Auth emulator default port from firebase.json: 9098
-  const authHost = process.env.AUTH_EMULATOR_HOST || 'localhost:9098';
   const url = `http://${authHost}/identitytoolkit.googleapis.com/v1/accounts:signUp?key=fake-api-key`;
   const resp = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ returnSecureToken: true }) });
   const j = await resp.json();
@@ -43,7 +88,7 @@ async function ensureAuth() {
 }
 
 async function callable(name: string, data: any) {
-  const url = `${host}/${projectId}/${region}/${name}`;
+  const url = `${functionsBaseUrl}/${name}`;
   const token = await ensureAuth();
   const res = await fetch(url, {
     method: 'POST',

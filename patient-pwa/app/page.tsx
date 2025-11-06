@@ -1,36 +1,44 @@
 "use client";
 import { useRouter } from 'next/navigation';
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useTransition } from 'react';
 
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
-import { useJoinScanner } from './components/JoinScannerProvider';
 import { buildJoinHref, parseClinicIdentifierFromText } from '@/lib/clinicIdentifier';
+import { Loader2 } from 'lucide-react';
+import { useJoinScanner } from './components/JoinScannerProvider';
 
 // ===== CLINIC CODE ENTRY =====
 function ClinicIdEntry() {
   const router = useRouter();
   const [clinicId, setClinicId] = useState('');
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [isPending, startTransition] = useTransition();
 
   const goToJoin = (e: React.FormEvent) => {
     e.preventDefault();
     const trimmed = clinicId.trim();
-    if (!trimmed) return;
-  const parsed = parseClinicIdentifierFromText(trimmed, { preferSlugOnAmbiguous: true });
-    if (!parsed) {
-      router.push(`/join?clinicId=${encodeURIComponent(trimmed)}`);
+    if (!trimmed) {
       return;
     }
-    router.push(buildJoinHref(parsed));
+
+    const parsed = parseClinicIdentifierFromText(trimmed, { preferSlugOnAmbiguous: true });
+    const destination = parsed ? buildJoinHref(parsed) : `/join?clinicId=${encodeURIComponent(trimmed)}`;
+
+    setIsSubmitting(true);
+
+    startTransition(() => {
+      router.push(destination);
+    });
   };
 
   return (
     <form onSubmit={goToJoin} className="flex w-full max-w-xs items-center gap-2">
       <Input
         type="text"
-  placeholder="Enter clinic code"
+        placeholder="Enter clinic code"
         value={clinicId}
         onChange={(event) => setClinicId(event.target.value)}
         className="h-12 rounded-full bg-background/90 backdrop-blur-sm border-border/50 pl-5 pr-4 text-sm shadow-md focus-visible:shadow-lg focus-visible:ring-primary/50 transition-all"
@@ -41,9 +49,16 @@ function ClinicIdEntry() {
         variant="accent"
         className="h-12 rounded-full px-8 shadow-lg hover:scale-[1.02] transition-transform"
         aria-label="Go to clinic"
-        disabled={!clinicId.trim()}
+        disabled={isSubmitting || isPending || !clinicId.trim()}
       >
-        Go
+        {isSubmitting || isPending ? (
+          <span className="flex items-center gap-2">
+            <Loader2 className="h-4 w-4 animate-spin" aria-hidden />
+            Joining…
+          </span>
+        ) : (
+          'Go'
+        )}
       </Button>
     </form>
   );

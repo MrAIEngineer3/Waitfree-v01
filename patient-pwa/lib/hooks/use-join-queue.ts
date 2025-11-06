@@ -1,9 +1,10 @@
-import { useMutation } from '@tanstack/react-query'
+import type { Doctor, Patient, Queue } from '@/app/queue/[clinicId]/[doctorId]/[queueId]/[patientId]/usePatientQueueRealtimeBridge'
+import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { httpsCallable } from 'firebase/functions'
 import { toast } from 'sonner'
 import { functions } from '../firebase'
 
-interface JoinQueuePayload {
+interface JoinQueueCallablePayload {
   clinicId: string
   doctorId: string
   patientData: {
@@ -13,12 +14,20 @@ interface JoinQueuePayload {
   }
 }
 
+interface JoinQueuePayload extends JoinQueueCallablePayload {
+  optimisticDoctor?: {
+    name?: string
+    specialty?: string
+  }
+}
+
 interface JoinQueueResult {
   patientId: string
   queueId: string
   doctorId: string
   clinicId: string
   accessToken?: string
+  tokenNumber?: number
   patientIdentityId?: string
   patientResolver?: {
     version: string
@@ -35,6 +44,19 @@ interface JoinQueueContext {
   startTime: number
 }
 
+interface RejoinQueueResult {
+  success: boolean
+  queueId?: string
+  message?: string
+  rejoin?: {
+    clinicId: string
+    doctorId: string
+    queueId: string
+    patientId: string
+    accessToken: string
+  }
+}
+
 // Helper to get error message
 function getErrorMessage(error: unknown, fallback: string): string {
   if (error && typeof error === 'object' && 'message' in error) {
@@ -48,10 +70,15 @@ function getErrorMessage(error: unknown, fallback: string): string {
  * Provides instant "Joining..." feedback while backend processes
  */
 export function useJoinQueue() {
+  const queryClient = useQueryClient()
+
   return useMutation<JoinQueueResult, Error, JoinQueuePayload, JoinQueueContext>({
     mutationFn: async (payload: JoinQueuePayload) => {
-      const joinFn = httpsCallable<JoinQueuePayload, JoinQueueResult>(functions, 'joinQueue')
-      const { data } = await joinFn(payload)
+      const { optimisticDoctor, ...callablePayload } = payload
+      void optimisticDoctor
+
+      const joinFn = httpsCallable<JoinQueueCallablePayload, JoinQueueResult>(functions, 'joinQueue')
+      const { data } = await joinFn(callablePayload)
 
       if (!data?.patientId) {
         throw new Error('Failed to join queue. Please try again.')
@@ -90,6 +117,52 @@ export function useJoinQueue() {
         console.warn('Failed to store access token in sessionStorage', storageError)
       }
 
+      try {
+        const patientKey = ['patient-view', data.clinicId, data.doctorId, data.queueId, data.patientId] as const
+        const queueKey = ['queue', data.clinicId, data.doctorId, data.queueId] as const
+        const doctorKey = ['doctor', data.clinicId, data.doctorId] as const
+
+        const optimisticPatient: Patient = {
+          id: data.patientId,
+          name: variables.patientData.name,
+          age: variables.patientData.age,
+          phone: variables.patientData.phone,
+          tokenNumber: data.tokenNumber ?? 0,
+          status: 'waiting',
+          joinedAt: new Date(),
+          queueId: data.queueId,
+          clinicId: data.clinicId,
+          doctorId: data.doctorId,
+        }
+
+        queryClient.setQueryData<Patient | undefined>(patientKey, (prev) => prev ?? optimisticPatient)
+
+        queryClient.setQueryData<Queue | undefined>(queueKey, (prev) => {
+          if (prev) {
+            return prev
+          }
+          const fallbackCurrent = Math.max(optimisticPatient.tokenNumber - 1, 0)
+          return {
+            id: data.queueId,
+            doctorId: data.doctorId,
+            clinicId: data.clinicId,
+            status: 'active',
+            currentToken: fallbackCurrent,
+            totalPatients: 1,
+            completedPatients: 0,
+          }
+        })
+
+        queryClient.setQueryData<Doctor | undefined>(doctorKey, (prev) => prev ?? {
+          id: data.doctorId,
+          clinicId: data.clinicId,
+          name: variables.optimisticDoctor?.name ?? variables.doctorId,
+          specialty: variables.optimisticDoctor?.specialty ?? 'Doctor',
+        })
+      } catch (cacheError) {
+        console.warn('Failed to seed optimistic queue cache', cacheError)
+      }
+
       // Success toast is handled by the component after navigation
       // to avoid duplicate toasts
     },
@@ -102,15 +175,15 @@ export function useJoinQueue() {
  */
 export function useRejoinQueue() {
   return useMutation<
-    { success: boolean; queueId?: string; message?: string },
+    RejoinQueueResult,
     Error,
-    { clinicId: string; doctorId: string; queueId: string; patientId: string },
+    { clinicId: string; doctorId: string; queueId: string; patientId: string; token: string },
     JoinQueueContext
   >({
     mutationFn: async (payload) => {
       const rejoinFn = httpsCallable<
         typeof payload,
-        { success: boolean; queueId?: string; message?: string }
+        RejoinQueueResult
       >(functions, 'patientRejoinQueue')
       
       const { data } = await rejoinFn(payload)

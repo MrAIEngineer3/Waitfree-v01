@@ -1,32 +1,33 @@
 "use client";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from './ui/select';
-import { collection, doc, onSnapshot, orderBy, query, updateDoc } from 'firebase/firestore';
-import { useEffect, useMemo, useState } from 'react';
+import { useQuery } from '@tanstack/react-query';
+import { doc, updateDoc } from 'firebase/firestore';
+import { useMemo } from 'react';
 import { auth, db } from '../lib/firebase';
+import type { ClinicDoctorListEntry } from './ClinicContextProvider';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from './ui/select';
 
 interface Doctor { id: string; name: string; specialty?: string }
-interface DoctorDoc { name?: string; specialty?: string }
 
 export default function DoctorPicker({ clinicId, value, onChange }:{ clinicId: string; value?: string | null; onChange?: (id: string)=>void }){
-  const [list, setList] = useState<Doctor[]>([]);
-  const [loading, setLoading] = useState(true);
-  const col = useMemo(()=> collection(db, 'clinics', clinicId, 'doctors'), [clinicId]);
-  useEffect(()=>{
-    const q = query(col, orderBy('name'));
-    const unsub = onSnapshot(q, (snap)=>{
-      const docs: Doctor[] = [];
-      snap.forEach((d)=>{
-        const data = (d.data() as DoctorDoc | undefined) ?? {};
-        docs.push({
-          id: d.id,
-          name: data.name ?? 'Unknown doctor',
-          specialty: data.specialty,
-        });
-      });
-      setList(docs); setLoading(false);
-    }, ()=> setLoading(false));
-    return ()=> unsub();
-  }, [col]);
+  const doctorsQueryKey = useMemo(() => ['doctors', clinicId] as const, [clinicId]);
+  const doctorsQuery = useQuery<ClinicDoctorListEntry[]>({
+    queryKey: doctorsQueryKey,
+    enabled: false,
+    queryFn: async () => [],
+    staleTime: Infinity,
+    gcTime: 30 * 60 * 1000,
+  });
+
+  const list = useMemo<Doctor[]>(() => {
+    const next = doctorsQuery.data ?? [];
+    return next.map((entry) => ({
+      id: entry.id,
+      name: entry.name || 'Unknown doctor',
+      specialty: entry.specialty ?? undefined,
+    }));
+  }, [doctorsQuery.data]);
+
+  const loading = doctorsQuery.data === undefined;
 
   async function handleChange(id: string){
     try{

@@ -157,6 +157,35 @@ body {
   to { opacity: 1; }
 }
 
+/* Morphing Background Animations */
+@keyframes morph {
+  0%, 100% {
+    border-radius: 60% 40% 30% 70% / 60% 30% 70% 40%;
+    transform: translate(0, 0) rotate(0deg);
+  }
+  25% {
+    border-radius: 30% 60% 70% 40% / 50% 60% 30% 60%;
+    transform: translate(10px, -10px) rotate(90deg);
+  }
+  50% {
+    border-radius: 50% 50% 50% 50% / 50% 50% 50% 50%;
+    transform: translate(-10px, 10px) rotate(180deg);
+  }
+  75% {
+    border-radius: 70% 30% 50% 50% / 30% 50% 70% 50%;
+    transform: translate(5px, 5px) rotate(270deg);
+  }
+}
+
+@keyframes gridMove {
+  0% {
+    transform: translate(0, 0);
+  }
+  100% {
+    transform: translate(60px, 60px);
+  }
+}
+
 @keyframes slideInRight {
   from {
     opacity: 0;

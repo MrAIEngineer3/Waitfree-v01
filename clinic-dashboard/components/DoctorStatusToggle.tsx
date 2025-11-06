@@ -1,21 +1,21 @@
 "use client";
 
-import { useState, useEffect } from 'react';
-import { doc, onSnapshot } from 'firebase/firestore';
-import { db } from '../lib/firebase';
-import { Switch } from './ui/switch';
-import { 
-  AlertDialog, 
-  AlertDialogAction, 
-  AlertDialogCancel, 
-  AlertDialogContent, 
-  AlertDialogDescription, 
-  AlertDialogFooter, 
-  AlertDialogHeader, 
-  AlertDialogTitle 
-} from './ui/alert-dialog';
 import { setDoctorRealTimeStatus } from '@/lib/scheduling';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { useEffect, useMemo, useState } from 'react';
 import { toast } from 'sonner';
+import type { ClinicDoctorListEntry } from './ClinicContextProvider';
+import {
+    AlertDialog,
+    AlertDialogAction,
+    AlertDialogCancel,
+    AlertDialogContent,
+    AlertDialogDescription,
+    AlertDialogFooter,
+    AlertDialogHeader,
+    AlertDialogTitle
+} from './ui/alert-dialog';
+import { Switch } from './ui/switch';
 
 interface DoctorStatusToggleProps {
   clinicId: string;
@@ -25,14 +25,7 @@ interface DoctorStatusToggleProps {
   showLabel?: boolean;
 }
 
-interface SchedulingDocument {
-  realTimeStatus?: {
-    online?: boolean;
-    updatedAt?: unknown;
-    note?: string | null;
-    source?: string | null;
-  } | null;
-}
+const EMPTY_DOCTOR_LIST: ClinicDoctorListEntry[] = [];
 
 export default function DoctorStatusToggle({ 
   clinicId, 
@@ -41,43 +34,41 @@ export default function DoctorStatusToggle({
   className = '',
   showLabel = true
 }: DoctorStatusToggleProps) {
-  const [online, setOnline] = useState(false);
-  const [loading, setLoading] = useState(true);
+  const queryClient = useQueryClient();
+  const doctorsQueryKey = useMemo(() => ['doctors', clinicId ?? ''] as const, [clinicId]);
+  const doctorsQuery = useQuery<ClinicDoctorListEntry[]>({
+    queryKey: doctorsQueryKey,
+    enabled: false,
+    queryFn: async () => [],
+    staleTime: Infinity,
+    gcTime: 30 * 60_000,
+  });
+
+  const doctorList = doctorsQuery.data ?? EMPTY_DOCTOR_LIST;
+
+  const currentDoctor = useMemo(() => {
+    if (!doctorId) {
+      return null;
+    }
+    return doctorList.find((entry) => entry.id === doctorId) ?? null;
+  }, [doctorId, doctorList]);
+
+  const actualOnline = currentDoctor?.scheduling?.realTimeStatus?.online === true;
+  const [optimisticStatus, setOptimisticStatus] = useState<boolean | null>(null);
+  const online = optimisticStatus ?? actualOnline;
+  const loading = !clinicId || !doctorId || doctorsQuery.data === undefined;
   const [toggling, setToggling] = useState(false);
   const [showDialog, setShowDialog] = useState(false);
   const [pendingStatus, setPendingStatus] = useState<boolean | null>(null);
 
   useEffect(() => {
-    if (!clinicId || !doctorId) {
-      setLoading(false);
+    if (optimisticStatus === null) {
       return;
     }
-
-    // Listen to the doctor document which includes scheduling data
-    const doctorRef = doc(db, 'clinics', clinicId, 'doctors', doctorId);
-    
-    const unsubscribe = onSnapshot(
-      doctorRef,
-      (snap) => {
-        if (snap.exists()) {
-          const data = snap.data();
-          // The scheduling data should be embedded in the doctor document
-          const scheduling = data?.scheduling as SchedulingDocument | undefined;
-          setOnline(scheduling?.realTimeStatus?.online === true);
-        } else {
-          setOnline(false);
-        }
-        setLoading(false);
-      },
-      (error) => {
-        console.error('Failed to subscribe to doctor status', error);
-        setOnline(false);
-        setLoading(false);
-      }
-    );
-
-    return () => unsubscribe();
-  }, [clinicId, doctorId]);
+    if ((currentDoctor?.scheduling?.realTimeStatus?.online ?? false) === optimisticStatus) {
+      setOptimisticStatus(null);
+    }
+  }, [currentDoctor?.scheduling?.realTimeStatus?.online, optimisticStatus]);
 
   const handleToggleAttempt = (checked: boolean) => {
     setPendingStatus(checked);
@@ -90,18 +81,54 @@ export default function DoctorStatusToggle({
     setShowDialog(false);
     setToggling(true);
 
+    const targetStatus = pendingStatus;
+    const previousDoctors = queryClient.getQueryData<ClinicDoctorListEntry[]>(doctorsQueryKey);
+
+    const applyOptimisticUpdate = (status: boolean) => {
+      queryClient.setQueryData<ClinicDoctorListEntry[]>(doctorsQueryKey, (prev) => {
+        if (!prev) {
+          return prev;
+        }
+        return prev.map((entry) => {
+          if (entry.id !== doctorId) {
+            return entry;
+          }
+          const scheduling = entry.scheduling ?? {};
+          const realTimeStatus = scheduling.realTimeStatus ?? {};
+          return {
+            ...entry,
+            scheduling: {
+              ...scheduling,
+              realTimeStatus: {
+                ...realTimeStatus,
+                online: status,
+              },
+            },
+          };
+        });
+      });
+    };
+
+    setOptimisticStatus(targetStatus);
+    applyOptimisticUpdate(targetStatus);
+
     try {
       await setDoctorRealTimeStatus({
         clinicId,
         doctorId,
-        online: pendingStatus,
+        online: targetStatus,
         source: 'staff'
       });
 
       toast.success(
-        `${doctorName} ${pendingStatus ? 'is now online and available' : 'has been marked offline'}`
+        `${doctorName} ${targetStatus ? 'is now online and available' : 'has been marked offline'}`
       );
+      queryClient.invalidateQueries({ queryKey: doctorsQueryKey });
     } catch (err) {
+      if (previousDoctors) {
+        queryClient.setQueryData<ClinicDoctorListEntry[]>(doctorsQueryKey, previousDoctors);
+      }
+      setOptimisticStatus(null);
       console.error('Failed to update doctor status', err);
       toast.error('Failed to update doctor status. Please try again.');
     } finally {

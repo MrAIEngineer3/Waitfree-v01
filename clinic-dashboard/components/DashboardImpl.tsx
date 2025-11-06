@@ -1,55 +1,25 @@
 "use client";
 
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { onAuthStateChanged } from 'firebase/auth';
-import type { Timestamp, Unsubscribe } from 'firebase/firestore';
-import { doc, onSnapshot } from 'firebase/firestore';
 import { httpsCallable } from 'firebase/functions';
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { toast } from 'sonner';
 import { useClinicContext } from '../components/ClinicContext';
-import DateNavigator from '../components/DateNavigator';
 import CompactStatsBar from '../components/CompactStatsBar';
+import DateNavigator from '../components/DateNavigator';
+import { Button } from '../components/ui/Button';
+import { Separator } from '../components/ui/separator';
+import { auth, functions } from '../lib/firebase';
+import {
+    useDashboardQueueDocRealtimeBridge,
+    type DashboardQueue,
+    type DashboardQueuePatient,
+    type QueueStatus,
+} from '../lib/hooks/use-dashboard-queue-realtime-bridge';
+import { markPhase, queueProfilingEnabled, recordRender, recordSnapshot } from '../lib/profiling';
 import ImprovedQueueList from './ImprovedQueueList';
 import { ManualAddPatientDialog } from './ManualAddPatientDialog';
-import { Separator } from '../components/ui/separator';
-import { Button } from '../components/ui/Button';
-import { auth, db, functions } from '../lib/firebase';
-import { markPhase, queueProfilingEnabled, recordRender, recordSnapshot } from '../lib/profiling';
-
-type QueueStatus = 'active' | 'paused' | 'ended' | 'closed';
-type FirestoreTimestamp = Timestamp | { seconds: number; nanoseconds: number } | null;
-
-interface QueueRecord {
-  doctorId?: string;
-  clinicId?: string;
-  status?: QueueStatus;
-  currentToken?: number;
-  totalPatients?: number;
-  completedPatients?: number;
-  createdAt?: FirestoreTimestamp;
-  updatedAt?: FirestoreTimestamp;
-  autoAdvance?: boolean;
-}
-
-interface Queue {
-  id: string;
-  doctorId: string;
-  clinicId: string;
-  status: QueueStatus;
-  currentToken: number;
-  totalPatients: number;
-  completedPatients: number;
-  createdAt?: FirestoreTimestamp;
-  updatedAt?: FirestoreTimestamp;
-  autoAdvance?: boolean;
-}
-
-const detach = (unsubscribe: Unsubscribe | null): null => {
-  if (unsubscribe) {
-    unsubscribe();
-  }
-  return null;
-};
 
 const getTodayKey = () => {
   try {
@@ -71,11 +41,11 @@ const getErrorMessage = (error: unknown, fallback: string) => {
 
 export default function DashboardImpl() {
   const { clinicId, doctorId } = useClinicContext();
-  const [queue, setQueue] = useState<Queue | null>(null);
+  const queryClient = useQueryClient();
   const [authReady, setAuthReady] = useState(false);
   const [selectedDate, setSelectedDate] = useState<string>(() => getTodayKey());
   const todayKey = useMemo(getTodayKey, []);
-  const queueSnapshotRef = useRef<number | null>(null);
+  const [queueRealtimeError, setQueueRealtimeError] = useState<string | null>(null);
   const [isNextPatientLoading, setIsNextPatientLoading] = useState(false);
   const [isAutoAdvUpdating, setIsAutoAdvUpdating] = useState(false);
   const [isAddPatientOpen, setIsAddPatientOpen] = useState(false);
@@ -86,6 +56,12 @@ export default function DashboardImpl() {
     return `Dashboard:${clinic}:${doctor}:${selectedDate}`;
   }, [clinicId, doctorId, selectedDate]);
 
+  const renderLabelRef = useRef(renderLabel);
+
+  useEffect(() => {
+    renderLabelRef.current = renderLabel;
+  }, [renderLabel]);
+
   const renderStart = queueProfilingEnabled ? performance.now() : 0;
   useEffect(() => {
     if (queueProfilingEnabled) {
@@ -93,69 +69,63 @@ export default function DashboardImpl() {
     }
   });
 
+  const queueQueryKey = useMemo(
+    () => ['dashboard', 'queue', clinicId ?? '', doctorId ?? '', selectedDate] as const,
+    [clinicId, doctorId, selectedDate]
+  );
+
+  const patientsQueryKey = useMemo(
+    () => ['patients', clinicId ?? '', doctorId ?? '', selectedDate] as const,
+    [clinicId, doctorId, selectedDate]
+  );
+
+  const queueQuery = useQuery<DashboardQueue | null>({
+    queryKey: queueQueryKey,
+    enabled: false,
+    queryFn: async () => null,
+    staleTime: Infinity,
+    gcTime: 30 * 60 * 1000,
+  });
+
+  const queueSnapshotLabel = useMemo(() => `${renderLabel}:queue`, [renderLabel]);
+
+  const handleQueueRealtimeError = useCallback((message: string | null) => {
+    if (message) {
+      setQueueRealtimeError('Unable to load queue details. Please refresh and try again.');
+    } else {
+      setQueueRealtimeError(null);
+    }
+  }, []);
+
+  const handleQueueSnapshotMeta = useCallback(
+    (meta: { size: number; latencyMs: number }) => {
+      if (queueProfilingEnabled) {
+        recordSnapshot(queueSnapshotLabel, meta);
+      }
+    },
+    [queueSnapshotLabel]
+  );
+
+  const { isHydrated: queueHydrated } = useDashboardQueueDocRealtimeBridge({
+    enabled: Boolean(clinicId && doctorId && selectedDate),
+    clinicId,
+    doctorId,
+    queueId: selectedDate,
+    queryKey: queueQueryKey,
+    onError: handleQueueRealtimeError,
+    onSnapshotMeta: handleQueueSnapshotMeta,
+  });
+
   useEffect(() => {
     if (!clinicId || !doctorId) {
-      setQueue(null);
-      return;
+      setQueueRealtimeError(null);
     }
+  }, [clinicId, doctorId]);
 
-    let unsubscribeQueue: Unsubscribe | null = null;
-    const queueRef = doc(db, 'clinics', clinicId, 'doctors', doctorId, 'queues', selectedDate);
-
-    unsubscribeQueue = onSnapshot(
-      queueRef,
-      (snap) => {
-        const start = queueProfilingEnabled ? performance.now() : 0;
-
-        if (!snap.exists()) {
-          setQueue(null);
-          if (queueProfilingEnabled) {
-            const end = performance.now();
-            const previous = queueSnapshotRef.current;
-            const latency = previous != null ? end - previous : end - start;
-            recordSnapshot(`${renderLabel}:queue`, { size: 0, latencyMs: latency });
-            queueSnapshotRef.current = end;
-          }
-          return;
-        }
-
-        const data = (snap.data() as QueueRecord | undefined) ?? {};
-        setQueue({
-          id: snap.id,
-          doctorId: data.doctorId ?? doctorId,
-          clinicId: data.clinicId ?? clinicId,
-          status: data.status ?? 'active',
-          currentToken: data.currentToken ?? 0,
-          totalPatients: data.totalPatients ?? 0,
-          completedPatients: data.completedPatients ?? 0,
-          createdAt: data.createdAt ?? null,
-          updatedAt: data.updatedAt ?? null,
-          autoAdvance: data.autoAdvance ?? false,
-        });
-
-        if (queueProfilingEnabled) {
-          const end = performance.now();
-          const previous = queueSnapshotRef.current;
-          const latency = previous != null ? end - previous : end - start;
-          recordSnapshot(`${renderLabel}:queue`, { size: 1, latencyMs: latency });
-          queueSnapshotRef.current = end;
-        }
-      },
-      (error) => {
-        console.error('[DashboardImpl] Failed to subscribe to queue', error);
-        if (queueProfilingEnabled) {
-          console.warn('[queue-profiler] queue listener error', error);
-        }
-      }
-    );
-
-    return () => {
-      unsubscribeQueue = detach(unsubscribeQueue);
-    };
-  }, [clinicId, doctorId, selectedDate, renderLabel]);
+  const queue = queueHydrated ? queueQuery.data ?? null : null;
 
   useEffect(() => {
-    const phaseLabel = `${renderLabel}:auth`;
+    const phaseLabel = `${renderLabelRef.current}:auth`;
     let completed = false;
 
     if (queueProfilingEnabled) {
@@ -177,17 +147,78 @@ export default function DashboardImpl() {
         completed = true;
       }
     };
-  }, [renderLabel]);
+  }, []);
 
   const handleNextPatient = async () => {
-    if (!clinicId || !doctorId || !selectedDate) return;
+    if (!clinicId || !doctorId || !selectedDate) {
+      return;
+    }
+
+    const cachedPatients = queryClient.getQueryData<DashboardQueuePatient[] | undefined>(patientsQueryKey);
+    const currentPatient = cachedPatients?.find((patient) => patient.status === 'in-progress') ?? null;
+    const nextPatient = cachedPatients?.find((patient) => patient.status === 'waiting') ?? null;
+
+    if (cachedPatients && !currentPatient && !nextPatient) {
+      toast.info('No patients to advance.');
+      return;
+    }
+
     setIsNextPatientLoading(true);
-    
+
+    const previousQueue = queryClient.getQueryData<DashboardQueue | null>(queueQueryKey);
+    const previousPatients = cachedPatients;
+
+    if (cachedPatients) {
+      const optimisticPatients = cachedPatients.map((patient) => {
+        if (currentPatient && patient.id === currentPatient.id) {
+          return { ...patient, status: 'completed' };
+        }
+        if (nextPatient && patient.id === nextPatient.id) {
+          return { ...patient, status: 'in-progress' };
+        }
+        return patient;
+      });
+
+      queryClient.setQueryData(patientsQueryKey, optimisticPatients);
+    }
+
+    if (previousQueue) {
+      const completedPatients = typeof previousQueue.completedPatients === 'number' ? previousQueue.completedPatients : 0;
+      const queueAfterComplete: DashboardQueue = {
+        ...previousQueue,
+        completedPatients: currentPatient ? completedPatients + 1 : completedPatients,
+        currentToken: currentPatient
+          ? Math.max(previousQueue.currentToken, currentPatient.tokenNumber)
+          : previousQueue.currentToken,
+        updatedAt: new Date(),
+      };
+
+      const queueAfterCall = nextPatient
+        ? {
+            ...queueAfterComplete,
+            currentToken: nextPatient.tokenNumber,
+            updatedAt: new Date(),
+          }
+        : queueAfterComplete;
+
+      queryClient.setQueryData(queueQueryKey, queueAfterCall);
+    }
+
     try {
       const advanceQueue = httpsCallable(functions, 'advanceQueue');
       await advanceQueue({ clinicId, doctorId, queueId: selectedDate });
       toast.success('Called next patient');
     } catch (error) {
+      if (previousQueue !== undefined) {
+        queryClient.setQueryData(queueQueryKey, previousQueue ?? null);
+      }
+
+      if (previousPatients !== undefined) {
+        queryClient.setQueryData(patientsQueryKey, previousPatients);
+      } else {
+        queryClient.removeQueries({ queryKey: patientsQueryKey, exact: true });
+      }
+
       console.error('Error advancing queue:', error);
       toast.error(getErrorMessage(error, 'Failed to advance queue'));
     } finally {
@@ -198,7 +229,16 @@ export default function DashboardImpl() {
   const handleToggleAutoAdvance = async (enabled: boolean) => {
     if (!clinicId || !doctorId || !selectedDate) return;
     setIsAutoAdvUpdating(true);
-    
+    const previousQueue = queryClient.getQueryData<DashboardQueue | null>(queueQueryKey);
+
+    if (previousQueue) {
+      queryClient.setQueryData(queueQueryKey, {
+        ...previousQueue,
+        autoAdvance: enabled,
+        updatedAt: new Date(),
+      });
+    }
+
     try {
       const setQueueAutoAdvanceCallable = httpsCallable(functions, 'setQueueAutoAdvance');
       await setQueueAutoAdvanceCallable({ clinicId, doctorId, queueId: selectedDate, enabled });
@@ -206,12 +246,15 @@ export default function DashboardImpl() {
     } catch (error) {
       console.error('Error toggling auto-advance:', error);
       toast.error(getErrorMessage(error, 'Failed to update setting'));
+      if (previousQueue) {
+        queryClient.setQueryData(queueQueryKey, previousQueue);
+      }
     } finally {
       setIsAutoAdvUpdating(false);
     }
   };
 
-  const queueStatusValue = queue?.status;
+  const queueStatusValue: QueueStatus | undefined = queue?.status;
   const manualAddDisabled = !clinicId || !doctorId || !selectedDate || queueStatusValue === 'ended' || queueStatusValue === 'closed';
 
   return (
@@ -358,6 +401,11 @@ export default function DashboardImpl() {
 
             {/* Queue List - Full width content */}
             <div className="w-full">
+              {queueRealtimeError && (
+                <div className="mx-4 mt-4 rounded-md border border-destructive/30 bg-destructive/10 px-4 py-3 text-sm text-destructive">
+                  {queueRealtimeError}
+                </div>
+              )}
               {clinicId && doctorId && (
                 <ImprovedQueueList
                   clinicId={clinicId}

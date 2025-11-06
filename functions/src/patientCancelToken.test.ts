@@ -24,10 +24,32 @@ const buildFirestoreMocks = (patientData: Record<string, any>) => {
     })
   };
 
+  const clinicSlugDocRef = {
+    get: vi.fn().mockResolvedValue({
+      exists: true,
+      data: () => ({
+        canonicalClinicId: callData.clinicId,
+        status: 'active',
+        disabled: false
+      })
+    })
+  };
+
   const clinicShareCodesCollection = {
     doc: vi.fn().mockImplementation((id: string) => {
       if (id === callData.clinicId.toUpperCase()) {
         return shareCodeDocRef;
+      }
+      return {
+        get: vi.fn().mockResolvedValue({ exists: false })
+      };
+    })
+  };
+
+  const clinicSlugsCollection = {
+    doc: vi.fn().mockImplementation((id: string) => {
+      if (id.toLowerCase() === callData.clinicId.toLowerCase()) {
+        return clinicSlugDocRef;
       }
       return {
         get: vi.fn().mockResolvedValue({ exists: false })
@@ -78,6 +100,9 @@ const buildFirestoreMocks = (patientData: Record<string, any>) => {
     collection: vi.fn().mockImplementation((name: string) => {
       if (name === 'clinicShareCodes') {
         return clinicShareCodesCollection;
+      }
+      if (name === 'clinicSlugs') {
+        return clinicSlugsCollection;
       }
       if (name === 'clinics') {
         return clinicsCollection;

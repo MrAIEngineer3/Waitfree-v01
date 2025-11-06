@@ -5,22 +5,55 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
 Object.defineProperty(exports, "__esModule", { value: true });
 const firebaseAdmin_1 = require("../firebaseAdmin");
 const node_fetch_1 = __importDefault(require("node-fetch"));
-if (!process.env.FIRESTORE_EMULATOR_HOST)
-    process.env.FIRESTORE_EMULATOR_HOST = 'localhost:8081';
-if (!process.env.FIREBASE_AUTH_EMULATOR_HOST)
-    process.env.FIREBASE_AUTH_EMULATOR_HOST = 'localhost:9098';
+const node_fs_1 = require("node:fs");
+const node_path_1 = __importDefault(require("node:path"));
+const loadFirebaseJson = () => {
+    try {
+        const firebaseJsonPath = node_path_1.default.resolve(__dirname, '..', '..', 'firebase.json');
+        const contents = (0, node_fs_1.readFileSync)(firebaseJsonPath, 'utf8');
+        return JSON.parse(contents);
+    }
+    catch {
+        return {};
+    }
+};
+const firebaseJson = loadFirebaseJson();
+const getEmulatorHost = (service, fallback) => {
+    const config = firebaseJson.emulators?.[service];
+    if (!config) {
+        return fallback;
+    }
+    const host = config.host ?? '127.0.0.1';
+    const port = config.port;
+    if (!port) {
+        return fallback;
+    }
+    return `${host}:${port}`;
+};
+const normalizeHost = (value) => value.startsWith('http://') || value.startsWith('https://') ? value.replace(/^https?:\/\//, '') : value;
+const authHostRaw = process.env.FIREBASE_AUTH_EMULATOR_HOST || getEmulatorHost('auth', '127.0.0.1:9099');
+process.env.FIREBASE_AUTH_EMULATOR_HOST = authHostRaw;
+const firestoreHostRaw = process.env.FIRESTORE_EMULATOR_HOST || getEmulatorHost('firestore', '127.0.0.1:8080');
+process.env.FIRESTORE_EMULATOR_HOST = firestoreHostRaw;
+const functionsFallbackHost = getEmulatorHost('functions', '127.0.0.1:5001');
+const functionsOrigin = process.env.FIREBASE_FUNCTIONS_EMULATOR_ORIGIN ||
+    process.env.FUNCTIONS_EMULATOR ||
+    (process.env.FUNCTIONS_EMULATOR_HOST ? `http://${process.env.FUNCTIONS_EMULATOR_HOST}` : `http://${functionsFallbackHost}`);
+const authHost = normalizeHost(authHostRaw);
 const projectId = process.env.FIREBASE_EMULATOR_PROJECT_ID || process.env.GCLOUD_PROJECT || 'waitfree-9b06e';
-console.log('[Phase2Test] Using projectId =', projectId);
 if (!firebaseAdmin_1.admin.apps.length) {
     firebaseAdmin_1.admin.initializeApp({ projectId });
 }
-const host = process.env.FUNCTIONS_HOST || 'http://localhost:5002';
 const region = 'asia-south1';
+const functionsBaseUrl = `${functionsOrigin.replace(/\/$/, '')}/${projectId}/${region}`;
+console.log('[Phase2Test] Using projectId =', projectId);
+console.log('[Phase2Test] Functions origin =', functionsOrigin);
+console.log('[Phase2Test] Firestore host =', firestoreHostRaw);
+console.log('[Phase2Test] Auth host =', authHost);
 let authIdToken = null;
 async function ensureAuth() {
     if (authIdToken)
         return authIdToken;
-    const authHost = process.env.AUTH_EMULATOR_HOST || 'localhost:9098';
     const url = `http://${authHost}/identitytoolkit.googleapis.com/v1/accounts:signUp?key=fake-api-key`;
     const resp = await (0, node_fetch_1.default)(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ returnSecureToken: true }) });
     const j = await resp.json();
@@ -31,7 +64,7 @@ async function ensureAuth() {
 }
 async function callable(name, data) {
     const token = await ensureAuth();
-    const url = `${host}/${projectId}/${region}/${name}`;
+    const url = `${functionsBaseUrl}/${name}`;
     const res = await (0, node_fetch_1.default)(url, { method: 'POST', headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` }, body: JSON.stringify({ data }) });
     const text = await res.text();
     let json = null;

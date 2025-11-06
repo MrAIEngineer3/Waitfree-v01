@@ -1,7 +1,8 @@
 "use client";
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { onAuthStateChanged } from 'firebase/auth';
-import type { Timestamp, Unsubscribe } from 'firebase/firestore';
-import { collection, doc, getDoc, getDocs, limit, onSnapshot, query, serverTimestamp, setDoc, where } from 'firebase/firestore';
+import type { DocumentData, DocumentSnapshot, QueryDocumentSnapshot, Timestamp, Unsubscribe } from 'firebase/firestore';
+import { collection, doc, getDoc, getDocs, limit, onSnapshot, orderBy, query, serverTimestamp, setDoc, where } from 'firebase/firestore';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { auth, db } from '../lib/firebase';
 import { clearCachedValue, clearClinicCache, prefetchValue, setCachedValue } from '../lib/settingsCache';
@@ -18,6 +19,7 @@ interface DoctorRecord {
   email?: string | null;
   phone?: string | null;
   createdAt?: FirestoreTimestamp;
+  scheduling?: DoctorSchedulingRecord | null;
 }
 
 interface QueueRecord {
@@ -35,10 +37,19 @@ interface QueueRecord {
 interface UserRecord {
   clinicId?: string;
   doctorId?: string;
+  photoURL?: string | null;
 }
 
 interface ClinicRecord {
   name?: string | null;
+  displaySlug?: string | null;
+}
+
+interface ClinicInfo {
+  id: string;
+  name: string | null;
+  slug: string | null;
+  shareCode: string | null;
 }
 
 interface Doctor {
@@ -81,19 +92,63 @@ const isPermissionDeniedError = (value: unknown): value is { code: string } =>
   && 'code' in value
   && (value as { code: unknown }).code === 'permission-denied';
 
+export interface DoctorRealtimeStatusRecord {
+  online?: boolean;
+  updatedAt?: FirestoreTimestamp;
+  note?: string | null;
+  source?: string | null;
+}
+
+export interface DoctorSchedulingRecord {
+  timeZone?: string | null;
+  defaultRota?: unknown;
+  realTimeStatus?: DoctorRealtimeStatusRecord | null;
+}
+
+export interface ClinicDoctorListEntry {
+  id: string;
+  clinicId: string;
+  name: string;
+  specialty: string | null;
+  email?: string | null;
+  phone?: string | null;
+  createdAt?: FirestoreTimestamp;
+  scheduling?: DoctorSchedulingRecord | null;
+}
+
 export default function ClinicContextProvider({ children }: ClinicContextProviderProps) {
-  const [doctor, setDoctor] = useState<Doctor | null>(null);
-  const [queue, setQueue] = useState<Queue | null>(null);
   const [clinicId, setClinicId] = useState<string | null>(null);
   const [clinicShareCode, setClinicShareCode] = useState<string | null>(null);
   const [doctorId, setDoctorId] = useState<string | null>(null);
-  const [clinicName, setClinicName] = useState<string | null>(null);
+  const [doctorPhotoURL, setDoctorPhotoURL] = useState<string | null>(null);
   const [notificationSettings, setNotificationSettings] = useState<NotificationSettingsDoc | null | undefined>(undefined);
   const todayKey = new Date().toISOString().split('T')[0];
   const attemptedCreateRef = useRef<Set<string>>(new Set());
   const latestClinicRef = useRef<string | null>(null);
   const shareCodeRetryRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const latestShareCodeRef = useRef<string | null>(null);
+  const queryClient = useQueryClient();
+
+  const clearShareCodeRetry = useCallback(() => {
+    if (shareCodeRetryRef.current) {
+      clearTimeout(shareCodeRetryRef.current);
+      shareCodeRetryRef.current = null;
+    }
+  }, []);
+
+  const resetClinicScopedState = useCallback(() => {
+    queryClient.removeQueries({ queryKey: ['clinic'], exact: false });
+    queryClient.removeQueries({ queryKey: ['doctor'], exact: false });
+    queryClient.removeQueries({ queryKey: ['queue'], exact: false });
+    queryClient.removeQueries({ queryKey: ['patients'], exact: false });
+    queryClient.removeQueries({ queryKey: ['doctors'], exact: false });
+    attemptedCreateRef.current.clear();
+    latestShareCodeRef.current = null;
+    clearShareCodeRetry();
+    setClinicShareCode(null);
+    setDoctorPhotoURL(null);
+    setNotificationSettings(undefined);
+  }, [queryClient, clearShareCodeRetry]);
 
   const loadNotificationSettings = useCallback(async (clinic: string) => {
     const path = ['clinics', clinic, 'settings', 'notifications'];
@@ -264,74 +319,60 @@ export default function ClinicContextProvider({ children }: ClinicContextProvide
     }
   }, [clinicId]);
 
+  const clinicQueryKey = useMemo(() => ['clinic', clinicId ?? ''] as const, [clinicId]);
+  const doctorQueryKey = useMemo(
+    () => ['doctor', clinicId ?? '', doctorId ?? ''] as const,
+    [clinicId, doctorId]
+  );
+  const queueQueryKey = useMemo(
+    () => ['queue', clinicId ?? '', doctorId ?? '', todayKey] as const,
+    [clinicId, doctorId, todayKey]
+  );
+  const doctorsQueryKey = useMemo(
+    () => ['doctors', clinicId ?? ''] as const,
+    [clinicId]
+  );
+
+  const ensureQueueDocument = useCallback(
+    async (clinic: string, doctor: string) => {
+      const cacheKey = `${clinic}/${doctor}/${todayKey}`;
+      if (attemptedCreateRef.current.has(cacheKey)) {
+        return;
+      }
+      attemptedCreateRef.current.add(cacheKey);
+      try {
+        const queueRef = doc(db, 'clinics', clinic, 'doctors', doctor, 'queues', todayKey);
+        await setDoc(
+          queueRef,
+          {
+            status: 'active',
+            currentToken: 0,
+            totalPatients: 0,
+            completedPatients: 0,
+            autoAdvance: true,
+            createdAt: serverTimestamp(),
+            clinicId: clinic,
+            doctorId: doctor,
+          },
+          { merge: true }
+        );
+      } catch (error) {
+        if (process.env.NODE_ENV === 'development') {
+          console.warn('[ClinicContext] Failed to create queue document', error);
+        }
+      }
+    },
+    [todayKey]
+  );
+
   useEffect(() => {
     if (typeof window === 'undefined') {
       return;
     }
 
-    let unsubscribeDoctor: Unsubscribe | null = null;
-    let unsubscribeQueue: Unsubscribe | null = null;
-    let unsubscribeClinic: Unsubscribe | null = null;
     let unsubscribeUserDoc: Unsubscribe | null = null;
 
-    const attachQueueListener = (clinic: string, doctor: string, dayKey: string) => {
-      unsubscribeQueue = detach(unsubscribeQueue);
-      const queueRef = doc(db, 'clinics', clinic, 'doctors', doctor, 'queues', dayKey);
-      unsubscribeQueue = onSnapshot(queueRef, async (snap) => {
-        if (snap.exists()) {
-          const data = (snap.data() as QueueRecord | undefined) ?? {};
-          setQueue({
-            id: snap.id,
-            doctorId: data.doctorId ?? doctor,
-            clinicId: data.clinicId ?? clinic,
-            status: data.status ?? 'active',
-            currentToken: data.currentToken ?? 0,
-            totalPatients: data.totalPatients ?? 0,
-            completedPatients: data.completedPatients ?? 0,
-            createdAt: data.createdAt ?? null,
-            updatedAt: data.updatedAt ?? null,
-            autoAdvance: data.autoAdvance ?? true,
-          });
-          return;
-        }
-
-        setQueue(null);
-
-        if (dayKey !== todayKey) {
-          return;
-        }
-
-        const key = `${clinic}/${doctor}/${dayKey}`;
-        if (attemptedCreateRef.current.has(key)) {
-          return;
-        }
-
-        attemptedCreateRef.current.add(key);
-        try {
-          await setDoc(
-            queueRef,
-            {
-              status: 'active',
-              currentToken: 0,
-              totalPatients: 0,
-              completedPatients: 0,
-              autoAdvance: true,
-              createdAt: serverTimestamp(),
-              clinicId: clinic,
-              doctorId: doctor,
-            },
-            { merge: true }
-          );
-        } catch {
-          // Non-fatal; queue controls will stay disabled if creation fails.
-        }
-      });
-    };
-
     const unsubscribeAuth = onAuthStateChanged(auth, (user) => {
-      unsubscribeDoctor = detach(unsubscribeDoctor);
-      unsubscribeQueue = detach(unsubscribeQueue);
-      unsubscribeClinic = detach(unsubscribeClinic);
       unsubscribeUserDoc = detach(unsubscribeUserDoc);
 
       if (!user) {
@@ -339,17 +380,10 @@ export default function ClinicContextProvider({ children }: ClinicContextProvide
           clearClinicCache(latestClinicRef.current);
         }
         latestClinicRef.current = null;
-        if (shareCodeRetryRef.current) {
-          clearTimeout(shareCodeRetryRef.current);
-          shareCodeRetryRef.current = null;
-        }
         setClinicId(null);
-        setClinicShareCode(null);
         setDoctorId(null);
-        setDoctor(null);
-          setQueue(null);
-          setClinicName(null);
-          setNotificationSettings(undefined);
+        setDoctorPhotoURL(null);
+        resetClinicScopedState();
         return;
       }
 
@@ -358,118 +392,319 @@ export default function ClinicContextProvider({ children }: ClinicContextProvide
         const data = (userSnap.data() as UserRecord | undefined) ?? {};
         const nextClinicId = data.clinicId ?? null;
         const nextDoctorId = data.doctorId ?? null;
+        const nextPhotoURL = typeof data.photoURL === 'string' && data.photoURL.trim().length > 0
+          ? data.photoURL
+          : user.photoURL ?? null;
 
         setClinicId(nextClinicId);
         setDoctorId(nextDoctorId);
+        setDoctorPhotoURL(nextPhotoURL);
 
         if (!nextClinicId || !nextDoctorId) {
           if (latestClinicRef.current) {
             clearClinicCache(latestClinicRef.current);
           }
           latestClinicRef.current = null;
-          setDoctor(null);
-          setQueue(null);
-          setClinicName(null);
-          setClinicShareCode(null);
-          setNotificationSettings(undefined);
+          resetClinicScopedState();
           return;
         }
 
+        if (latestClinicRef.current && latestClinicRef.current !== nextClinicId) {
+          clearClinicCache(latestClinicRef.current);
+        }
+
         if (latestClinicRef.current !== nextClinicId) {
-          if (latestClinicRef.current) {
-            clearClinicCache(latestClinicRef.current);
-          }
-          latestClinicRef.current = nextClinicId;
-          if (shareCodeRetryRef.current) {
-            clearTimeout(shareCodeRetryRef.current);
-            shareCodeRetryRef.current = null;
-          }
-          setNotificationSettings(undefined);
-          setClinicShareCode(null);
+          resetClinicScopedState();
           void loadNotificationSettings(nextClinicId);
           void loadClinicShareCode(nextClinicId);
         }
 
-        unsubscribeClinic = detach(unsubscribeClinic);
-        const clinicRef = doc(db, 'clinics', nextClinicId);
-        unsubscribeClinic = onSnapshot(clinicRef, (clinicSnap) => {
-          const cacheKey = ['clinicShareCodes', nextClinicId];
-          if (!clinicSnap.exists()) {
-            setClinicName(null);
-            setClinicShareCode(null);
-            setCachedValue(cacheKey, null);
-            return;
-          }
-          const clinicData = (clinicSnap.data() as ClinicRecord | undefined) ?? {};
-          setClinicName(clinicData.name ?? null);
-          const shareCodeValue = (clinicData as { shareCode?: unknown }).shareCode;
-          const shareCodeRaw = typeof shareCodeValue === 'string' ? shareCodeValue.trim() : '';
-          if (shareCodeRaw) {
-            const normalized = shareCodeRaw.toUpperCase();
-            if (shareCodeRetryRef.current) {
-              clearTimeout(shareCodeRetryRef.current);
-              shareCodeRetryRef.current = null;
-            }
-            setClinicShareCode((prev) => (prev === normalized ? prev : normalized));
-            setCachedValue(cacheKey, normalized);
-          }
-        });
-
-        unsubscribeDoctor = detach(unsubscribeDoctor);
-        const doctorRef = doc(db, 'clinics', nextClinicId, 'doctors', nextDoctorId);
-        unsubscribeDoctor = onSnapshot(doctorRef, (doctorSnap) => {
-          if (!doctorSnap.exists()) {
-            setDoctor(null);
-            return;
-          }
-          const doctorData = (doctorSnap.data() as DoctorRecord | undefined) ?? {};
-          setDoctor({
-            id: doctorSnap.id,
-            name: doctorData.name ?? '',
-            specialty: doctorData.specialty ?? null,
-            clinicId: doctorData.clinicId ?? nextClinicId,
-            email: doctorData.email ?? null,
-            phone: doctorData.phone ?? null,
-            createdAt: doctorData.createdAt ?? null,
-          });
-        });
-
-        attachQueueListener(nextClinicId, nextDoctorId, todayKey);
+        latestClinicRef.current = nextClinicId;
       });
     });
 
     return () => {
       unsubscribeAuth();
-      unsubscribeDoctor = detach(unsubscribeDoctor);
-      unsubscribeQueue = detach(unsubscribeQueue);
-      unsubscribeClinic = detach(unsubscribeClinic);
       unsubscribeUserDoc = detach(unsubscribeUserDoc);
-      if (shareCodeRetryRef.current) {
-        clearTimeout(shareCodeRetryRef.current);
-        shareCodeRetryRef.current = null;
-      }
+      clearShareCodeRetry();
     };
-  }, [loadNotificationSettings, loadClinicShareCode, todayKey]);
+  }, [clearShareCodeRetry, loadClinicShareCode, loadNotificationSettings, resetClinicScopedState]);
+
+  const clinicQuery = useQuery<ClinicInfo | null>({
+    queryKey: clinicQueryKey,
+    enabled: Boolean(clinicId),
+    staleTime: Infinity,
+    gcTime: 30 * 60_000,
+    queryFn: async () => {
+      const clinicRef = doc(db, 'clinics', clinicId!);
+      const snapshot = await getDoc(clinicRef);
+      if (!snapshot.exists()) {
+        return null;
+      }
+      return buildClinicFromSnapshot(snapshot);
+    },
+  });
+
+  const doctorQuery = useQuery<Doctor | null>({
+    queryKey: doctorQueryKey,
+    enabled: Boolean(clinicId && doctorId),
+    staleTime: Infinity,
+    gcTime: 30 * 60_000,
+    queryFn: async () => {
+      const doctorRef = doc(db, 'clinics', clinicId!, 'doctors', doctorId!);
+      const snapshot = await getDoc(doctorRef);
+      if (!snapshot.exists()) {
+        return null;
+      }
+      return buildDoctorFromSnapshot(snapshot, { clinicId: clinicId! });
+    },
+  });
+
+  const queueQuery = useQuery<Queue | null>({
+    queryKey: queueQueryKey,
+    enabled: Boolean(clinicId && doctorId),
+    staleTime: Infinity,
+    gcTime: 30 * 60_000,
+    queryFn: async () => {
+      const queueRef = doc(db, 'clinics', clinicId!, 'doctors', doctorId!, 'queues', todayKey);
+      const snapshot = await getDoc(queueRef);
+      if (!snapshot.exists()) {
+        await ensureQueueDocument(clinicId!, doctorId!);
+        return null;
+      }
+      return buildQueueFromSnapshot(snapshot, { clinicId: clinicId!, doctorId: doctorId! });
+    },
+  });
+
+  useEffect(() => {
+    if (!clinicId) {
+      queryClient.setQueryData<ClinicDoctorListEntry[]>(doctorsQueryKey, []);
+      return;
+    }
+
+    const doctorsRef = collection(db, 'clinics', clinicId, 'doctors');
+    const doctorsQuery = query(doctorsRef, orderBy('name'));
+
+    const unsubscribe = onSnapshot(
+      doctorsQuery,
+      (snapshot) => {
+        const next = snapshot.docs.map((docSnap) => buildClinicDoctorListEntry(docSnap, clinicId));
+        queryClient.setQueryData<ClinicDoctorListEntry[]>(doctorsQueryKey, next);
+      },
+      (error) => {
+        if (process.env.NODE_ENV === 'development') {
+          console.warn('[ClinicContext] Doctors listener error', error);
+        }
+      }
+    );
+
+    return () => {
+      unsubscribe();
+    };
+  }, [clinicId, doctorsQueryKey, queryClient]);
+
+  useEffect(() => {
+    if (!clinicId) {
+      return;
+    }
+
+    const cacheKey: string[] = ['clinicShareCodes', clinicId];
+    const clinicRef = doc(db, 'clinics', clinicId);
+
+    const unsubscribe = onSnapshot(
+      clinicRef,
+      (snapshot) => {
+        if (!snapshot.exists()) {
+          queryClient.setQueryData<ClinicInfo | null>(clinicQueryKey, null);
+          latestShareCodeRef.current = null;
+          setClinicShareCode(null);
+          clearCachedValue(cacheKey);
+          return;
+        }
+
+        const nextClinic = buildClinicFromSnapshot(snapshot);
+        queryClient.setQueryData<ClinicInfo | null>(clinicQueryKey, nextClinic);
+
+        const shareCode = nextClinic.shareCode?.trim() ?? '';
+        if (shareCode) {
+          const normalized = shareCode.toUpperCase();
+          latestShareCodeRef.current = normalized;
+          clearShareCodeRetry();
+          setCachedValue(cacheKey, normalized);
+          setClinicShareCode((prev) => (prev === normalized ? prev : normalized));
+        } else if (!latestShareCodeRef.current) {
+          clearCachedValue(cacheKey);
+          setClinicShareCode(null);
+        }
+      },
+      (error) => {
+        if (process.env.NODE_ENV === 'development') {
+          console.warn('[ClinicContext] Clinic listener error', error);
+        }
+      }
+    );
+
+    return () => {
+      unsubscribe();
+    };
+  }, [clinicId, clinicQueryKey, queryClient, clearShareCodeRetry]);
+
+  useEffect(() => {
+    if (!clinicId || !doctorId) {
+      return;
+    }
+
+    const doctorRef = doc(db, 'clinics', clinicId, 'doctors', doctorId);
+
+    const unsubscribe = onSnapshot(
+      doctorRef,
+      (snapshot) => {
+        if (!snapshot.exists()) {
+          queryClient.setQueryData<Doctor | null>(doctorQueryKey, null);
+          return;
+        }
+
+        const nextDoctor = buildDoctorFromSnapshot(snapshot, { clinicId });
+        queryClient.setQueryData<Doctor | null>(doctorQueryKey, nextDoctor);
+      },
+      (error) => {
+        if (process.env.NODE_ENV === 'development') {
+          console.warn('[ClinicContext] Doctor listener error', error);
+        }
+      }
+    );
+
+    return () => {
+      unsubscribe();
+    };
+  }, [clinicId, doctorId, doctorQueryKey, queryClient]);
+
+  useEffect(() => {
+    if (!clinicId || !doctorId) {
+      return;
+    }
+
+    const queueRef = doc(db, 'clinics', clinicId, 'doctors', doctorId, 'queues', todayKey);
+
+    const unsubscribe = onSnapshot(
+      queueRef,
+      async (snapshot) => {
+        if (!snapshot.exists()) {
+          queryClient.setQueryData<Queue | null>(queueQueryKey, null);
+          await ensureQueueDocument(clinicId, doctorId);
+          return;
+        }
+
+        const nextQueue = buildQueueFromSnapshot(snapshot, { clinicId, doctorId });
+        queryClient.setQueryData<Queue | null>(queueQueryKey, nextQueue);
+      },
+      (error) => {
+        if (process.env.NODE_ENV === 'development') {
+          console.warn('[ClinicContext] Queue listener error', error);
+        }
+      }
+    );
+
+    return () => {
+      unsubscribe();
+    };
+  }, [clinicId, doctorId, ensureQueueDocument, queueQueryKey, queryClient, todayKey]);
 
   useEffect(() => {
     latestShareCodeRef.current = clinicShareCode;
   }, [clinicShareCode]);
 
+  const clinicName = clinicQuery.data?.name ?? null;
+  const doctor = doctorQuery.data ?? null;
+  const queue = queueQuery.data ?? null;
+  const clinicSlug = clinicQuery.data?.slug ?? null;
+
   const contextValue = useMemo(
     () => ({
       clinicId,
+      clinicSlug,
       clinicShareCode,
       clinicName,
       doctorId,
       doctorName: doctor?.name ?? null,
       doctorSpecialty: doctor?.specialty ?? null,
+      doctorPhotoURL,
       queueStatus: queue?.status,
       queue,
       notificationSettings,
-      reloadNotificationSettings: refreshNotificationSettings,
+      reloadNotificationSettings: clinicId ? refreshNotificationSettings : null,
     }),
-    [clinicId, clinicShareCode, clinicName, doctor?.name, doctor?.specialty, doctorId, queue, notificationSettings, refreshNotificationSettings]
+    [clinicId, clinicSlug, clinicShareCode, clinicName, doctor?.name, doctor?.specialty, doctorId, doctorPhotoURL, queue, notificationSettings, refreshNotificationSettings]
   );
 
   return <ClinicContext.Provider value={contextValue}>{children}</ClinicContext.Provider>;
+}
+
+function buildClinicFromSnapshot(snapshot: DocumentSnapshot<DocumentData>): ClinicInfo {
+  const data = (snapshot.data() as ClinicRecord | undefined) ?? {};
+  const shareCodeValue = (data as { shareCode?: unknown }).shareCode;
+  const shareCode = typeof shareCodeValue === 'string' ? shareCodeValue : null;
+  const slugValue = (data as { displaySlug?: unknown }).displaySlug;
+  const slug = typeof slugValue === 'string' ? slugValue : null;
+
+  return {
+    id: snapshot.id,
+    name: typeof data.name === 'string' ? data.name : null,
+    slug,
+    shareCode,
+  };
+}
+
+function buildDoctorFromSnapshot(
+  snapshot: DocumentSnapshot<DocumentData>,
+  fallback: { clinicId: string }
+): Doctor {
+  const doctorData = (snapshot.data() as DoctorRecord | undefined) ?? {};
+  return {
+    id: snapshot.id,
+    name: doctorData.name ?? '',
+    specialty: doctorData.specialty ?? null,
+    clinicId: doctorData.clinicId ?? fallback.clinicId,
+    email: doctorData.email ?? null,
+    phone: doctorData.phone ?? null,
+    createdAt: doctorData.createdAt ?? null,
+  };
+}
+
+function buildQueueFromSnapshot(
+  snapshot: DocumentSnapshot<DocumentData>,
+  defaults: { clinicId: string; doctorId: string }
+): Queue {
+  const data = (snapshot.data() as QueueRecord | undefined) ?? {};
+  return {
+    id: snapshot.id,
+    doctorId: data.doctorId ?? defaults.doctorId,
+    clinicId: data.clinicId ?? defaults.clinicId,
+    status: data.status ?? 'active',
+    currentToken: data.currentToken ?? 0,
+    totalPatients: data.totalPatients ?? 0,
+    completedPatients: data.completedPatients ?? 0,
+    createdAt: data.createdAt ?? null,
+    updatedAt: data.updatedAt ?? null,
+    autoAdvance: data.autoAdvance ?? true,
+  };
+}
+
+function buildClinicDoctorListEntry(
+  snapshot: QueryDocumentSnapshot<DocumentData>,
+  clinicId: string
+): ClinicDoctorListEntry {
+  const raw = (snapshot.data() as DoctorRecord | undefined) ?? {};
+  const scheduling = (raw.scheduling ?? null) as DoctorSchedulingRecord | null;
+
+  return {
+    id: snapshot.id,
+    clinicId: raw.clinicId ?? clinicId,
+    name: typeof raw.name === 'string' ? raw.name : '',
+    specialty: typeof raw.specialty === 'string' ? raw.specialty : null,
+    email: typeof raw.email === 'string' ? raw.email : null,
+    phone: typeof raw.phone === 'string' ? raw.phone : null,
+    createdAt: raw.createdAt ?? null,
+    scheduling,
+  };
 }

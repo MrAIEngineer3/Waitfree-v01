@@ -1,10 +1,9 @@
 "use client";
 import { signOut } from 'firebase/auth';
-import { doc, onSnapshot, type FirestoreError } from 'firebase/firestore';
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
 import { useEffect, useState } from 'react';
-import { auth, db } from '../lib/firebase';
+import { auth } from '../lib/firebase';
 import { useClinicContext } from './ClinicContext';
 import ClinicJoinQR from './ClinicJoinQR';
 import DoctorPicker from './DoctorPicker';
@@ -165,11 +164,10 @@ function getInitials(name: string | null | undefined): string {
 export default function AppShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
   const router = useRouter();
-  const { clinicId, clinicShareCode, clinicName, doctorId, doctorName, queueStatus } = useClinicContext();
+  const { clinicId, clinicSlug, clinicShareCode, clinicName, doctorId, doctorName, doctorPhotoURL, queueStatus } = useClinicContext();
   const [showJoinQr, setShowJoinQr] = useState(false);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
-  const [doctorPhotoURL, setDoctorPhotoURL] = useState<string | null>(null);
   const shareCodeDisplay = clinicShareCode
     ? (() => {
         const compact = clinicShareCode.replace(/\s+/g, '');
@@ -181,46 +179,6 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
         return upper.match(/.{1,4}/g)?.join(' ') ?? upper;
       })()
     : null;
-
-  // Fetch doctor photo while respecting auth changes to avoid permission errors on sign-out
-  useEffect(() => {
-    let unsubscribeDoc: (() => void) | null = null;
-
-    const unsubscribeAuth = auth.onAuthStateChanged((user) => {
-      if (unsubscribeDoc) {
-        unsubscribeDoc();
-        unsubscribeDoc = null;
-      }
-
-      if (!user) {
-        setDoctorPhotoURL(null);
-        return;
-      }
-
-      const userDocRef = doc(db, 'users', user.uid);
-      unsubscribeDoc = onSnapshot(
-        userDocRef,
-        (snapshot) => {
-          if (snapshot.exists()) {
-            const data = snapshot.data();
-            setDoctorPhotoURL(data.photoURL || user.photoURL || null);
-          }
-        },
-        (error: FirestoreError) => {
-          if (error.code !== 'permission-denied') {
-            console.error('Error fetching user profile:', error);
-          }
-        }
-      );
-    });
-
-    return () => {
-      unsubscribeAuth();
-      if (unsubscribeDoc) {
-        unsubscribeDoc();
-      }
-    };
-  }, []);
 
   // Close mobile menu when pathname changes
   useEffect(() => {
@@ -517,7 +475,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
                     <line x1="6" y1="6" x2="18" y2="18"></line>
                   </svg>
                 </button>
-                <ClinicJoinQR clinicId={clinicId} clinicShareCode={clinicShareCode} />
+                <ClinicJoinQR clinicId={clinicId} clinicSlug={clinicSlug} clinicShareCode={clinicShareCode} />
               </div>
             </div>
           </div>

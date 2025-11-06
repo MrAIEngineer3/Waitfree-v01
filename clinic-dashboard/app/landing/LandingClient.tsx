@@ -3,6 +3,7 @@ import { onAuthStateChanged, User } from 'firebase/auth';
 import { doc, onSnapshot } from 'firebase/firestore';
 import { useRouter } from 'next/navigation';
 import { useCallback, useEffect, useRef, useState } from 'react';
+import LottieBackground from '../../components/landing/LottieBackground';
 import Logo from '../../components/Logo';
 import { Badge } from '../../components/ui/Badge';
 import { BentoCard, BentoGrid } from '../../components/ui/bento-grid';
@@ -18,9 +19,7 @@ export default function LandingClient() {
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
   const [isScrolled, setIsScrolled] = useState(false);
-  const [scrollY, setScrollY] = useState(0);
   const [visibleSections, setVisibleSections] = useState<Set<string>>(new Set());
-  const [mousePosition, setMousePosition] = useState({ x: 0, y: 0 });
   const heroRef = useRef<HTMLElement>(null);
   const isMapped = !!(mapping?.clinicId && mapping?.doctorId);
 
@@ -41,7 +40,6 @@ export default function LandingClient() {
   useEffect(() => {
     const handleScroll = () => {
       setIsScrolled(window.scrollY > 20);
-      setScrollY(window.scrollY);
     };
     window.addEventListener('scroll', handleScroll);
     return () => window.removeEventListener('scroll', handleScroll);
@@ -77,16 +75,6 @@ export default function LandingClient() {
     document.body.style.overflow = mobileMenuOpen ? 'hidden' : '';
     return () => { document.body.style.overflow = ''; };
   }, [mobileMenuOpen]);
-
-  // Mouse tracking for spotlight effect
-  useEffect(() => {
-    const handleMouseMove = (e: MouseEvent) => {
-      setMousePosition({ x: e.clientX, y: e.clientY });
-    };
-
-    window.addEventListener('mousemove', handleMouseMove);
-    return () => window.removeEventListener('mousemove', handleMouseMove);
-  }, []);
 
   useEffect(() => {
     setMounted(true);
@@ -133,53 +121,8 @@ export default function LandingClient() {
         Skip to main content
       </a>
 
-      {/* Animated background with parallax and gradient mesh */}
-      <div className="absolute inset-0 -z-10 overflow-hidden" aria-hidden="true">
-        {/* Base gradient orbs with parallax */}
-        <div 
-          className="pointer-events-none select-none opacity-[0.18] absolute inset-0 bg-[radial-gradient(circle_at_20%_30%,#60a5fa,transparent_60%)] animate-[pulse_8s_ease-in-out_infinite]"
-          style={{ transform: `translateY(${scrollY * 0.1}px)` }}
-        />
-        <div 
-          className="pointer-events-none select-none opacity-[0.12] absolute inset-0 bg-[radial-gradient(circle_at_80%_70%,#38bdf8,transparent_60%)] animate-[pulse_12s_ease-in-out_infinite]"
-          style={{ transform: `translateY(${scrollY * 0.15}px)` }}
-        />
-        
-        {/* Enhanced gradient mesh - morphing blobs */}
-        <div 
-          className="pointer-events-none absolute top-0 left-1/2 -translate-x-1/2 w-[800px] h-[600px] bg-gradient-to-b from-brand-100/40 to-transparent blur-3xl animate-[float_6s_ease-in-out_infinite]"
-          style={{ transform: `translate(-50%, ${scrollY * 0.2}px)` }}
-        />
-        <div 
-          className="pointer-events-none absolute top-1/4 right-10 w-64 h-64 bg-gradient-to-br from-cyan-400/10 to-blue-500/10 rounded-full blur-3xl animate-[float_8s_ease-in-out_infinite]"
-          style={{ transform: `translateY(${scrollY * 0.25}px)` }}
-        />
-        <div 
-          className="pointer-events-none absolute bottom-1/4 left-10 w-96 h-96 bg-gradient-to-tr from-brand-400/10 to-purple-500/10 rounded-full blur-3xl animate-[float_10s_ease-in-out_infinite]" 
-          style={{ animationDelay: '-2s', transform: `translateY(${scrollY * 0.3}px)` }} 
-        />
-        
-        {/* Additional morphing mesh blobs */}
-        <div 
-          className="pointer-events-none absolute top-1/3 left-1/4 w-96 h-96 bg-gradient-to-br from-violet-400/8 to-pink-400/8 rounded-full blur-3xl animate-[float_15s_ease-in-out_infinite]"
-          style={{ animationDelay: '-5s', transform: `translateY(${scrollY * 0.12}px)` }}
-        />
-        <div 
-          className="pointer-events-none absolute bottom-1/3 right-1/4 w-80 h-80 bg-gradient-to-tl from-emerald-400/8 to-teal-400/8 rounded-full blur-3xl animate-[float_12s_ease-in-out_infinite]"
-          style={{ animationDelay: '-3s', transform: `translateY(${scrollY * 0.18}px)` }}
-        />
-        
-        {/* Spotlight cursor effect - follows mouse */}
-        <div 
-          className="pointer-events-none absolute w-[600px] h-[600px] opacity-0 hover:opacity-100 transition-opacity duration-1000"
-          style={{
-            background: 'radial-gradient(circle, rgba(96, 165, 250, 0.15) 0%, transparent 70%)',
-            left: mousePosition.x - 300,
-            top: mousePosition.y - 300,
-            filter: 'blur(40px)',
-          }}
-        />
-      </div>
+      {/* Animated background with healthcare illustrations */}
+      <LottieBackground />
 
       {/* Header */}
       <header className={`sticky top-0 z-50 w-full backdrop-blur-xl transition-all duration-500 ${isScrolled ? 'bg-white/30 border-b border-white/20 shadow-sm' : 'bg-transparent border-b border-transparent'} ${mounted ? 'opacity-100 translate-y-0' : 'opacity-0 -translate-y-4'}`}>

@@ -1,6 +1,7 @@
 "use client";
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { doc, onSnapshot, type FirestoreError } from 'firebase/firestore';
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { auth, db } from '../lib/firebase';
 
 export interface UserMapping {
@@ -18,39 +19,70 @@ interface MappingState {
 }
 
 export function useUserMapping(): MappingState {
+  const queryClient = useQueryClient();
   const [email, setEmail] = useState<string | null>(null);
-  const [mapping, setMapping] = useState<UserMapping | null>(null);
+  const [uid, setUid] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
 
+  const mappingQueryKey = useMemo(() => ['user-mapping', uid ?? ''] as const, [uid]);
+
+  const mappingQuery = useQuery<UserMapping | null>({
+    queryKey: mappingQueryKey,
+    enabled: false,
+    queryFn: async () => null,
+    staleTime: Infinity,
+    gcTime: 30 * 60 * 1000,
+  });
+
   useEffect(() => {
-    let unsubMap: (() => void) | null = null;
-    const unsubAuth = auth.onAuthStateChanged(u => {
-      // Tear down previous listener when auth state changes
-      if (unsubMap) { try { unsubMap(); } catch {} finally { unsubMap = null; } }
-      setEmail(u?.email ?? null);
-      if (!u) {
-        setMapping(null);
+    const unsubscribeAuth = auth.onAuthStateChanged((user) => {
+      queryClient.removeQueries({ queryKey: ['user-mapping'], exact: false });
+      setEmail(user?.email ?? null);
+      if (!user) {
+        setUid(null);
         setLoading(false);
         return;
       }
-      const ref = doc(db, 'users', u.uid);
-      unsubMap = onSnapshot(
-        ref,
-        snap => {
-          setMapping(snap.exists() ? (snap.data() as UserMapping) : null);
-          setLoading(false);
-        },
-        (error: FirestoreError) => {
-          // This can trigger during sign-out as auth becomes null -> permission-denied.
-          if (error.code === 'permission-denied') {
-            setMapping(null);
-          }
-          setLoading(false);
-        }
-      );
+
+      setUid(user.uid);
+      setLoading(true);
     });
-    return () => { try { unsubAuth(); } catch {}; if (unsubMap) { try { unsubMap(); } catch {} } };
-  }, []);
+
+    return () => {
+      unsubscribeAuth();
+    };
+  }, [queryClient]);
+
+  useEffect(() => {
+    if (!uid) {
+      queryClient.setQueryData(mappingQueryKey, null);
+      setLoading(false);
+      return;
+    }
+
+    setLoading(true);
+    const ref = doc(db, 'users', uid);
+    const unsubscribe = onSnapshot(
+      ref,
+      (snap) => {
+        const nextMapping = snap.exists() ? (snap.data() as UserMapping) : null;
+        queryClient.setQueryData(mappingQueryKey, nextMapping);
+        setLoading(false);
+      },
+      (error: FirestoreError) => {
+        if (error.code === 'permission-denied') {
+          queryClient.setQueryData(mappingQueryKey, null);
+        }
+        setLoading(false);
+      }
+    );
+
+    return () => {
+      unsubscribe();
+    };
+  }, [uid, mappingQueryKey, queryClient]);
+
+  const mapping = mappingQuery.data ?? null;
 
   return { email, mapping, loading };
 }

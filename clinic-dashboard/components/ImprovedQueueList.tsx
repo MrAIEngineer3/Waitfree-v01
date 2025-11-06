@@ -1,10 +1,11 @@
 'use client';
 
-import { collection, onSnapshot, query } from 'firebase/firestore';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { httpsCallable } from 'firebase/functions';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { toast } from 'sonner';
-import { db, functions } from '../lib/firebase';
+import { functions } from '../lib/firebase';
+import { useDashboardQueueRealtimeBridge, type DashboardQueue, type DashboardQueuePatient } from '../lib/hooks/use-dashboard-queue-realtime-bridge';
 import { useCallPatient, useCancelPatient, useCompletePatient, useUncallPatient } from '../lib/hooks/use-queue-mutations';
 import { queueProfilingEnabled, recordRender } from '../lib/profiling';
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "./ui/alert-dialog";
@@ -12,17 +13,6 @@ import { Badge } from './ui/Badge';
 import { Button } from './ui/Button';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from './ui/Table';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from './ui/tabs';
-
-interface Patient {
-  id: string;
-  tokenNumber: number;
-  name: string;
-  age: number;
-  phone: string;
-  status: 'waiting' | 'in-progress' | 'completed' | 'cancelled';
-  joinedAt: Date | { seconds: number; nanoseconds: number };
-  queueId: string;
-}
 
 const getErrorMessage = (error: unknown, fallback: string) => {
   if (error instanceof Error && error.message) {
@@ -41,11 +31,24 @@ export interface QueueListProps {
   dayKey: string;
 }
 
+type Patient = DashboardQueuePatient;
+
 // Helper function to calculate wait time
-function getWaitTime(joinedAt: Date | { seconds: number; nanoseconds: number } | undefined): string {
+function getWaitTime(joinedAt: Patient['joinedAt']): string {
   if (!joinedAt) return '—';
-  
-  const joinTime = joinedAt instanceof Date ? joinedAt : new Date(joinedAt.seconds * 1000);
+
+  const maybeTimestamp = joinedAt as { toDate?: () => Date; seconds?: number };
+  let joinTime: Date | null = null;
+
+  if (joinedAt instanceof Date) {
+    joinTime = joinedAt;
+  } else if (typeof maybeTimestamp?.toDate === 'function') {
+    joinTime = maybeTimestamp.toDate();
+  } else if (typeof maybeTimestamp?.seconds === 'number') {
+    joinTime = new Date(maybeTimestamp.seconds * 1000);
+  }
+
+  if (!joinTime) return '—';
   const now = new Date();
   const diff = Math.floor((now.getTime() - joinTime.getTime()) / 60000); // minutes
   
@@ -94,8 +97,6 @@ export default function ImprovedQueueList({
     recordRender(renderLabel, duration);
   }, [renderLabel, renderStart]);
 
-  const [patients, setPatients] = useState<Patient[]>([]);
-  const [loadingPatients, setLoadingPatients] = useState<boolean>(true);
   const [isNextPatientLoading, setIsNextPatientLoading] = useState(false);
   const [showCancelModal, setShowCancelModal] = useState(false);
   const [cancelPatientId, setCancelPatientId] = useState<string | null>(null);
@@ -117,10 +118,56 @@ export default function ImprovedQueueList({
   }>(null);
   const [statusUpdating, setStatusUpdating] = useState(false);
   const [endConfirmText, setEndConfirmText] = useState('');
+  const [realtimeError, setRealtimeError] = useState<string | null>(null);
+  const queryClient = useQueryClient();
 
   const clinicId = clinicIdProp;
   const doctorId = doctorIdProp;
   const queueId = dayKey;
+
+  const patientsQueryKey = useMemo(
+    () => ['patients', clinicId ?? '', doctorId ?? '', queueId] as const,
+    [clinicId, doctorId, queueId]
+  );
+
+  const patientsQuery = useQuery<Patient[]>({
+    queryKey: patientsQueryKey,
+    enabled: false,
+    queryFn: async () => [],
+    staleTime: Infinity,
+    gcTime: 30 * 60 * 1000,
+  });
+
+  const queueDocQueryKey = useMemo(
+    () => ['dashboard', 'queue', clinicId ?? '', doctorId ?? '', queueId] as const,
+    [clinicId, doctorId, queueId]
+  );
+
+  const handlePatientsRealtimeError = useCallback((message: string | null) => {
+    if (message) {
+      setRealtimeError('Unable to load patient list. Please refresh and try again.');
+    } else {
+      setRealtimeError(null);
+    }
+  }, []);
+
+  const { isHydrated: patientsHydrated } = useDashboardQueueRealtimeBridge({
+    enabled: Boolean(clinicId && doctorId),
+    clinicId,
+    doctorId,
+    queueId,
+    queryKey: patientsQueryKey,
+    onError: handlePatientsRealtimeError,
+  });
+
+  const patients = useMemo(() => patientsQuery.data ?? [], [patientsQuery.data]);
+  const loadingPatients = Boolean(clinicId && doctorId) && !patientsHydrated;
+
+  useEffect(() => {
+    if (!clinicId || !doctorId) {
+      setRealtimeError(null);
+    }
+  }, [clinicId, doctorId]);
 
   // TanStack Query mutation hooks for optimistic updates
   const callPatientMutation = useCallPatient(clinicId || '', doctorId || '', queueId);
@@ -138,6 +185,15 @@ export default function ImprovedQueueList({
       return false;
     }
     setStatusUpdating(true);
+    const previousQueue = queryClient.getQueryData<DashboardQueue | null>(queueDocQueryKey);
+
+    if (previousQueue) {
+      queryClient.setQueryData(queueDocQueryKey, {
+        ...previousQueue,
+        status: targetStatus,
+        updatedAt: new Date(),
+      });
+    }
     try {
       const callable = httpsCallable(functions, 'updateQueueStatus');
       await callable({ clinicId, doctorId, queueId, newStatus: targetStatus });
@@ -151,6 +207,9 @@ export default function ImprovedQueueList({
     } catch (error) {
       console.error('Failed to update queue status', error);
       toast.error(getErrorMessage(error, 'Failed to update queue status. Please try again.'));
+      if (previousQueue) {
+        queryClient.setQueryData(queueDocQueryKey, previousQueue);
+      }
       return false;
     } finally {
       setStatusUpdating(false);
@@ -266,81 +325,95 @@ export default function ImprovedQueueList({
     });
   };
 
-  const handleNextPatient = async () => {
-    if (!clinicId || !doctorId || !queueId) return;
+  const handleNextPatient = useCallback(async () => {
+    if (!clinicId || !doctorId || !queueId) {
+      toast.error('Missing clinic or doctor information.');
+      return;
+    }
+
     if (queueInactive) {
       toast.error('Queue is not active. Resume it before advancing.');
       return;
     }
+
+    const currentPatient = patients.find((patient) => patient.status === 'in-progress') ?? null;
+    const nextPatient = patients.find((patient) => patient.status === 'waiting') ?? null;
+
+    if (!currentPatient && !nextPatient) {
+      toast.info('No patients to advance.');
+      setShowAdvanceModal(false);
+      return;
+    }
+
     setIsNextPatientLoading(true);
-    
-    try {
-      const updatePatientStatus = httpsCallable(functions, 'updatePatientStatus');
 
-      const currentPatient = patients.find(patient => patient.status === 'in-progress');
-      if (currentPatient) {
-        await updatePatientStatus({ clinicId, doctorId, queueId, patientId: currentPatient.id, newStatus: 'completed' });
+    const cachedPatients = queryClient.getQueryData<Patient[] | undefined>(patientsQueryKey);
+    const previousPatients = cachedPatients ?? patients;
+    const hadPatientsCache = cachedPatients !== undefined;
+    const previousQueue = queryClient.getQueryData<DashboardQueue | null>(queueDocQueryKey);
+
+    const optimisticPatients = previousPatients.map((patient) => {
+      if (currentPatient && patient.id === currentPatient.id) {
+        return { ...patient, status: 'completed' };
       }
+      if (nextPatient && patient.id === nextPatient.id) {
+        return { ...patient, status: 'in-progress' };
+      }
+      return patient;
+    });
 
-      const nextPatient = patients.find(patient => patient.status === 'waiting');
+    queryClient.setQueryData(patientsQueryKey, optimisticPatients);
+
+    if (previousQueue) {
+      const baseCompleted = typeof previousQueue.completedPatients === 'number' ? previousQueue.completedPatients : 0;
+      const queueAfterComplete: DashboardQueue = {
+        ...previousQueue,
+        completedPatients: currentPatient ? baseCompleted + 1 : baseCompleted,
+        currentToken: currentPatient
+          ? Math.max(previousQueue.currentToken, currentPatient.tokenNumber)
+          : previousQueue.currentToken,
+        updatedAt: new Date(),
+      };
+
+      const queueAfterCall = nextPatient
+        ? {
+            ...queueAfterComplete,
+            currentToken: nextPatient.tokenNumber,
+            updatedAt: new Date(),
+          }
+        : queueAfterComplete;
+
+      queryClient.setQueryData(queueDocQueryKey, queueAfterCall);
+    }
+
+    try {
+      const advanceQueue = httpsCallable(functions, 'advanceQueue');
+      await advanceQueue({ clinicId, doctorId, queueId });
+
       if (nextPatient) {
-        await updatePatientStatus({ clinicId, doctorId, queueId, patientId: nextPatient.id, newStatus: 'in-progress' });
-        toast.success(`${nextPatient.name} (Token #${nextPatient.tokenNumber}) has been called`);
-      } else if (!currentPatient) {
+        toast.success(`${nextPatient.name || 'Patient'} (Token #${nextPatient.tokenNumber}) has been called`);
+      } else {
         toast.info('No patients to advance.');
       }
 
       setShowAdvanceModal(false);
     } catch (error) {
+      if (previousQueue) {
+        queryClient.setQueryData(queueDocQueryKey, previousQueue);
+      }
+
+      if (hadPatientsCache) {
+        queryClient.setQueryData(patientsQueryKey, previousPatients);
+      } else {
+        queryClient.removeQueries({ queryKey: patientsQueryKey, exact: true });
+      }
+
       console.error('Error advancing queue:', error);
       toast.error(getErrorMessage(error, 'Failed to advance queue'));
     } finally {
       setIsNextPatientLoading(false);
     }
-  };
-
-  // Subscribe to patients
-  useEffect(() => {
-    if (typeof window === 'undefined') return;
-    if (!clinicId || !doctorId) {
-      setPatients([]);
-      setLoadingPatients(false);
-      return;
-    }
-
-    setLoadingPatients(true);
-
-    const patientsRef = collection(db, 'clinics', clinicId, 'doctors', doctorId, 'queues', queueId, 'patients');
-    const q = query(patientsRef);
-
-    const unsubscribe = onSnapshot(
-      q,
-      (snapshot) => {
-        const list: Patient[] = [];
-        snapshot.forEach((doc) => {
-          const data = doc.data();
-          list.push({
-            id: doc.id,
-            tokenNumber: data.tokenNumber ?? 0,
-            name: data.name ?? 'Unknown',
-            age: data.age ?? 0,
-            phone: data.phone ?? '',
-            status: data.status ?? 'waiting',
-            joinedAt: data.joinedAt ?? new Date(),
-            queueId: data.queueId ?? '',
-          });
-        });
-        setPatients(list);
-        setLoadingPatients(false);
-      },
-      (error) => {
-        console.error('Error subscribing to patients:', error);
-        setLoadingPatients(false);
-      }
-    );
-
-    return () => unsubscribe();
-  }, [clinicId, doctorId, queueId]);
+  }, [clinicId, doctorId, queueId, queueInactive, patients, patientsQueryKey, queryClient, queueDocQueryKey]);
 
   // Render patient action buttons
   const PatientActions = ({ patient }: { patient: Patient }) => {
@@ -458,6 +531,14 @@ export default function ImprovedQueueList({
     );
   }
 
+  if (realtimeError) {
+    return (
+      <div className="rounded-lg border border-destructive/40 bg-destructive/10 px-4 py-6 text-center text-sm text-destructive">
+        {realtimeError}
+      </div>
+    );
+  }
+
   if (patients.length === 0) {
     return (
       <div className="text-center py-16 px-4">
@@ -540,7 +621,7 @@ export default function ImprovedQueueList({
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel>Cancel</AlertDialogCancel>
-            <AlertDialogAction onClick={handleNextPatient} disabled={queueInactive || isNextPatientLoading}>
+            <AlertDialogAction onClick={() => void handleNextPatient()} disabled={queueInactive || isNextPatientLoading}>
               {isNextPatientLoading ? 'Calling...' : 'Call Next'}
             </AlertDialogAction>
           </AlertDialogFooter>

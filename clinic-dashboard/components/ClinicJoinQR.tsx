@@ -4,6 +4,7 @@ import QRCode from 'react-qr-code';
 
 type Props = {
   clinicId: string;
+  clinicSlug?: string | null;
   clinicShareCode?: string | null;
   className?: string;
 };
@@ -13,7 +14,7 @@ type Props = {
  * URL shape: `${BASE}/join?code=${shareCode}&clinicId=${clinicId}`
  * Optional doctorId can be supported later if we roll out per-doctor codes.
  */
-export default function ClinicJoinQR({ clinicId, clinicShareCode, className }: Props) {
+export default function ClinicJoinQR({ clinicId, clinicSlug, clinicShareCode, className }: Props) {
   // Resolve Patient PWA base URL with safe fallbacks:
   // 1) Explicit env var (recommended for production)
   // 2) Runtime inference from current origin when not on localhost
@@ -57,14 +58,18 @@ export default function ClinicJoinQR({ clinicId, clinicShareCode, className }: P
   }, [shareCodeParam]);
 
   const url = useMemo(() => {
+    const identifier = clinicSlug ?? clinicId;
+    const resolved = identifier ?? clinicId;
     const u = new URL(base + '/join');
     if (shareCodeParam) {
       u.searchParams.set('code', shareCodeParam);
     }
-    u.searchParams.set('clinicId', clinicId);
+    if (resolved) {
+      u.searchParams.set('clinicId', resolved);
+    }
     // Phase 1: do not include doctorId
     return u.toString();
-  }, [base, clinicId, shareCodeParam]);
+  }, [base, clinicId, clinicSlug, shareCodeParam]);
 
   const svgWrapperRef = useRef<HTMLDivElement>(null);
 

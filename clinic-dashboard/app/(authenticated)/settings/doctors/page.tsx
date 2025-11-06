@@ -1,17 +1,19 @@
 "use client";
+import { useClinicContext } from '@/components/ClinicContext';
+import type { ClinicDoctorListEntry } from '@/components/ClinicContextProvider';
+import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from '@/components/ui/alert-dialog';
 import { Button } from '@/components/ui/Button';
 import { Card, CardContent } from '@/components/ui/Card';
-import { Separator } from '@/components/ui/separator';
-import { Label } from '@/components/ui/label';
-import { Switch } from '@/components/ui/switch';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import { Label } from '@/components/ui/label';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { Separator } from '@/components/ui/separator';
+import { Switch } from '@/components/ui/switch';
 import { db } from '@/lib/firebase';
-import { addDoc, collection, deleteDoc, doc, getDoc, onSnapshot, orderBy, query, updateDoc } from 'firebase/firestore';
-import React, { useEffect, useMemo, useState } from 'react';
-import { useClinicContext } from '@/components/ClinicContext';
-import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from '@/components/ui/alert-dialog';
 import { setDoctorRealTimeStatus, updateDoctorDefaultRota } from '@/lib/scheduling';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { addDoc, collection, deleteDoc, doc, getDoc, updateDoc } from 'firebase/firestore';
+import React, { useEffect, useMemo, useState } from 'react';
 import { toast } from 'sonner';
 
 interface DoctorRealTimeStatus {
@@ -31,8 +33,6 @@ interface Doctor {
   createdAt?: string;
   realTimeStatus: DoctorRealTimeStatus;
 }
-
-type DoctorRecord = Omit<Doctor, 'id'>;
 
 interface StoredTimeBlock {
   start: string;
@@ -221,8 +221,35 @@ const createInitialAvailabilityState = (): AvailabilityFormState => {
 
 export default function DoctorsSettingsPage() {
   const { clinicId } = useClinicContext();
-  const [doctors, setDoctors] = useState<Doctor[]>([]);
-  const [loading, setLoading] = useState(true);
+  const queryClient = useQueryClient();
+  const doctorsQueryKey = useMemo(() => ['doctors', clinicId ?? ''] as const, [clinicId]);
+  const doctorsQuery = useQuery<ClinicDoctorListEntry[]>({
+    queryKey: doctorsQueryKey,
+    enabled: false,
+    queryFn: async () => [],
+    staleTime: Infinity,
+    gcTime: 30 * 60 * 1000,
+  });
+  const doctorsState = queryClient.getQueryState<ClinicDoctorListEntry[]>(doctorsQueryKey);
+  const doctors = useMemo<Doctor[]>(() => {
+    const source = doctorsQuery.data ?? [];
+    return source.map((entry) => {
+      const scheduling = (entry.scheduling ?? null) as SchedulingDocument | null;
+      const realTimeStatus = normalizeRealTimeStatus(scheduling?.realTimeStatus ?? null);
+      return {
+        id: entry.id,
+        clinicId: entry.clinicId,
+        name: entry.name ?? '',
+        specialty: entry.specialty ?? '',
+        email: entry.email ?? undefined,
+        phone: entry.phone ?? undefined,
+        createdAt: entry.createdAt ? String(entry.createdAt) : undefined,
+        realTimeStatus,
+      } satisfies Doctor;
+    });
+  }, [doctorsQuery.data]);
+  const loadError = (doctorsState?.error as Error | undefined)?.message ?? null;
+  const loading = clinicId ? (!doctorsState?.dataUpdatedAt && !loadError) : false;
   const [error, setError] = useState<string | null>(null);
   const [editing, setEditing] = useState<Doctor | null>(null);
   const [adding, setAdding] = useState(false);
@@ -239,44 +266,6 @@ export default function DoctorsSettingsPage() {
   // const [confirm, setConfirm] = useState<{ open: boolean; id?: string; name?: string }>({ open: false });
 
   const doctorsCol = useMemo(() => (clinicId ? collection(db, 'clinics', clinicId, 'doctors') : null), [clinicId]);
-
-  useEffect(() => {
-    if (!doctorsCol) {
-      setDoctors([]);
-      setLoading(false);
-      return;
-    }
-    const q = query(doctorsCol, orderBy('name'));
-    const unsub = onSnapshot(
-      q,
-      (snap) => {
-        const list: Doctor[] = [];
-        snap.forEach((d) => {
-          const data = d.data() as Partial<DoctorRecord & DoctorSchedulingRecord>;
-          const scheduling = (data?.scheduling ?? null) as SchedulingDocument | null;
-          const realTimeStatus = normalizeRealTimeStatus(scheduling?.realTimeStatus ?? null);
-
-          list.push({
-            id: d.id,
-            clinicId: clinicId!,
-            name: data?.name ?? '',
-            specialty: data?.specialty ?? '',
-            email: data?.email ?? undefined,
-            phone: data?.phone ?? undefined,
-            createdAt: data?.createdAt,
-            realTimeStatus
-          });
-        });
-        setDoctors(list);
-        setLoading(false);
-      },
-      (err) => {
-        setError(err.message || 'Failed to load doctors');
-        setLoading(false);
-      }
-    );
-    return () => unsub();
-  }, [doctorsCol, clinicId]);
 
   useEffect(() => {
     setPendingRealtimeStatus((prev) => {
@@ -362,7 +351,7 @@ export default function DoctorsSettingsPage() {
                 };
                 return convertedBlock;
               })
-              .filter((block): block is TimeBlockState => block !== null);
+              .filter((item): item is TimeBlockState => item !== null);
 
             if (converted.length > 0) {
               nextState.days[dayKey] = {
@@ -641,6 +630,15 @@ export default function DoctorsSettingsPage() {
       </div>
 
       <Separator />
+
+      {clinicId && loadError && (
+        <div className="flex items-start gap-3 bg-red-50 dark:bg-red-950/50 border border-red-200 dark:border-red-800 rounded-lg px-4 py-3">
+          <svg className="w-5 h-5 text-red-500 dark:text-red-400 flex-shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+          </svg>
+          <span className="text-sm text-red-700 dark:text-red-400">{loadError}</span>
+        </div>
+      )}
 
       {!clinicId && (
         <Card variant="outline">

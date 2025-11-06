@@ -17,11 +17,13 @@ interface QueueContextValue {
 
 interface ClinicContextType {
   clinicId: string | null;
+  clinicSlug: string | null;
   clinicShareCode: string | null;
   clinicName: string | null;
   doctorId: string | null;
   doctorName: string | null;
   doctorSpecialty: string | null;
+  doctorPhotoURL: string | null;
   queueStatus: 'active' | 'paused' | 'ended' | undefined;
   queue: QueueContextValue | null;
   notificationSettings: NotificationSettingsDoc | null | undefined;
@@ -30,11 +32,13 @@ interface ClinicContextType {
 
 const ClinicContext = createContext<ClinicContextType>({
   clinicId: null,
+  clinicSlug: null,
   clinicShareCode: null,
   clinicName: null,
   doctorId: null,
   doctorName: null,
   doctorSpecialty: null,
+  doctorPhotoURL: null,
   queueStatus: undefined,
   queue: null,
   notificationSettings: null,

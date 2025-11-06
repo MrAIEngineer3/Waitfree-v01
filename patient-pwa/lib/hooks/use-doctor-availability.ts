@@ -1,4 +1,12 @@
-import { useQuery, useQueryClient } from '@tanstack/react-query'
+import {
+    useQuery,
+    useQueryClient,
+    useSuspenseQuery,
+    type QueryFunction,
+    type UseQueryOptions,
+    type UseQueryResult,
+    type UseSuspenseQueryOptions,
+} from '@tanstack/react-query'
 import { getClinicDoctorAvailability, type ClinicDoctorAvailabilityResponse } from '../availability'
 
 interface UseDoctorAvailabilityOptions {
@@ -36,7 +44,26 @@ interface UseDoctorAvailabilityOptions {
    * Default: true (ensures up-to-date availability when user returns)
    */
   refetchOnWindowFocus?: boolean
+
+  /**
+   * Optional initial server data to hydrate the cache instantly
+   */
+  initialData?: ClinicDoctorAvailabilityResponse
+
+  /**
+   * Optional placeholder data to render while real data is loading
+   */
+  placeholderData?: ClinicDoctorAvailabilityResponse
+
 }
+
+export const doctorAvailabilityQueryKey = (
+  clinicId: string | null | undefined,
+  doctorIds?: string[]
+) =>
+  doctorIds && doctorIds.length > 0
+    ? (['doctor-availability', clinicId, ...[...doctorIds].sort()] as const)
+    : (['doctor-availability', clinicId] as const)
 
 /**
  * Hook for fetching doctor availability with smart caching
@@ -57,19 +84,19 @@ interface UseDoctorAvailabilityOptions {
  * })
  * ```
  */
-export function useDoctorAvailability({
+const buildDoctorAvailabilityOptions = ({
   clinicId,
   doctorIds,
   enabled = true,
-  staleTime = 30000, // 30 seconds - availability doesn't change frequently
-  gcTime = 5 * 60 * 1000, // 5 minutes
+  staleTime = 30000,
+  gcTime = 5 * 60 * 1000,
   refetchOnWindowFocus = true,
-}: UseDoctorAvailabilityOptions) {
-  const queryKey = doctorIds && doctorIds.length > 0
-    ? ['doctor-availability', clinicId, ...doctorIds.sort()] as const
-    : ['doctor-availability', clinicId] as const
+  initialData,
+  placeholderData,
+}: UseDoctorAvailabilityOptions): UseQueryOptions<ClinicDoctorAvailabilityResponse, Error, ClinicDoctorAvailabilityResponse> => {
+  const queryKey = doctorAvailabilityQueryKey(clinicId, doctorIds)
 
-  return useQuery<ClinicDoctorAvailabilityResponse, Error>({
+  const options: UseQueryOptions<ClinicDoctorAvailabilityResponse, Error, ClinicDoctorAvailabilityResponse> = {
     queryKey,
     queryFn: async () => {
       if (!clinicId) {
@@ -94,7 +121,32 @@ export function useDoctorAvailability({
     refetchOnWindowFocus,
     retry: 2, // Retry failed requests twice
     retryDelay: (attemptIndex) => Math.min(1000 * 2 ** attemptIndex, 10000), // Exponential backoff
-  })
+  }
+
+  if (initialData) {
+    options.initialData = initialData
+  }
+
+  if (placeholderData) {
+    options.placeholderData = placeholderData
+  }
+
+  return options
+}
+
+export function useDoctorAvailability(options: UseDoctorAvailabilityOptions): UseQueryResult<ClinicDoctorAvailabilityResponse, Error> {
+  return useQuery(buildDoctorAvailabilityOptions(options))
+}
+
+export function useDoctorAvailabilitySuspense(options: UseDoctorAvailabilityOptions): UseQueryResult<ClinicDoctorAvailabilityResponse, Error> {
+  const suspenseOptions = buildDoctorAvailabilityOptions(options)
+
+  const normalizedOptions: UseSuspenseQueryOptions<ClinicDoctorAvailabilityResponse, Error, ClinicDoctorAvailabilityResponse> = {
+    ...suspenseOptions,
+    queryFn: suspenseOptions.queryFn as QueryFunction<ClinicDoctorAvailabilityResponse>,
+  }
+
+  return useSuspenseQuery(normalizedOptions) as UseQueryResult<ClinicDoctorAvailabilityResponse, Error>
 }
 
 /**
@@ -115,9 +167,7 @@ export function usePrefetchDoctorAvailability() {
   return async (options: { clinicId: string; doctorIds?: string[] }) => {
     const { clinicId, doctorIds } = options
 
-    const queryKey = doctorIds && doctorIds.length > 0
-      ? ['doctor-availability', clinicId, ...doctorIds.sort()] as const
-      : ['doctor-availability', clinicId] as const
+    const queryKey = doctorAvailabilityQueryKey(clinicId, doctorIds)
 
     await queryClient.prefetchQuery({
       queryKey,
@@ -162,13 +212,13 @@ export function useInvalidateDoctorAvailability() {
       // Invalidate specific doctor queries
       doctorIds.forEach(doctorId => {
         queryClient.invalidateQueries({
-          queryKey: ['doctor-availability', clinicId, doctorId],
+          queryKey: doctorAvailabilityQueryKey(clinicId, [doctorId]),
         })
       })
     } else {
       // Invalidate all queries for this clinic
       queryClient.invalidateQueries({
-        queryKey: ['doctor-availability', clinicId],
+        queryKey: doctorAvailabilityQueryKey(clinicId),
       })
     }
 

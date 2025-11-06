@@ -445,8 +445,11 @@ const sanitizeFirestoreId = (value) => {
     return /^[A-Za-z0-9-_.~]+$/.test(trimmed) ? trimmed : null;
 };
 const CLINIC_SHARE_CODES_COLLECTION = 'clinicShareCodes';
+const CLINIC_SLUGS_COLLECTION = 'clinicSlugs';
 const SHARE_CODE_CACHE_TTL_MS = 5 * 60 * 1000;
+const CLINIC_SLUG_CACHE_TTL_MS = 5 * 60 * 1000;
 const clinicShareCodeCache = new Map();
+const clinicSlugCache = new Map();
 const SHARE_CODE_GENERATION_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
 const SHARE_CODE_GROUP_LENGTH = 4;
 const SHARE_CODE_GROUP_COUNT = 2;
@@ -564,6 +567,161 @@ const ensureClinicShareCode = async (clinicId) => {
     }
     throw new functions.https.HttpsError('resource-exhausted', 'Unable to allocate a clinic share code');
 };
+const CLINIC_SLUG_REGEX = /^[a-z0-9-_.~]{3,128}$/;
+const CLINIC_SLUG_MAX_ATTEMPTS = 30;
+const slugifyFirestoreId = (label, fallbackPrefix) => {
+    const normalized = label
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/g, '-')
+        .replace(/-{2,}/g, '-')
+        .replace(/^-+|-+$/g, '')
+        .slice(0, 40);
+    const candidate = normalized.length > 0 ? normalized : `${fallbackPrefix}-${crypto_1.default.randomBytes(2).toString('hex')}`;
+    const sanitized = sanitizeFirestoreId(candidate);
+    if (sanitized) {
+        return sanitized;
+    }
+    return `${fallbackPrefix}-${crypto_1.default.randomBytes(3).toString('hex')}`;
+};
+const sanitizeClinicSlug = (value) => {
+    if (typeof value !== 'string') {
+        return null;
+    }
+    const cleaned = value.trim().toLowerCase().replace(/[^a-z0-9-_.~]+/g, '');
+    if (!cleaned || cleaned.length < 3 || cleaned.length > 128) {
+        return null;
+    }
+    return CLINIC_SLUG_REGEX.test(cleaned) ? cleaned : null;
+};
+const slugifyClinicName = (value) => {
+    const normalized = value
+        .toLowerCase()
+        .replace(/&/g, ' and ')
+        .replace(/[^a-z0-9]+/g, '-')
+        .replace(/-{2,}/g, '-')
+        .replace(/^-+|-+$/g, '')
+        .slice(0, 48);
+    const primary = sanitizeClinicSlug(normalized);
+    if (primary) {
+        return primary;
+    }
+    const fallbackBase = `clinic-${crypto_1.default.randomBytes(2).toString('hex')}`;
+    return sanitizeClinicSlug(fallbackBase) ?? `clinic-${Date.now().toString(36)}`.slice(0, 24);
+};
+const loadClinicBySlug = (slug) => {
+    const normalized = sanitizeClinicSlug(slug);
+    if (!normalized) {
+        return Promise.resolve(null);
+    }
+    const cached = clinicSlugCache.get(normalized);
+    const now = Date.now();
+    if (cached && cached.expiresAt > now) {
+        return cached.promise;
+    }
+    const promise = (async () => {
+        const doc = await firebaseAdmin_1.admin.firestore().collection(CLINIC_SLUGS_COLLECTION).doc(normalized).get();
+        if (!doc.exists) {
+            return null;
+        }
+        const data = doc.data();
+        const candidateId = sanitizeFirestoreId(typeof data?.canonicalClinicId === 'string' ? data.canonicalClinicId : data?.clinicId);
+        if (!candidateId) {
+            functions.logger.error('Clinic slug record missing valid clinicId', {
+                slug: normalized,
+                data: data ?? null
+            });
+            return null;
+        }
+        const status = typeof data?.status === 'string' ? data.status.toLowerCase() : 'active';
+        const disabled = data?.disabled === true;
+        if (disabled || status === 'disabled' || status === 'revoked') {
+            throw new functions.https.HttpsError('failed-precondition', 'Clinic link is inactive.');
+        }
+        return {
+            clinicId: candidateId,
+            shareCode: null,
+            requestedId: normalized,
+            resolution: 'slug'
+        };
+    })().catch((error) => {
+        clinicSlugCache.delete(normalized);
+        throw error;
+    });
+    clinicSlugCache.set(normalized, {
+        promise,
+        expiresAt: now + CLINIC_SLUG_CACHE_TTL_MS
+    });
+    return promise;
+};
+const ensureClinicSlug = async (clinicId, clinicName) => {
+    const db = firebaseAdmin_1.admin.firestore();
+    const slugCollection = db.collection(CLINIC_SLUGS_COLLECTION);
+    const baseSlug = slugifyClinicName(clinicName);
+    const fallbackSlug = sanitizeClinicSlug(`clinic-${clinicId.slice(0, 6).toLowerCase()}`) ?? baseSlug;
+    for (let attempt = 0; attempt < CLINIC_SLUG_MAX_ATTEMPTS; attempt += 1) {
+        const candidateBase = attempt === 0 ? baseSlug : fallbackSlug;
+        const suffix = attempt === 0 ? '' : `-${crypto_1.default.randomBytes(2).toString('hex')}`;
+        const rawCandidate = `${candidateBase}${suffix}`.slice(0, 64);
+        const candidate = sanitizeClinicSlug(rawCandidate);
+        if (!candidate) {
+            continue;
+        }
+        try {
+            const result = await db.runTransaction(async (tx) => {
+                const ref = slugCollection.doc(candidate);
+                const snap = await tx.get(ref);
+                if (!snap.exists) {
+                    tx.set(ref, {
+                        clinicId,
+                        canonicalClinicId: clinicId,
+                        status: 'active',
+                        disabled: false,
+                        displayName: clinicName,
+                        createdAt: firestore_1.FieldValue.serverTimestamp(),
+                        updatedAt: firestore_1.FieldValue.serverTimestamp()
+                    });
+                    return candidate;
+                }
+                const existing = snap.data();
+                const existingId = sanitizeFirestoreId(typeof existing?.canonicalClinicId === 'string' ? existing.canonicalClinicId : existing?.clinicId);
+                if (existingId === clinicId) {
+                    tx.set(ref, {
+                        canonicalClinicId: clinicId,
+                        disabled: false,
+                        status: 'active',
+                        displayName: clinicName,
+                        updatedAt: firestore_1.FieldValue.serverTimestamp()
+                    }, { merge: true });
+                    return candidate;
+                }
+                return null;
+            });
+            if (result) {
+                clinicSlugCache.set(result, {
+                    promise: Promise.resolve({
+                        clinicId,
+                        shareCode: null,
+                        requestedId: result,
+                        resolution: 'slug'
+                    }),
+                    expiresAt: Date.now() + CLINIC_SLUG_CACHE_TTL_MS
+                });
+                return result;
+            }
+        }
+        catch (error) {
+            functions.logger.error('Failed to assign clinic slug', {
+                clinicId,
+                attempt,
+                error: error instanceof Error ? { message: error.message, stack: error.stack } : error
+            });
+            throw error instanceof functions.https.HttpsError
+                ? error
+                : new functions.https.HttpsError('internal', 'Failed to allocate clinic slug');
+        }
+    }
+    throw new functions.https.HttpsError('resource-exhausted', 'Unable to allocate a clinic slug');
+};
 const normalizeClinicShareCode = (value) => {
     if (typeof value !== 'string') {
         return null;
@@ -661,9 +819,54 @@ const resolveClinicIdentifier = async (value, options = {}) => {
         }
         throw new functions.https.HttpsError('not-found', 'Clinic code not recognized');
     }
+    const slugCandidate = sanitizeClinicSlug(requestedId);
+    if (slugCandidate) {
+        try {
+            const resolved = await loadClinicBySlug(slugCandidate);
+            if (resolved) {
+                if (slugCandidate !== requestedId) {
+                    functions.logger.debug('Clinic resolved via slug', {
+                        requestedId,
+                        slug: slugCandidate,
+                        clinicId: resolved.clinicId
+                    });
+                }
+                return { ...resolved, requestedId };
+            }
+        }
+        catch (error) {
+            if (error instanceof functions.https.HttpsError) {
+                throw error;
+            }
+            functions.logger.error('Clinic slug lookup failed', {
+                requestedId,
+                slug: slugCandidate,
+                error: error instanceof Error ? { message: error.message, stack: error.stack } : String(error)
+            });
+            throw new functions.https.HttpsError('internal', 'Failed to resolve clinic identifier');
+        }
+    }
     const sanitized = sanitizeFirestoreId(requestedId);
     if (!sanitized) {
         throw new functions.https.HttpsError('invalid-argument', `${fieldName} is invalid`);
+    }
+    if (slugCandidate) {
+        try {
+            const clinicSnap = await firebaseAdmin_1.admin.firestore().collection('clinics').doc(sanitized).get();
+            if (!clinicSnap.exists) {
+                throw new functions.https.HttpsError('not-found', 'Clinic identifier not recognized');
+            }
+        }
+        catch (error) {
+            if (error instanceof functions.https.HttpsError) {
+                throw error;
+            }
+            functions.logger.error('Clinic canonical lookup failed during slug resolution', {
+                requestedId,
+                error: error instanceof Error ? { message: error.message, stack: error.stack } : String(error)
+            });
+            throw new functions.https.HttpsError('internal', 'Failed to validate clinic identifier');
+        }
     }
     return {
         clinicId: sanitized,
@@ -3141,12 +3344,30 @@ const bootstrapClinicAccountHandler = async (data, _context) => {
         if (!clinicName || !doctorName || !specialty) {
             throw new functions.https.HttpsError('invalid-argument', 'clinicName, doctorName, specialty are required');
         }
-        const slugify = (s) => String(s).toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 40) || 'id';
-        const clinicId = providedClinicId ? String(providedClinicId) : slugify(clinicName);
-        const doctorId = providedDoctorId ? String(providedDoctorId) : slugify(doctorName);
-        const today = new Date().toISOString().split('T')[0];
         const db = firebaseAdmin_1.admin.firestore();
-        const clinicRef = db.collection('clinics').doc(clinicId);
+        let clinicRef;
+        if (providedClinicId) {
+            const sanitizedClinicId = sanitizeFirestoreId(String(providedClinicId));
+            if (!sanitizedClinicId) {
+                throw new functions.https.HttpsError('invalid-argument', 'clinicId is invalid');
+            }
+            clinicRef = db.collection('clinics').doc(sanitizedClinicId);
+        }
+        else {
+            clinicRef = db.collection('clinics').doc();
+        }
+        const clinicId = clinicRef.id;
+        let doctorId = null;
+        if (providedDoctorId) {
+            doctorId = sanitizeFirestoreId(String(providedDoctorId));
+            if (!doctorId) {
+                throw new functions.https.HttpsError('invalid-argument', 'doctorId is invalid');
+            }
+        }
+        else {
+            doctorId = slugifyFirestoreId(doctorName, 'doctor');
+        }
+        const today = new Date().toISOString().split('T')[0];
         const doctorRef = clinicRef.collection('doctors').doc(doctorId);
         const queueRef = doctorRef.collection('queues').doc(today);
         const userRef = db.collection('users').doc(authUid);
@@ -3182,14 +3403,24 @@ const bootstrapClinicAccountHandler = async (data, _context) => {
                 createdAt: userSnap.exists ? (userSnap.get('createdAt') || firestore_1.FieldValue.serverTimestamp()) : firestore_1.FieldValue.serverTimestamp()
             }, { merge: true });
         });
+        const clinicSlug = await ensureClinicSlug(clinicId, clinicName);
         const shareCode = await ensureClinicShareCode(clinicId);
-        await clinicRef.set({
-            shareCode,
-            shareCodeStatus: 'active',
-            shareCodeAssignedAt: firestore_1.FieldValue.serverTimestamp()
-        }, { merge: true });
-        functions.logger.info('bootstrapClinicAccount complete', { clinicId, doctorId, shareCode, uid: authUid });
-        return { success: true, clinicId, clinicShareCode: shareCode, doctorId, queueId: today };
+        await Promise.all([
+            clinicRef.set({
+                shareCode,
+                shareCodeStatus: 'active',
+                shareCodeAssignedAt: firestore_1.FieldValue.serverTimestamp(),
+                displaySlug: clinicSlug,
+                slugStatus: 'active',
+                slugAssignedAt: firestore_1.FieldValue.serverTimestamp(),
+                slugSource: 'bootstrapClinicAccount'
+            }, { merge: true }),
+            userRef.set({
+                clinicSlug
+            }, { merge: true })
+        ]);
+        functions.logger.info('bootstrapClinicAccount complete', { clinicId, doctorId, shareCode, clinicSlug, uid: authUid });
+        return { success: true, clinicId, clinicSlug, clinicShareCode: shareCode, doctorId, queueId: today };
     }
     catch (err) {
         functions.logger.error('bootstrapClinicAccount error', err);

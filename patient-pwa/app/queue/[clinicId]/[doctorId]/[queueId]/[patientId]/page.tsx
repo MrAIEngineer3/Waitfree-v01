@@ -3,60 +3,35 @@
 export const dynamic = "force-dynamic";
 
 import {
-    AlertDialog,
-    AlertDialogAction,
-    AlertDialogCancel,
-    AlertDialogContent,
-    AlertDialogDescription,
-    AlertDialogFooter,
-    AlertDialogHeader,
-    AlertDialogTitle,
-    AlertDialogTrigger
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogTrigger
 } from '@/components/ui/alert-dialog';
 import { Button } from '@/components/ui/button';
 import { useRejoinQueue } from '@/lib/hooks/use-join-queue';
-import { signInWithCustomToken } from 'firebase/auth';
-import { doc, onSnapshot, type DocumentData, type Timestamp } from 'firebase/firestore';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { doc, getDoc } from 'firebase/firestore';
 import { httpsCallable } from 'firebase/functions';
-import { useParams } from 'next/navigation';
-import { useEffect, useRef, useState } from 'react';
+import { useParams, useRouter } from 'next/navigation';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { toast } from 'sonner';
 import { auth, db, functions } from '../../../../../../lib/firebase';
-import { ensurePatientToken } from './tokenStorage';
-
-interface Patient {
-  id: string;
-  name: string;
-  age: number;
-  phone: string;
-  tokenNumber: number;
-  status: 'waiting' | 'in-progress' | 'completed' | 'cancelled';
-  joinedAt: Date | Timestamp;
-  queueId: string;
-  clinicId: string;
-  doctorId: string;
-}
-
-interface Queue {
-  id: string;
-  doctorId: string;
-  clinicId: string;
-  status: 'active' | 'paused' | 'ended';
-  currentToken: number;
-  totalPatients: number;
-  completedPatients: number;
-  createdAt?: Date | Timestamp;
-  updatedAt?: Date | Timestamp;
-}
-
-interface Doctor {
-  id: string;
-  name: string;
-  specialty: string;
-  clinicId: string;
-  email?: string;
-  phone?: string;
-}
+import { buildRejoinRedirectUrl } from './rejoinUtils';
+import { buildSessionDeps, establishPatientSession } from './session';
+import {
+  buildDoctorFromSnapshot,
+  buildQueueFromSnapshot,
+  usePatientQueueRealtimeBridge,
+  type Doctor,
+  type Patient,
+  type Queue
+} from './usePatientQueueRealtimeBridge';
 
 interface PatientCancelTokenPayload {
   clinicId: string;
@@ -73,7 +48,7 @@ interface PatientCancelTokenResult {
   message?: string;
 }
 
-interface CreatePatientSessionPayload {
+interface GetPatientViewPayload {
   clinicId: string;
   doctorId: string;
   queueId: string;
@@ -81,204 +56,235 @@ interface CreatePatientSessionPayload {
   token: string;
 }
 
-interface CreatePatientSessionResult {
-  success: boolean;
-  token: string;
-  patient?: Partial<Patient> | null;
+interface GetPatientViewResult {
+  patient?: Patient;
 }
 
 export default function QueueStatus() {
   const params = useParams<{ clinicId: string; doctorId: string; queueId: string; patientId: string }>();
   const rejoinQueueMutation = useRejoinQueue();
+  const router = useRouter();
   const clinicId = params?.clinicId;
   const doctorId = params?.doctorId;
   const queueId = params?.queueId;
   const patientId = params?.patientId;
-  const [patient, setPatient] = useState<Patient | null>(null);
-  const [queue, setQueue] = useState<Queue | null>(null);
-  const [doctor, setDoctor] = useState<Doctor | null>(null);
-  const [isLoading, setIsLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  const hasRequiredParams = Boolean(clinicId && doctorId && queueId && patientId);
   const [accessToken, setAccessToken] = useState<string | null>(null);
+  const [sessionReady, setSessionReady] = useState(false);
+  const [sessionError, setSessionError] = useState<string | null>(null);
+  const [realtimeError, setRealtimeError] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
   const [actionState, setActionState] = useState<'idle' | 'cancelling' | 'rejoining'>('idle');
   const [cancelDialogOpen, setCancelDialogOpen] = useState(false);
+  const [optimisticPatientStatus, setOptimisticPatientStatus] = useState<Patient['status'] | null>(null);
 
   useEffect(() => {
-    // Only run on client side
-    if (typeof window === 'undefined') return;
-
-    if (!clinicId || !doctorId || !queueId || !patientId) {
-      setError('Missing required parameters in URL');
-      setIsLoading(false);
+    if (typeof window === 'undefined') {
       return;
     }
 
-    // Hold unsubscribe functions to clean up listeners on unmount/param change
-    let unsubscribePatient: (() => void) | null = null;
-    let unsubscribeQueue: (() => void) | null = null;
-    let unsubscribeDoctor: (() => void) | null = null;
+    if (!hasRequiredParams) {
+      setSessionError('Missing required parameters in URL');
+      setRealtimeError(null);
+      setSessionReady(false);
+      setAccessToken(null);
+      return;
+    }
 
-    const setupListeners = async () => {
+    let cancelled = false;
+    setSessionReady(false);
+    setAccessToken(null);
+    setSessionError(null);
+    setRealtimeError(null);
+
+    const context = {
+      locationHref: window.location.href,
+      replaceUrl: (cleaned: string) => window.history.replaceState({}, '', cleaned),
+      storage: window.sessionStorage
+    };
+
+    const deps = buildSessionDeps(functions, auth);
+
+    (async () => {
       try {
-        // 0) Token fallback: if sessionStorage is missing the access token but the URL has ?t=,
-        //    persist it and immediately scrub the URL to avoid accidental sharing.
-        try {
-          ensurePatientToken({
-            patientId,
-            storage: window.sessionStorage,
-            locationUrl: new URL(window.location.href),
-            replaceUrl: (cleaned) => window.history.replaceState({}, '', cleaned)
-          });
-        } catch (scrubErr) {
-          // Non-fatal; continue with normal flow
-          console.warn('Token URL scrub failed (non-fatal):', scrubErr);
-        }
+        const token = await establishPatientSession(
+          { clinicId: clinicId!, doctorId: doctorId!, queueId: queueId!, patientId: patientId! },
+          context,
+          deps
+        );
 
-        // Construct direct document paths using URL parameters
-        const patientRef = doc(db, 'clinics', clinicId, 'doctors', doctorId, 'queues', queueId, 'patients', patientId);
-        const queueRef = doc(db, 'clinics', clinicId, 'doctors', doctorId, 'queues', queueId);
-        const doctorRef = doc(db, 'clinics', clinicId, 'doctors', doctorId);
-
-        const storedToken = sessionStorage.getItem(`patientToken:${patientId}`);
-        if (!storedToken) {
-          setError('Missing access token. Please re-join the queue or use the join form.');
-          setIsLoading(false);
-          return;
-        }
-        setAccessToken(storedToken);
-
-        try {
-          const createSessionFn = httpsCallable<CreatePatientSessionPayload, CreatePatientSessionResult>(functions, 'createPatientSession');
-          const sessionResponse = await createSessionFn({ clinicId, doctorId, queueId, patientId, token: storedToken });
-          const customToken = sessionResponse.data?.token;
-
-          if (!customToken) {
-            setError('Unable to authenticate your session. Please re-join the queue.');
-            setIsLoading(false);
-            return;
-          }
-
-          await signInWithCustomToken(auth, customToken);
-        } catch (authErr) {
-          console.error('Failed to establish authenticated patient session', authErr);
-          setError('Unable to authenticate your session. Please re-join the queue.');
-          setIsLoading(false);
+        if (cancelled) {
           return;
         }
 
-        try {
-          interface GetPatientViewPayload {
-            clinicId: string;
-            doctorId: string;
-            queueId: string;
-            patientId: string;
-            token: string;
-          }
-          interface GetPatientViewResult {
-            patient?: Patient;
-          }
-
-          const getViewFn = httpsCallable<GetPatientViewPayload, GetPatientViewResult>(functions, 'getPatientView');
-          const { data } = await getViewFn({ clinicId, doctorId, queueId, patientId, token: storedToken });
-
-          if (data?.patient) {
-            setPatient(data.patient);
-
-            unsubscribePatient = onSnapshot(patientRef, (snap) => {
-              if (!snap.exists()) return;
-              const raw = snap.data() as DocumentData;
-              const livePatient: Patient = {
-                id: snap.id,
-                name: typeof raw.name === 'string' ? raw.name : data.patient!.name,
-                age: typeof raw.age === 'number' ? raw.age : data.patient!.age,
-                phone: typeof raw.phone === 'string' ? raw.phone : data.patient!.phone,
-                tokenNumber: typeof raw.tokenNumber === 'number' ? raw.tokenNumber : data.patient!.tokenNumber,
-                status: (raw.status as Patient['status']) ?? data.patient!.status,
-                joinedAt: (raw.joinedAt as Timestamp | Date | undefined) ?? data.patient!.joinedAt,
-                queueId: typeof raw.queueId === 'string' ? raw.queueId : data.patient!.queueId,
-                clinicId: typeof raw.clinicId === 'string' ? raw.clinicId : data.patient!.clinicId,
-                doctorId: typeof raw.doctorId === 'string' ? raw.doctorId : data.patient!.doctorId,
-              };
-              setPatient(livePatient);
-            }, (listenerError) => {
-              console.warn('Patient realtime listener error:', listenerError);
-            });
-          } else {
-            setError('Failed to fetch patient data');
-            setIsLoading(false);
-            return;
-          }
-        } catch (err) {
-          console.error('Error fetching patient via callable function:', err);
-          const message = err instanceof Error ? err.message : 'Error fetching patient data';
-          setError(message);
-          setIsLoading(false);
-          return;
-        }
-
-        // Queue listener
-        unsubscribeQueue = onSnapshot(queueRef, (snapshot) => {
-          if (snapshot.exists()) {
-            const raw = snapshot.data() as DocumentData;
-            const queueData: Queue = {
-              id: snapshot.id,
-              doctorId: typeof raw.doctorId === 'string' ? raw.doctorId : doctorId,
-              clinicId: typeof raw.clinicId === 'string' ? raw.clinicId : clinicId,
-              status: (raw.status as Queue['status']) ?? 'active',
-              currentToken: typeof raw.currentToken === 'number' ? raw.currentToken : 0,
-              totalPatients: typeof raw.totalPatients === 'number' ? raw.totalPatients : 0,
-              completedPatients: typeof raw.completedPatients === 'number' ? raw.completedPatients : 0,
-              createdAt: (raw.createdAt as Timestamp | Date | undefined) ?? undefined,
-              updatedAt: (raw.updatedAt as Timestamp | Date | undefined) ?? undefined,
-            };
-            setQueue(queueData);
-          } else {
-            setError('Queue document not found');
-          }
-        }, (error) => {
-          console.error('Error fetching queue:', error);
-          setError('Error fetching queue data');
-        });
-
-        // Doctor listener
-        unsubscribeDoctor = onSnapshot(doctorRef, (snapshot) => {
-          if (snapshot.exists()) {
-            const raw = snapshot.data() as DocumentData;
-            const doctorData: Doctor = {
-              id: snapshot.id,
-              name: typeof raw.name === 'string' ? raw.name : 'Doctor',
-              specialty: typeof raw.specialty === 'string' ? raw.specialty : 'General Practice',
-              clinicId: typeof raw.clinicId === 'string' ? raw.clinicId : clinicId,
-              email: typeof raw.email === 'string' ? raw.email : undefined,
-              phone: typeof raw.phone === 'string' ? raw.phone : undefined,
-            };
-            setDoctor(doctorData);
-            setIsLoading(false); // Set loading to false when we get the first successful data
-          } else {
-            setError('Doctor document not found');
-            setIsLoading(false);
-          }
-        }, (error) => {
-          console.error('Error fetching doctor:', error);
-          setError('Error fetching doctor data');
-          setIsLoading(false);
-        });
-
+        setAccessToken(token);
+        setSessionReady(true);
       } catch (err) {
-        console.error('Error setting up real-time listeners:', err);
-        setError('Failed to load patient data');
-        setIsLoading(false);
-      }
-    };
+        if (cancelled) {
+          return;
+        }
 
-    setupListeners();
+        const message = err instanceof Error ? err.message : 'Failed to load patient data';
+
+        console.error('Failed to establish patient session', err);
+        setSessionError(message);
+        setSessionReady(false);
+      }
+    })();
+
     return () => {
-      try { unsubscribeQueue?.(); } catch {}
-      try { unsubscribeDoctor?.(); } catch {}
-      try { unsubscribePatient?.(); } catch {}
+      cancelled = true;
     };
-  }, [clinicId, doctorId, queueId, patientId]);
+  }, [hasRequiredParams, clinicId, doctorId, queueId, patientId]);
+
+  const queryClient = useQueryClient();
+  const patientQueryKey = useMemo(
+    () => ['patient-view', clinicId ?? '', doctorId ?? '', queueId ?? '', patientId ?? ''] as const,
+    [clinicId, doctorId, queueId, patientId]
+  );
+  const queueQueryKey = useMemo(
+    () => ['queue', clinicId ?? '', doctorId ?? '', queueId ?? ''] as const,
+    [clinicId, doctorId, queueId]
+  );
+  const doctorQueryKey = useMemo(
+    () => ['doctor', clinicId ?? '', doctorId ?? ''] as const,
+    [clinicId, doctorId]
+  );
+
+  const initialPatientRef = useRef<Patient | undefined>(undefined);
+  const initialQueueRef = useRef<Queue | undefined>(undefined);
+  const initialDoctorRef = useRef<Doctor | undefined>(undefined);
+
+  if (hasRequiredParams) {
+    if (!initialPatientRef.current) {
+      initialPatientRef.current = queryClient.getQueryData<Patient>(patientQueryKey) ?? undefined;
+    }
+    if (!initialQueueRef.current) {
+      initialQueueRef.current = queryClient.getQueryData<Queue>(queueQueryKey) ?? undefined;
+    }
+    if (!initialDoctorRef.current) {
+      initialDoctorRef.current = queryClient.getQueryData<Doctor>(doctorQueryKey) ?? undefined;
+    }
+  }
+
+  const hasOptimisticCache = Boolean(initialPatientRef.current);
+
+  const queriesEnabled = sessionReady && !!accessToken && hasRequiredParams;
+
+  const patientViewQuery = useQuery<Patient>({
+    queryKey: patientQueryKey,
+    enabled: queriesEnabled,
+    staleTime: Infinity,
+    gcTime: 30 * 60 * 1000,
+    ...(initialPatientRef.current ? { initialData: initialPatientRef.current } : {}),
+    queryFn: async () => {
+      const getViewFn = httpsCallable<GetPatientViewPayload, GetPatientViewResult>(functions, 'getPatientView');
+      const { data } = await getViewFn({
+        clinicId: clinicId!,
+        doctorId: doctorId!,
+        queueId: queueId!,
+        patientId: patientId!,
+        token: accessToken!
+      });
+
+      if (!data?.patient) {
+        throw new Error('Failed to fetch patient data');
+      }
+
+      return data.patient;
+    },
+  });
+
+  const queueQuery = useQuery<Queue>({
+    queryKey: queueQueryKey,
+    enabled: queriesEnabled,
+    staleTime: Infinity,
+    gcTime: 30 * 60 * 1000,
+    ...(initialQueueRef.current ? { initialData: initialQueueRef.current } : {}),
+    queryFn: async () => {
+      const queueRef = doc(db, 'clinics', clinicId!, 'doctors', doctorId!, 'queues', queueId!);
+      const snapshot = await getDoc(queueRef);
+
+      if (!snapshot.exists()) {
+        throw new Error('Queue document not found');
+      }
+
+      return buildQueueFromSnapshot(snapshot, { clinicId: clinicId!, doctorId: doctorId! });
+    },
+  });
+
+  const doctorQuery = useQuery<Doctor>({
+    queryKey: doctorQueryKey,
+    enabled: queriesEnabled,
+    staleTime: Infinity,
+    gcTime: 30 * 60 * 1000,
+    ...(initialDoctorRef.current ? { initialData: initialDoctorRef.current } : {}),
+    queryFn: async () => {
+      const doctorRef = doc(db, 'clinics', clinicId!, 'doctors', doctorId!);
+      const snapshot = await getDoc(doctorRef);
+
+      if (!snapshot.exists()) {
+        throw new Error('Doctor document not found');
+      }
+
+      return buildDoctorFromSnapshot(snapshot, { clinicId: clinicId! });
+    },
+  });
+
+  usePatientQueueRealtimeBridge({
+    enabled: queriesEnabled,
+    clinicId,
+    doctorId,
+    queueId,
+    patientId,
+    patientFallback: patientViewQuery.data ?? initialPatientRef.current ?? null,
+    queryKeys: {
+      patient: patientQueryKey,
+      queue: queueQueryKey,
+      doctor: doctorQueryKey,
+    },
+    onRealtimeError: setRealtimeError,
+  });
+
+  const patient = patientViewQuery.data ?? null;
+  const queue = queueQuery.data ?? null;
+  const doctor = doctorQuery.data ?? null;
+
+  useEffect(() => {
+    if (!patient) {
+      setOptimisticPatientStatus(null);
+      return;
+    }
+
+    if (optimisticPatientStatus && patient.status === optimisticPatientStatus) {
+      setOptimisticPatientStatus(null);
+    }
+  }, [patient, patient?.status, optimisticPatientStatus]);
+
+  const patientStatus = optimisticPatientStatus ?? patient?.status ?? null;
+
+  const firstQueryError = patientViewQuery.error ?? queueQuery.error ?? doctorQuery.error;
+  const queryErrorMessage = firstQueryError
+    ? firstQueryError instanceof Error
+      ? firstQueryError.message
+      : typeof firstQueryError === 'string'
+        ? firstQueryError
+        : 'Failed to fetch data'
+    : null;
+
+  const error = sessionError ?? realtimeError ?? queryErrorMessage;
+
+  const patientPending = patientViewQuery.isPending && patientViewQuery.fetchStatus !== 'idle';
+  const queuePending = queueQuery.isPending && queueQuery.fetchStatus !== 'idle';
+  const doctorPending = doctorQuery.isPending && doctorQuery.fetchStatus !== 'idle';
+  const anyFetching =
+    patientViewQuery.fetchStatus === 'fetching' ||
+    queueQuery.fetchStatus === 'fetching' ||
+    doctorQuery.fetchStatus === 'fetching';
+
+  const isEstablishingSession = !sessionReady && !sessionError;
+  const queriesPending = patientPending || queuePending || doctorPending || anyFetching;
+  const isLoading = !hasOptimisticCache && (isEstablishingSession || queriesPending);
 
   const handleCancelToken = async () => {
     if (!clinicId || !doctorId || !queueId || !patientId) {
@@ -303,7 +309,14 @@ export default function QueueStatus() {
           : data.message ?? 'Your token has been cancelled.';
         toast.success(message);
         setActionError(null);
-        setPatient((prev) => (prev ? { ...prev, status: 'cancelled' } : prev));
+        setOptimisticPatientStatus('cancelled');
+        queryClient.setQueryData<Patient | undefined>(patientQueryKey, (prev) => {
+          if (!prev) {
+            return prev;
+          }
+          return { ...prev, status: 'cancelled' };
+        });
+        queryClient.invalidateQueries({ queryKey: patientQueryKey, exact: true });
       } else {
         const fallback = data?.message ?? 'Unable to cancel your token. Please try again.';
         setActionError(fallback);
@@ -333,17 +346,48 @@ export default function QueueStatus() {
     setActionState('rejoining');
 
     rejoinQueueMutation.mutate(
-      { clinicId, doctorId, queueId, patientId },
+      { clinicId, doctorId, queueId, patientId, token: accessToken },
       {
         onSuccess: (data) => {
-          if (data?.success && data.queueId) {
-            // Rejoin successful - stay on same page as queue will update via listener
-            setActionState('idle');
-          } else {
+          if (!data?.success) {
             const fallback = data?.message ?? 'Unable to rejoin the queue. Please try again.';
             setActionError(fallback);
             setActionState('idle');
+            return;
           }
+
+          const rejoin = data.rejoin;
+          if (rejoin) {
+            try {
+              if (rejoin.accessToken && rejoin.patientId) {
+                sessionStorage.setItem(`patientToken:${rejoin.patientId}`, rejoin.accessToken);
+              }
+            } catch (storageError) {
+              console.warn('Failed to persist rejoin access token', storageError);
+            }
+
+            const redirectUrl = buildRejoinRedirectUrl({
+              clinicId: rejoin.clinicId,
+              doctorId: rejoin.doctorId,
+              queueId: rejoin.queueId,
+              patientId: rejoin.patientId,
+              accessToken: rejoin.accessToken
+            });
+
+            setActionState('idle');
+            router.replace(redirectUrl);
+            return;
+          }
+
+          if (data.queueId) {
+            // Legacy fallback (same queue/patient)
+            setActionState('idle');
+            return;
+          }
+
+          const fallback = data?.message ?? 'Unable to rejoin the queue. Please try again.';
+          setActionError(fallback);
+          setActionState('idle');
         },
         onError: (err) => {
           const message = err instanceof Error ? err.message : 'Failed to rejoin queue. Please try again.';
@@ -359,8 +403,8 @@ export default function QueueStatus() {
   let progressPercentage = 0;
   let nowServingDisplay = queue?.currentToken || 0;
   const lastProgressRef = useRef<number>(0);
-  if (patient && queue) {
-    switch (patient.status) {
+  if (patient && queue && patientStatus) {
+    switch (patientStatus) {
       case 'completed':
         patientsAhead = 0;
         progressPercentage = 100;
@@ -384,7 +428,7 @@ export default function QueueStatus() {
         break;
     }
     // Update lastProgressRef for non-cancelled states
-    if (patient.status !== 'cancelled') {
+    if (patientStatus !== 'cancelled') {
       lastProgressRef.current = progressPercentage;
     }
   }
@@ -392,10 +436,10 @@ export default function QueueStatus() {
   const estimatedWaitTime = patientsAhead > 0 ? `~ ${patientsAhead * 5} minutes` : 'Your turn!';
   // Accessibility: live message
   const liveMessage = (() => {
-    if (!patient || !queue) return '';
-    if (patient.status === 'completed') return 'Your consultation is completed.';
-    if (patient.status === 'cancelled') return 'Your token has been cancelled. If this was unexpected, please contact the clinic team to rejoin.';
-    if (patient.status === 'in-progress') return 'Please proceed. It is your turn now.';
+    if (!patient || !queue || !patientStatus) return '';
+    if (patientStatus === 'completed') return 'Your consultation is completed.';
+    if (patientStatus === 'cancelled') return 'Your token has been cancelled. If this was unexpected, please contact the clinic team to rejoin.';
+    if (patientStatus === 'in-progress') return 'Please proceed. It is your turn now.';
     if (patientsAhead === 0) return 'It is your turn now.';
     if (patientsAhead === 1) return 'One patient ahead of you.';
     return `${patientsAhead} patients ahead of you. Estimated wait ${estimatedWaitTime}.`;
@@ -403,10 +447,10 @@ export default function QueueStatus() {
 
   // Determine current step for stepper and animation
   const currentStepIndex = (() => {
-    if (!patient) return 0;
-    if (patient.status === 'completed') return 3; // Done
-    if (patient.status === 'in-progress') return 2; // Ready (explicitly when called)
-    if (patient.status === 'cancelled') {
+    if (!patientStatus) return 0;
+    if (patientStatus === 'completed') return 3; // Done
+    if (patientStatus === 'in-progress') return 2; // Ready (explicitly when called)
+    if (patientStatus === 'cancelled') {
       // Freeze at last known threshold; no animation will be shown for cancelled
       if (progressPercentage >= 95) return 2;
       if (progressPercentage >= 5) return 1;
@@ -418,8 +462,8 @@ export default function QueueStatus() {
 
   const isCancelling = actionState === 'cancelling';
   const isRejoining = actionState === 'rejoining';
-  const canCancel = patient?.status === 'waiting' && !!accessToken;
-  const canRejoin = patient?.status === 'cancelled' && !!accessToken;
+  const canCancel = patientStatus === 'waiting' && !!accessToken;
+  const canRejoin = patientStatus === 'cancelled' && !!accessToken;
 
   if (isLoading && !error) {
     return (
@@ -484,14 +528,14 @@ export default function QueueStatus() {
               <div className="absolute top-5 left-0 right-0 h-[2px] bg-slate-200" aria-hidden />
               <ol className="relative flex items-center justify-between px-2">
                 {['Joined','In Queue','Ready','Done'].map((label, idx) => {
-                  const isActive = patient?.status === 'completed' ? true : idx <= currentStepIndex;
-                  const isCurrent = idx === currentStepIndex && patient?.status !== 'completed' && patient?.status !== 'cancelled';
+                  const isActive = patientStatus === 'completed' ? true : idx <= currentStepIndex;
+                  const isCurrent = idx === currentStepIndex && patientStatus !== 'completed' && patientStatus !== 'cancelled';
                   return (
                     <li key={label} className="relative flex-1 flex flex-col items-center gap-1.5 text-center">
                       <span className={`relative h-10 w-10 rounded-full flex items-center justify-center text-xs font-bold shadow-md transition-all ${isActive ? 'bg-gradient-to-br from-blue-600 to-blue-500 text-white ring-4 ring-blue-50' : 'bg-slate-200 text-slate-400'}`}>
                         {isCurrent && <span className="animate-ping absolute inset-0 rounded-full bg-blue-400 opacity-75" aria-hidden />}
                         <span className="relative z-10">
-                          {patient?.status === 'completed' && idx === 3 ? (
+                          {patientStatus === 'completed' && idx === 3 ? (
                             <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M20 6 9 17l-5-5"/></svg>
                           ) : (
                             idx+1
@@ -507,7 +551,7 @@ export default function QueueStatus() {
           </section>
 
           {/* Info + Action */}
-          {patient?.status === 'cancelled' && (
+          {patientStatus === 'cancelled' && patient && (
             <div className="p-4 rounded-xl border border-red-200/80 bg-gradient-to-br from-red-50 to-red-100/50 flex items-start gap-3">
               <div className="h-2.5 w-2.5 rounded-full bg-red-600 mt-1.5" aria-hidden />
               <p className="text-xs text-red-900 leading-relaxed font-medium">Your token (#{patient.tokenNumber}) has been cancelled. Please contact the clinic or re-join.</p>
@@ -568,9 +612,9 @@ export default function QueueStatus() {
             </div>
           ) : (
             <Button className="w-full" variant="outline" disabled>
-              {patient?.status === 'completed'
+              {patientStatus === 'completed'
                 ? 'Consultation Completed'
-                : patient?.status === 'in-progress'
+                : patientStatus === 'in-progress'
                   ? 'Currently Being Served'
                   : 'Cancellation unavailable'}
             </Button>
