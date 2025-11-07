@@ -3,15 +3,15 @@
 export const dynamic = "force-dynamic";
 
 import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-  AlertDialogTrigger
+    AlertDialog,
+    AlertDialogAction,
+    AlertDialogCancel,
+    AlertDialogContent,
+    AlertDialogDescription,
+    AlertDialogFooter,
+    AlertDialogHeader,
+    AlertDialogTitle,
+    AlertDialogTrigger
 } from '@/components/ui/alert-dialog';
 import { Button } from '@/components/ui/button';
 import { useRejoinQueue } from '@/lib/hooks/use-join-queue';
@@ -19,18 +19,19 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { doc, getDoc } from 'firebase/firestore';
 import { httpsCallable } from 'firebase/functions';
 import { useParams, useRouter } from 'next/navigation';
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { toast } from 'sonner';
 import { auth, db, functions } from '../../../../../../lib/firebase';
+import { derivePatientStatusFromQueue } from './patientStatusDerivation';
 import { buildRejoinRedirectUrl } from './rejoinUtils';
-import { buildSessionDeps, establishPatientSession } from './session';
+import { buildSessionDeps, establishPatientSession, type EstablishSessionDeps } from './session';
 import {
-  buildDoctorFromSnapshot,
-  buildQueueFromSnapshot,
-  usePatientQueueRealtimeBridge,
-  type Doctor,
-  type Patient,
-  type Queue
+    buildDoctorFromSnapshot,
+    buildQueueFromSnapshot,
+    usePatientQueueRealtimeBridge,
+    type Doctor,
+    type Patient,
+    type Queue
 } from './usePatientQueueRealtimeBridge';
 
 interface PatientCancelTokenPayload {
@@ -77,6 +78,53 @@ export default function QueueStatus() {
   const [actionState, setActionState] = useState<'idle' | 'cancelling' | 'rejoining'>('idle');
   const [cancelDialogOpen, setCancelDialogOpen] = useState(false);
   const [optimisticPatientStatus, setOptimisticPatientStatus] = useState<Patient['status'] | null>(null);
+  const [requiresRelogin, setRequiresRelogin] = useState(false);
+  const [sessionRetryPending, setSessionRetryPending] = useState(false);
+  const sessionDepsRef = useRef<EstablishSessionDeps>(buildSessionDeps(functions, auth));
+
+  const refreshSession = useCallback(async ({ silent = false }: { silent?: boolean } = {}) => {
+    if (!hasRequiredParams || typeof window === 'undefined') {
+      return { ok: false, message: 'Missing queue information.' } as const;
+    }
+
+    const context = {
+      locationHref: window.location.href,
+      replaceUrl: (cleaned: string) => window.history.replaceState({}, '', cleaned),
+      storage: window.sessionStorage
+    };
+
+    const deps = sessionDepsRef.current;
+
+    try {
+      const token = await establishPatientSession(
+        { clinicId: clinicId!, doctorId: doctorId!, queueId: queueId!, patientId: patientId! },
+        context,
+        deps
+      );
+
+      setAccessToken(token);
+      setSessionReady(true);
+      setSessionError(null);
+      setRequiresRelogin(false);
+      if (silent) {
+        // preserve existing realtime error messaging; listeners will clear when they recover
+      } else {
+        setRealtimeError(null);
+      }
+
+      return { ok: true } as const;
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Failed to refresh session';
+
+      if (!silent) {
+        setSessionError(message);
+        setSessionReady(false);
+        setAccessToken(null);
+      }
+
+      return { ok: false, message } as const;
+    }
+  }, [clinicId, doctorId, hasRequiredParams, patientId, queueId]);
 
   useEffect(() => {
     if (typeof window === 'undefined') {
@@ -88,6 +136,7 @@ export default function QueueStatus() {
       setRealtimeError(null);
       setSessionReady(false);
       setAccessToken(null);
+      setRequiresRelogin(false);
       return;
     }
 
@@ -96,46 +145,19 @@ export default function QueueStatus() {
     setAccessToken(null);
     setSessionError(null);
     setRealtimeError(null);
-
-    const context = {
-      locationHref: window.location.href,
-      replaceUrl: (cleaned: string) => window.history.replaceState({}, '', cleaned),
-      storage: window.sessionStorage
-    };
-
-    const deps = buildSessionDeps(functions, auth);
+    setRequiresRelogin(false);
 
     (async () => {
-      try {
-        const token = await establishPatientSession(
-          { clinicId: clinicId!, doctorId: doctorId!, queueId: queueId!, patientId: patientId! },
-          context,
-          deps
-        );
-
-        if (cancelled) {
-          return;
-        }
-
-        setAccessToken(token);
-        setSessionReady(true);
-      } catch (err) {
-        if (cancelled) {
-          return;
-        }
-
-        const message = err instanceof Error ? err.message : 'Failed to load patient data';
-
-        console.error('Failed to establish patient session', err);
-        setSessionError(message);
-        setSessionReady(false);
+      const result = await refreshSession({ silent: false });
+      if (!cancelled && !result.ok) {
+        console.error('Failed to establish patient session', result.message);
       }
     })();
 
     return () => {
       cancelled = true;
     };
-  }, [hasRequiredParams, clinicId, doctorId, queueId, patientId]);
+  }, [hasRequiredParams, refreshSession]);
 
   const queryClient = useQueryClient();
   const patientQueryKey = useMemo(
@@ -154,22 +176,31 @@ export default function QueueStatus() {
   const initialPatientRef = useRef<Patient | undefined>(undefined);
   const initialQueueRef = useRef<Queue | undefined>(undefined);
   const initialDoctorRef = useRef<Doctor | undefined>(undefined);
+  const initialKeyRef = useRef({ patient: '', queue: '', doctor: '' });
 
   if (hasRequiredParams) {
-    if (!initialPatientRef.current) {
+    const patientKeyHash = patientQueryKey.join('|');
+    if (initialKeyRef.current.patient !== patientKeyHash) {
+      initialKeyRef.current.patient = patientKeyHash;
       initialPatientRef.current = queryClient.getQueryData<Patient>(patientQueryKey) ?? undefined;
     }
-    if (!initialQueueRef.current) {
+
+    const queueKeyHash = queueQueryKey.join('|');
+    if (initialKeyRef.current.queue !== queueKeyHash) {
+      initialKeyRef.current.queue = queueKeyHash;
       initialQueueRef.current = queryClient.getQueryData<Queue>(queueQueryKey) ?? undefined;
     }
-    if (!initialDoctorRef.current) {
+
+    const doctorKeyHash = doctorQueryKey.join('|');
+    if (initialKeyRef.current.doctor !== doctorKeyHash) {
+      initialKeyRef.current.doctor = doctorKeyHash;
       initialDoctorRef.current = queryClient.getQueryData<Doctor>(doctorQueryKey) ?? undefined;
     }
   }
 
   const hasOptimisticCache = Boolean(initialPatientRef.current);
 
-  const queriesEnabled = sessionReady && !!accessToken && hasRequiredParams;
+  const queriesEnabled = sessionReady && !!accessToken && hasRequiredParams && !requiresRelogin;
 
   const patientViewQuery = useQuery<Patient>({
     queryKey: patientQueryKey,
@@ -244,6 +275,14 @@ export default function QueueStatus() {
       doctor: doctorQueryKey,
     },
     onRealtimeError: setRealtimeError,
+    refreshSession: () => refreshSession({ silent: true }),
+    onRequireRelogin: (payload) => {
+      const message = payload?.message ?? 'Your session expired. Please sign in again to continue.';
+      setRequiresRelogin(true);
+      setSessionReady(false);
+      setAccessToken(null);
+      setSessionError(message);
+    },
   });
 
   const patient = patientViewQuery.data ?? null;
@@ -261,7 +300,31 @@ export default function QueueStatus() {
     }
   }, [patient, patient?.status, optimisticPatientStatus]);
 
-  const patientStatus = optimisticPatientStatus ?? patient?.status ?? null;
+  const derivedPatientStatus = useMemo(
+    () => derivePatientStatusFromQueue(patient, queue),
+    [patient, queue]
+  );
+
+  const patientStatus = useMemo(() => {
+    if (optimisticPatientStatus) {
+      return optimisticPatientStatus;
+    }
+
+    const actualStatus = patient?.status ?? null;
+
+    if (actualStatus === 'cancelled' || actualStatus === 'completed' || actualStatus === 'in-progress') {
+      return actualStatus;
+    }
+
+    if (actualStatus === 'waiting') {
+      if (derivedPatientStatus === 'completed') {
+        return 'completed';
+      }
+      return 'waiting';
+    }
+
+    return derivedPatientStatus ?? actualStatus ?? null;
+  }, [derivedPatientStatus, optimisticPatientStatus, patient?.status]);
 
   const firstQueryError = patientViewQuery.error ?? queueQuery.error ?? doctorQuery.error;
   const queryErrorMessage = firstQueryError
@@ -293,6 +356,10 @@ export default function QueueStatus() {
     }
     if (!accessToken) {
       setActionError('Missing access token. Please refresh the page.');
+      return;
+    }
+    if (requiresRelogin) {
+      setActionError('Your session expired. Please reconnect before cancelling.');
       return;
     }
 
@@ -339,6 +406,10 @@ export default function QueueStatus() {
     }
     if (!accessToken) {
       setActionError('Missing access token. Please refresh the page.');
+      return;
+    }
+    if (requiresRelogin) {
+      setActionError('Your session expired. Please reconnect before rejoining.');
       return;
     }
 
@@ -462,8 +533,25 @@ export default function QueueStatus() {
 
   const isCancelling = actionState === 'cancelling';
   const isRejoining = actionState === 'rejoining';
-  const canCancel = patientStatus === 'waiting' && !!accessToken;
-  const canRejoin = patientStatus === 'cancelled' && !!accessToken;
+  const canCancel = patientStatus === 'waiting' && !!accessToken && !requiresRelogin;
+  const canRejoin = patientStatus === 'cancelled' && !!accessToken && !requiresRelogin;
+
+  const handleReconnectSession = useCallback(async () => {
+    if (sessionRetryPending) {
+      return;
+    }
+
+    setSessionError(null);
+    setRealtimeError(null);
+    setSessionRetryPending(true);
+    const result = await refreshSession({ silent: false });
+    if (result.ok) {
+      setRequiresRelogin(false);
+    } else {
+      setSessionError(result.message ?? 'Unable to reconnect your session. Please try again.');
+    }
+    setSessionRetryPending(false);
+  }, [refreshSession, sessionRetryPending]);
 
   if (isLoading && !error) {
     return (
@@ -497,6 +585,21 @@ export default function QueueStatus() {
             </h1>
             <p className="text-xs text-gray-600 mt-1 font-medium">{doctor?.specialty || 'Clinic'}</p>
           </header>
+
+          {requiresRelogin ? (
+            <div className="rounded-xl border border-amber-200 bg-amber-50/80 p-4 text-center space-y-3">
+              <p className="text-sm font-semibold text-amber-900">Your session expired</p>
+              <p className="text-xs text-amber-900/80">Reconnect to keep receiving live queue updates.</p>
+              <Button
+                variant="accent"
+                className="w-full"
+                loading={sessionRetryPending}
+                onClick={handleReconnectSession}
+              >
+                {sessionRetryPending ? 'Reconnecting…' : 'Reconnect to Queue'}
+              </Button>
+            </div>
+          ) : null}
 
           {/* Token Display */}
           <section className="text-center space-y-3">

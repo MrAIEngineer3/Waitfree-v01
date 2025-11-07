@@ -67,6 +67,79 @@ if (allowedOriginsEnv && allowedOriginsEnv.trim().length > 0) {
 // Engine + Phase1 notifications are now permanently enabled (unless you change code).
 console.log(`GLOBAL: Allowed origins loaded (${allowedOriginsSource}): [${allowedOrigins.join(", ")}]. Notification engine + phase1 ALWAYS ENABLED (flags removed).`);
 
+const ULID_ALPHABET = '0123456789ABCDEFGHJKMNPQRSTVWXYZ';
+const ULID_TIME_LENGTH = 10;
+const ULID_RANDOM_LENGTH = 16;
+
+const encodeTimeComponent = (time: number): string => {
+  let remaining = time;
+  let str = '';
+  for (let i = 0; i < ULID_TIME_LENGTH; i += 1) {
+    const mod = remaining % ULID_ALPHABET.length;
+    str = ULID_ALPHABET[mod] + str;
+    remaining = Math.floor(remaining / ULID_ALPHABET.length);
+  }
+  return str;
+};
+
+const encodeRandomComponent = (): string => {
+  const bytes = crypto.randomBytes(ULID_RANDOM_LENGTH);
+  let str = '';
+  for (let i = 0; i < ULID_RANDOM_LENGTH; i += 1) {
+    const value = bytes[i] % ULID_ALPHABET.length;
+    str += ULID_ALPHABET[value];
+  }
+  return str;
+};
+
+const generateUlid = (): string => `${encodeTimeComponent(Date.now())}${encodeRandomComponent()}`;
+
+const ANALYTICS_EVENTS_COLLECTION = 'analyticsEvents';
+
+const sanitizeAnalyticsParams = (params: Record<string, unknown>): Record<string, unknown> => {
+  const cleaned: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(params)) {
+    if (value === undefined) {
+      continue;
+    }
+    if (value === null) {
+      cleaned[key] = null;
+      continue;
+    }
+    if (typeof value === 'string') {
+      cleaned[key] = value.slice(0, 128);
+      continue;
+    }
+    if (typeof value === 'number' || typeof value === 'boolean') {
+      cleaned[key] = value;
+      continue;
+    }
+    try {
+      cleaned[key] = JSON.stringify(value);
+    } catch {
+      cleaned[key] = String(value);
+    }
+  }
+  return cleaned;
+};
+
+const recordAnalyticsEvent = async (eventName: string, params: Record<string, unknown>): Promise<void> => {
+  try {
+    const db = admin.firestore();
+    const docId = generateUlid();
+    await db.collection(ANALYTICS_EVENTS_COLLECTION).doc(docId).set({
+      eventName,
+      params: sanitizeAnalyticsParams(params),
+      createdAt: FieldValue.serverTimestamp()
+    });
+  } catch (error) {
+    functions.logger.warn('Failed to record analytics event', {
+      eventName,
+      error: error instanceof Error ? error.message : String(error)
+    });
+  }
+};
+
 const runInBackground = (taskName: string, task: () => Promise<unknown>) => {
   setImmediate(() => {
     const span = startTiming(`runInBackground.${taskName}`, { taskName });
@@ -1299,6 +1372,21 @@ const ensureDebugAccess = async (
 };
 
 const hashAccessToken = (token: string) => crypto.createHash('sha256').update(String(token)).digest('hex');
+
+const anonymizeIdentifier = (value: string | null | undefined): string | null => {
+  if (!value) {
+    return null;
+  }
+  try {
+    return crypto.createHash('sha256').update(value).digest('hex').slice(0, 16);
+  } catch (error) {
+    functions.logger.warn('Failed to anonymize identifier', {
+      valueLength: value.length,
+      error: error instanceof Error ? error.message : String(error)
+    });
+    return null;
+  }
+};
 
 type JoinQueueRequest = {
   clinicId?: string;
@@ -2736,6 +2824,16 @@ const updatePatientStatusHandler = async (data: UpdatePatientStatusRequest, cont
       doctorId,
       queueId,
       uid: context.auth.uid
+    });
+
+    await recordAnalyticsEvent('status_updated', {
+      clinicId,
+      doctorId,
+      queueId,
+      newStatus,
+      patientHint: anonymizeIdentifier(patientId),
+      anonUserId: anonymizeIdentifier(context.auth?.uid ?? null),
+      actorType: isPatientToken ? 'patient-token' : syntheticPatient ? 'patient-synthetic' : 'staff'
     });
 
     const queueDocRef = queueRef;

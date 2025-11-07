@@ -84,6 +84,74 @@ if (allowedOriginsEnv && allowedOriginsEnv.trim().length > 0) {
 // Feature flags NEW_NOTIFICATION_ENGINE / PHASE1_NOTIFICATIONS have been removed.
 // Engine + Phase1 notifications are now permanently enabled (unless you change code).
 console.log(`GLOBAL: Allowed origins loaded (${allowedOriginsSource}): [${allowedOrigins.join(", ")}]. Notification engine + phase1 ALWAYS ENABLED (flags removed).`);
+const ULID_ALPHABET = '0123456789ABCDEFGHJKMNPQRSTVWXYZ';
+const ULID_TIME_LENGTH = 10;
+const ULID_RANDOM_LENGTH = 16;
+const encodeTimeComponent = (time) => {
+    let remaining = time;
+    let str = '';
+    for (let i = 0; i < ULID_TIME_LENGTH; i += 1) {
+        const mod = remaining % ULID_ALPHABET.length;
+        str = ULID_ALPHABET[mod] + str;
+        remaining = Math.floor(remaining / ULID_ALPHABET.length);
+    }
+    return str;
+};
+const encodeRandomComponent = () => {
+    const bytes = crypto_1.default.randomBytes(ULID_RANDOM_LENGTH);
+    let str = '';
+    for (let i = 0; i < ULID_RANDOM_LENGTH; i += 1) {
+        const value = bytes[i] % ULID_ALPHABET.length;
+        str += ULID_ALPHABET[value];
+    }
+    return str;
+};
+const generateUlid = () => `${encodeTimeComponent(Date.now())}${encodeRandomComponent()}`;
+const ANALYTICS_EVENTS_COLLECTION = 'analyticsEvents';
+const sanitizeAnalyticsParams = (params) => {
+    const cleaned = {};
+    for (const [key, value] of Object.entries(params)) {
+        if (value === undefined) {
+            continue;
+        }
+        if (value === null) {
+            cleaned[key] = null;
+            continue;
+        }
+        if (typeof value === 'string') {
+            cleaned[key] = value.slice(0, 128);
+            continue;
+        }
+        if (typeof value === 'number' || typeof value === 'boolean') {
+            cleaned[key] = value;
+            continue;
+        }
+        try {
+            cleaned[key] = JSON.stringify(value);
+        }
+        catch {
+            cleaned[key] = String(value);
+        }
+    }
+    return cleaned;
+};
+const recordAnalyticsEvent = async (eventName, params) => {
+    try {
+        const db = firebaseAdmin_1.admin.firestore();
+        const docId = generateUlid();
+        await db.collection(ANALYTICS_EVENTS_COLLECTION).doc(docId).set({
+            eventName,
+            params: sanitizeAnalyticsParams(params),
+            createdAt: firestore_1.FieldValue.serverTimestamp()
+        });
+    }
+    catch (error) {
+        functions.logger.warn('Failed to record analytics event', {
+            eventName,
+            error: error instanceof Error ? error.message : String(error)
+        });
+    }
+};
 const runInBackground = (taskName, task) => {
     setImmediate(() => {
         const span = (0, timing_1.startTiming)(`runInBackground.${taskName}`, { taskName });
@@ -1093,6 +1161,21 @@ const ensureDebugAccess = async (context, options, requireAuth = true) => {
     }
 };
 const hashAccessToken = (token) => crypto_1.default.createHash('sha256').update(String(token)).digest('hex');
+const anonymizeIdentifier = (value) => {
+    if (!value) {
+        return null;
+    }
+    try {
+        return crypto_1.default.createHash('sha256').update(value).digest('hex').slice(0, 16);
+    }
+    catch (error) {
+        functions.logger.warn('Failed to anonymize identifier', {
+            valueLength: value.length,
+            error: error instanceof Error ? error.message : String(error)
+        });
+        return null;
+    }
+};
 /** DEBUG: Returns runtime flag visibility and Node version */
 const debugRuntimeFlagsHandler = async (_data, _ctx) => {
     await ensureDebugAccess(_ctx, null, false);
@@ -2198,6 +2281,15 @@ const updatePatientStatusHandler = async (data, context) => {
             doctorId,
             queueId,
             uid: context.auth.uid
+        });
+        await recordAnalyticsEvent('status_updated', {
+            clinicId,
+            doctorId,
+            queueId,
+            newStatus,
+            patientHint: anonymizeIdentifier(patientId),
+            anonUserId: anonymizeIdentifier(context.auth?.uid ?? null),
+            actorType: isPatientToken ? 'patient-token' : syntheticPatient ? 'patient-synthetic' : 'staff'
         });
         const queueDocRef = queueRef;
         const patientDocRef = patientRef;

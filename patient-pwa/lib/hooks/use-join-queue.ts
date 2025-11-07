@@ -2,6 +2,7 @@ import type { Doctor, Patient, Queue } from '@/app/queue/[clinicId]/[doctorId]/[
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { httpsCallable } from 'firebase/functions'
 import { toast } from 'sonner'
+import { anonymizeId, trackAnalyticsEvent } from '../analytics'
 import { functions } from '../firebase'
 
 interface JoinQueueCallablePayload {
@@ -107,6 +108,25 @@ export function useJoinQueue() {
     onSuccess: (data, variables, context) => {
       const duration = context ? performance.now() - context.startTime : 0
       console.log(`Successfully joined queue in ${duration.toFixed(0)}ms`)
+
+      trackAnalyticsEvent('queue_joined', {
+        clinic_id: data.clinicId,
+        doctor_id: data.doctorId,
+        queue_id: data.queueId,
+        wait_duration_ms: Math.round(duration),
+        patient_hint: anonymizeId(data.patientId),
+        source: 'patient_pwa'
+      })
+
+      trackAnalyticsEvent('patient_joined', {
+        clinic_id: data.clinicId,
+        doctor_id: data.doctorId,
+        queue_id: data.queueId,
+        token_number: data.tokenNumber ?? null,
+        patient_hint: anonymizeId(data.patientId),
+        resolver_match: data.patientResolver?.matchType ?? null,
+        source: 'patient_pwa'
+      })
       
       // Store access token in sessionStorage
       try {
@@ -213,6 +233,15 @@ export function useRejoinQueue() {
       console.log(`Successfully rejoined queue in ${duration.toFixed(0)}ms`)
       
       toast.success(data.message || 'Successfully rejoined the queue!')
+
+      trackAnalyticsEvent('queue_joined', {
+        clinic_id: variables.clinicId,
+        doctor_id: variables.doctorId,
+        queue_id: data.rejoin?.queueId ?? variables.queueId,
+        wait_duration_ms: Math.round(duration),
+        patient_hint: anonymizeId(variables.patientId),
+        source: 'patient_pwa_rejoin'
+      })
     },
   })
 }

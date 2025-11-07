@@ -1,3 +1,4 @@
+import { AnalyticsProvider } from "@/components/AnalyticsProvider";
 import { ThemeProvider } from "@/components/theme-provider";
 import { ReactQueryProvider } from "@/lib/react-query";
 import type { Metadata } from "next";
@@ -21,6 +22,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
     <html lang="en" suppressHydrationWarning>
       <body className={`${inter.variable} antialiased min-h-screen bg-background text-foreground`}>
         <ReactQueryProvider>
+          <AnalyticsProvider />
           <ThemeProvider
             attribute="class"
             defaultTheme="light"

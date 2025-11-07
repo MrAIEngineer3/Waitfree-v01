@@ -1,6 +1,7 @@
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { httpsCallable } from 'firebase/functions'
 import { toast } from 'sonner'
+import { anonymizeId, trackAnalyticsEvent } from '../analytics'
 import { functions } from '../firebase'
 
 interface Patient {
@@ -70,6 +71,14 @@ export function useCallPatient(clinicId: string, doctorId: string, queueId: stri
       const patients = queryClient.getQueryData<Patient[]>(['patients', clinicId, doctorId, queueId])
       const patient = patients?.find(p => p.id === patientId)
       toast.success(`${patient?.name || 'Patient'} has been called`)
+      trackAnalyticsEvent('status_updated', {
+        clinic_id: clinicId,
+        doctor_id: doctorId,
+        queue_id: queueId,
+        new_status: 'in-progress',
+        patient_hint: anonymizeId(patientId),
+        source: 'clinic_dashboard_call'
+      })
     },
     
     // Note: We don't need onSettled/invalidateQueries because Firestore listeners
@@ -122,6 +131,14 @@ export function useCompletePatient(clinicId: string, doctorId: string, queueId: 
       const patients = queryClient.getQueryData<Patient[]>(['patients', clinicId, doctorId, queueId])
       const patient = patients?.find(p => p.id === patientId)
       toast.success(`${patient?.name || 'Patient'} marked as completed`)
+      trackAnalyticsEvent('status_updated', {
+        clinic_id: clinicId,
+        doctor_id: doctorId,
+        queue_id: queueId,
+        new_status: 'completed',
+        patient_hint: anonymizeId(patientId),
+        source: 'clinic_dashboard_complete'
+      })
     },
   })
 }
@@ -171,6 +188,14 @@ export function useCancelPatient(clinicId: string, doctorId: string, queueId: st
       const patients = queryClient.getQueryData<Patient[]>(['patients', clinicId, doctorId, queueId])
       const patient = patients?.find(p => p.id === patientId)
       toast.success(`${patient?.name || 'Patient'} has been cancelled`)
+      trackAnalyticsEvent('status_updated', {
+        clinic_id: clinicId,
+        doctor_id: doctorId,
+        queue_id: queueId,
+        new_status: 'cancelled',
+        patient_hint: anonymizeId(patientId),
+        source: 'clinic_dashboard_cancel'
+      })
     },
   })
 }
@@ -220,6 +245,14 @@ export function useUncallPatient(clinicId: string, doctorId: string, queueId: st
       const patients = queryClient.getQueryData<Patient[]>(['patients', clinicId, doctorId, queueId])
       const patient = patients?.find(p => p.id === patientId)
       toast.success(`${patient?.name || 'Patient'} has been moved back to waiting`)
+      trackAnalyticsEvent('status_updated', {
+        clinic_id: clinicId,
+        doctor_id: doctorId,
+        queue_id: queueId,
+        new_status: 'waiting',
+        patient_hint: anonymizeId(patientId),
+        source: 'clinic_dashboard_uncall'
+      })
     },
   })
 }

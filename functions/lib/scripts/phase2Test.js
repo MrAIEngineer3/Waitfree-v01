@@ -3,10 +3,10 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
 };
 Object.defineProperty(exports, "__esModule", { value: true });
-const firebaseAdmin_1 = require("../firebaseAdmin");
 const node_fetch_1 = __importDefault(require("node-fetch"));
 const node_fs_1 = require("node:fs");
 const node_path_1 = __importDefault(require("node:path"));
+const firebaseAdmin_1 = require("../firebaseAdmin");
 const loadFirebaseJson = () => {
     try {
         const firebaseJsonPath = node_path_1.default.resolve(__dirname, '..', '..', 'firebase.json');

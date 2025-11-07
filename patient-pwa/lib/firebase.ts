@@ -1,3 +1,4 @@
+import { getAnalytics, isSupported, type Analytics } from 'firebase/analytics';
 import { initializeApp, type FirebaseOptions } from 'firebase/app';
 import { connectAuthEmulator, getAuth } from 'firebase/auth';
 import { connectFirestoreEmulator, getFirestore, type Firestore } from 'firebase/firestore';
@@ -12,6 +13,7 @@ const firebaseConfig = {
   storageBucket: process.env.NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET || "demo-project.appspot.com",
   messagingSenderId: process.env.NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID || "123456789",
   appId: process.env.NEXT_PUBLIC_FIREBASE_APP_ID || "1:123456789:web:abc123def456",
+  measurementId: process.env.NEXT_PUBLIC_FIREBASE_MEASUREMENT_ID || 'G-RRJG1S0KS4',
 };
 
 // Initialize Firebase
@@ -21,6 +23,50 @@ const app = initializeApp(firebaseConfig);
 export const db = getFirestore(app);
 export const auth = getAuth(app);
 export const functions = getFunctions(app, 'asia-south1'); // Match your Cloud Functions region
+
+let analyticsInstance: Analytics | null = null;
+let analyticsInitPromise: Promise<Analytics | null> | null = null;
+
+const resolveAnalytics = async (): Promise<Analytics | null> => {
+  if (analyticsInstance) {
+    return analyticsInstance;
+  }
+  const supported = await isSupported().catch((error) => {
+    if (process.env.NODE_ENV === 'development') {
+      console.warn('[patient-pwa][firebase] Analytics support check failed:', error);
+    }
+    return false;
+  });
+  if (!supported) {
+    if (process.env.NODE_ENV === 'development') {
+      console.info('[patient-pwa][firebase] Analytics not supported in this environment');
+    }
+    return null;
+  }
+  const instance = getAnalytics(app);
+  analyticsInstance = instance;
+  return instance;
+};
+
+export const loadAnalytics = async (): Promise<Analytics | null> => {
+  if (typeof window === 'undefined') {
+    return null;
+  }
+  if (analyticsInstance) {
+    return analyticsInstance;
+  }
+  if (!analyticsInitPromise) {
+    analyticsInitPromise = resolveAnalytics().catch((error) => {
+      if (process.env.NODE_ENV === 'development') {
+        console.warn('[patient-pwa][firebase] Failed to initialize Analytics', error);
+      }
+      return null;
+    });
+  }
+  const instance = await analyticsInitPromise;
+  analyticsInstance = instance;
+  return instance;
+};
 
 type FirestoreInternals = Firestore & {
   _settings?: { host?: string };

@@ -1,3 +1,4 @@
+import { AnalyticsProvider } from "@/components/AnalyticsProvider";
 import { ReactQueryProvider } from "@/lib/react-query";
 import type { Metadata, Viewport } from "next";
 import { Inter } from "next/font/google";
@@ -33,6 +34,7 @@ export default function RootLayout({
     <html lang="en" className="h-full overflow-x-hidden">
       <body className={`${inter.variable} antialiased min-h-full overflow-x-hidden [text-size-adjust:100%]`}>
         <ReactQueryProvider>
+          <AnalyticsProvider />
           <JoinScannerProvider>
             <ConditionalShell>{children}</ConditionalShell>
           </JoinScannerProvider>

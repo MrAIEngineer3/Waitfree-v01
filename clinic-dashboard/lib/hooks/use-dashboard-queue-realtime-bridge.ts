@@ -9,6 +9,7 @@ import {
     type QueryDocumentSnapshot,
 } from 'firebase/firestore';
 import { useEffect, useRef, useState } from 'react';
+import { anonymizeId, trackAnalyticsEvent } from '../analytics';
 import { db } from '../firebase';
 
 const getNow = () => (typeof performance !== 'undefined' ? performance.now() : Date.now());
@@ -77,11 +78,15 @@ export function useDashboardQueueRealtimeBridge({
 }: UseDashboardQueueRealtimeBridgeOptions) {
   const queryClient = useQueryClient();
   const [isHydrated, setIsHydrated] = useState(false);
+  const previousStatusesRef = useRef<Map<string, QueuePatientStatus>>(new Map());
+  const hasHydratedRef = useRef(false);
 
   useEffect(() => {
     if (!enabled || !clinicId || !doctorId || !queueId) {
       setIsHydrated(false);
       onError?.(null);
+      previousStatusesRef.current = new Map();
+      hasHydratedRef.current = false;
       return;
     }
 
@@ -91,6 +96,50 @@ export function useDashboardQueueRealtimeBridge({
     const unsubscribe = onSnapshot(
       snapshotQuery,
       (snapshot) => {
+        const statusMap = new Map<string, QueuePatientStatus>();
+        if (hasHydratedRef.current) {
+          for (const change of snapshot.docChanges()) {
+            const data = change.doc.data();
+            const patientId = change.doc.id;
+            const status = (data.status as QueuePatientStatus | undefined) ?? 'waiting';
+            const tokenNumber = typeof data.tokenNumber === 'number' ? data.tokenNumber : undefined;
+
+            if (change.type === 'added') {
+              trackAnalyticsEvent('patient_joined', {
+                clinic_id: clinicId,
+                doctor_id: doctorId,
+                queue_id: queueId,
+                token_number: tokenNumber ?? null,
+                patient_hint: anonymizeId(patientId),
+                source: 'clinic_dashboard_realtime'
+              });
+            }
+
+            if (change.type === 'modified') {
+              const previousStatus = previousStatusesRef.current.get(patientId);
+              if (previousStatus && previousStatus !== status) {
+                trackAnalyticsEvent('status_updated', {
+                  clinic_id: clinicId,
+                  doctor_id: doctorId,
+                  queue_id: queueId,
+                  new_status: status,
+                  previous_status: previousStatus,
+                  patient_hint: anonymizeId(patientId),
+                  source: 'clinic_dashboard_realtime'
+                });
+              }
+            }
+          }
+        }
+
+        for (const docSnap of snapshot.docs) {
+          const data = docSnap.data();
+          const status = (data.status as QueuePatientStatus | undefined) ?? 'waiting';
+          statusMap.set(docSnap.id, status);
+        }
+        previousStatusesRef.current = statusMap;
+        hasHydratedRef.current = true;
+
         const next = snapshot.docs.map((docSnap) => buildDashboardPatientFromSnapshot(docSnap, { queueId }));
 
         queryClient.setQueryData<DashboardQueuePatient[]>(queryKey, next);
@@ -125,12 +174,14 @@ export function useDashboardQueueDocRealtimeBridge({
   const [isHydrated, setIsHydrated] = useState(false);
   const [lastSnapshotMeta, setLastSnapshotMeta] = useState<RealtimeSnapshotMeta | null>(null);
   const previousSnapshotTsRef = useRef<number | null>(null);
+  const previousQueueRef = useRef<DashboardQueue | null>(null);
 
   useEffect(() => {
     if (!enabled || !clinicId || !doctorId || !queueId) {
       setIsHydrated(false);
       setLastSnapshotMeta(null);
       previousSnapshotTsRef.current = null;
+      previousQueueRef.current = null;
       onError?.(null);
       queryClient.setQueryData<DashboardQueue | null>(queryKey, null);
       return;
@@ -146,6 +197,22 @@ export function useDashboardQueueDocRealtimeBridge({
         const nextQueue = snapshot.exists()
           ? buildDashboardQueueFromSnapshot(snapshot, { clinicId, doctorId, queueId })
           : null;
+
+        const previousQueue = previousQueueRef.current;
+        if (nextQueue && previousQueue) {
+          if (previousQueue.status !== nextQueue.status || previousQueue.currentToken !== nextQueue.currentToken) {
+            trackAnalyticsEvent('queue_state_updated', {
+              clinic_id: clinicId,
+              doctor_id: doctorId,
+              queue_id: queueId,
+              new_status: nextQueue.status,
+              previous_status: previousQueue.status,
+              current_token: nextQueue.currentToken,
+              previous_token: previousQueue.currentToken
+            });
+          }
+        }
+        previousQueueRef.current = nextQueue;
 
         queryClient.setQueryData<DashboardQueue | null>(queryKey, nextQueue);
         setIsHydrated(true);

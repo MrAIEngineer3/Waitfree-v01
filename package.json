@@ -13,7 +13,8 @@
     "build": "npm run build --workspace=clinic-dashboard",
     "start": "npm run start --workspace=clinic-dashboard",
     "emulators": "firebase emulators:start",
-    "deploy": "firebase deploy"
+    "deploy": "firebase deploy",
+    "test:analytics": "node ./scripts/analytics-smoke.mjs"
   },
   "dependencies": {
     "date-fns": "^4.1.0",

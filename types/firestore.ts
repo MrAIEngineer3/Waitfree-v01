@@ -157,3 +157,10 @@ export interface PatientResolverSummary {
   metadataVersion: number;
   ambiguityId?: string | null;
 }
+
+export interface AnalyticsEvent {
+  id: string;
+  eventName: string;
+  params: Record<string, unknown>;
+  createdAt: Timestamp;
+}
