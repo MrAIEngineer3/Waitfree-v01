@@ -42,12 +42,12 @@ Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/bui
 The dashboard renders a QR code that points patients to the PWA join page. By default, the code will:
 
 - Use `NEXT_PUBLIC_PATIENT_BASE_URL` if set (recommended in production)
-- Otherwise, if running on a non-localhost domain, infer the current origin as the base
+- Otherwise, if running from waitfreeclinic.com, use https://app.waitfreeclinic.com (patient PWA subdomain)
 - Fall back to `http://localhost:3002` in local development
 
 Set an environment variable on your hosting platform for the dashboard:
 
-- `NEXT_PUBLIC_PATIENT_BASE_URL=https://your-patient-domain.example`
+- `NEXT_PUBLIC_PATIENT_BASE_URL=https://app.waitfreeclinic.com`
 
 This ensures the printed/copyable link under the QR never points to a localhost URL after deployment.
 
