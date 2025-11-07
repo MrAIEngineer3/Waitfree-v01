@@ -11,7 +11,8 @@ type Props = {
 
 /**
  * Renders a QR code that links patients to the PWA join page.
- * URL shape: `${BASE}/join?code=${shareCode}&clinicId=${clinicId}`
+ * URL shape: `${BASE}/join?clinicId=${shareCode}`
+ * The share code is passed as the clinicId parameter.
  * Optional doctorId can be supported later if we roll out per-doctor codes.
  */
 export default function ClinicJoinQR({ clinicId, clinicSlug, clinicShareCode, className }: Props) {
@@ -26,12 +27,10 @@ export default function ClinicJoinQR({ clinicId, clinicSlug, clinicShareCode, cl
       const { origin, hostname } = window.location;
       const isLocal = /localhost|127\.0\.0\.1/.test(hostname);
       if (!isLocal) {
-        // Best-effort inference: if dashboard is on a prod domain and no env is set,
-        // use the appropriate origin rather than localhost.
-        // Special-case: when the dashboard is served from app.waitfreeclinic.com,
-        // patients should land on waitfreeclinic.com (root domain).
-        if (/^app\.waitfreeclinic\.com$/i.test(hostname)) {
-          return 'https://waitfreeclinic.com';
+        // Special-case: when the dashboard is served from waitfreeclinic.com,
+        // patients should land on app.waitfreeclinic.com (patient PWA subdomain).
+        if (/^(?:www\.)?waitfreeclinic\.com$/i.test(hostname)) {
+          return 'https://app.waitfreeclinic.com';
         }
         // Otherwise use current origin.
         console.warn('[ClinicJoinQR] NEXT_PUBLIC_PATIENT_BASE_URL is not set. Inferring base from current origin:', origin);
@@ -58,14 +57,11 @@ export default function ClinicJoinQR({ clinicId, clinicSlug, clinicShareCode, cl
   }, [shareCodeParam]);
 
   const url = useMemo(() => {
-    const identifier = clinicSlug ?? clinicId;
-    const resolved = identifier ?? clinicId;
+    // Use share code as the primary identifier if available, otherwise fall back to clinicId
+    const identifier = shareCodeParam ?? clinicSlug ?? clinicId;
     const u = new URL(base + '/join');
-    if (shareCodeParam) {
-      u.searchParams.set('code', shareCodeParam);
-    }
-    if (resolved) {
-      u.searchParams.set('clinicId', resolved);
+    if (identifier) {
+      u.searchParams.set('clinicId', identifier);
     }
     // Phase 1: do not include doctorId
     return u.toString();

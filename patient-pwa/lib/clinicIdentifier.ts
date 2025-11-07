@@ -122,12 +122,11 @@ export const buildJoinHref = (identifier: ClinicIdentifier, basePath = '/join'):
   const shareCode = normalizeClinicShareCode(identifier.shareCode ?? null);
   const clinicId = sanitizeClinicSlug(identifier.clinicId ?? null);
 
-  if (shareCode) {
-    params.set('code', shareCode);
-  }
+  // Use share code as the primary identifier if available, otherwise fall back to clinicId
+  const effectiveId = shareCode ?? clinicId;
 
-  if (clinicId) {
-    params.set('clinicId', clinicId);
+  if (effectiveId) {
+    params.set('clinicId', effectiveId);
   }
 
   const query = params.toString();
