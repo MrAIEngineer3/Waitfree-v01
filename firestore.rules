@@ -5,18 +5,46 @@ service cloud.firestore {
 
     function userData() {
       return request.auth != null
+        && exists(/databases/$(database)/documents/users/$(request.auth.uid))
         ? get(/databases/$(database)/documents/users/$(request.auth.uid)).data
         : null;
     }
 
+    function mapOrListHas(container, key) {
+      return (container is map && key in container) || (container is list && key in container);
+    }
+
+    function userHasRole(user, role) {
+      return user != null && ('roles' in user) && (
+        (user.roles is map && role in user.roles) ||
+        (user.roles is list && role in user.roles)
+      );
+    }
+
     function hasClinicAccess(clinicId) {
       let user = userData();
-      return user != null && user.clinicId == clinicId;
+      return user != null && (
+        (('clinicId' in user) && user.clinicId == clinicId) ||
+        (('clinicIds' in user) && mapOrListHas(user.clinicIds, clinicId)) ||
+        (('additionalClinicIds' in user) && mapOrListHas(user.additionalClinicIds, clinicId)) ||
+        (('staffClinicIds' in user) && mapOrListHas(user.staffClinicIds, clinicId)) ||
+        (('managedClinics' in user) && mapOrListHas(user.managedClinics, clinicId)) ||
+        (('doctorAssignments' in user) && mapOrListHas(user.doctorAssignments, clinicId)) ||
+        userHasRole(user, 'clinic-admin')
+      );
     }
 
     function hasDoctorAccess(clinicId, doctorId) {
       let user = userData();
-      return user != null && user.clinicId == clinicId && user.doctorId == doctorId;
+      return user != null && hasClinicAccess(clinicId) && (
+        (('doctorId' in user) && user.doctorId == doctorId) ||
+        (('doctorAssignments' in user) &&
+          (user.doctorAssignments is map) &&
+          (clinicId in user.doctorAssignments) &&
+          mapOrListHas(user.doctorAssignments[clinicId], doctorId)
+        ) ||
+        userHasRole(user, 'clinic-admin')
+      );
     }
 
     function isPatientSession() {
@@ -74,6 +102,21 @@ service cloud.firestore {
       allow create, update: if request.auth != null && request.auth.uid == userId;
       allow get: if request.auth != null && request.auth.uid == userId;
       allow list: if false;
+    }
+
+    match /analytics/{clinicId} {
+      allow get, list: if hasClinicAccess(clinicId);
+      allow create, update, delete: if false;
+
+      match /doctors/{doctorId} {
+        allow get, list: if hasDoctorAccess(clinicId, doctorId);
+        allow create, update, delete: if false;
+
+        match /daily/{summaryId} {
+          allow get, list: if hasDoctorAccess(clinicId, doctorId);
+          allow create, update, delete: if false;
+        }
+      }
     }
   }
 }

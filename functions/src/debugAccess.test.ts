@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { __test__ } from './index';
 import { admin } from './firebaseAdmin';
+import { __test__ } from './index';
 
 type UserDoc = Record<string, unknown>;
 
@@ -124,5 +124,21 @@ describe('staff access checks', () => {
         { clinicId: 'clinicA', doctorId: 'doctorB', action: 'update' }
       )
     ).rejects.toMatchObject({ code: 'permission-denied' });
+  });
+
+  it('allows staff with explicit doctor assignment', async () => {
+    process.env.ENABLE_DEBUG_ENDPOINTS = 'true';
+    mockFirestoreUser({
+      clinicId: 'clinicA',
+      doctorId: 'doctorX',
+      doctorAssignments: { clinicA: ['doctorB'] }
+    });
+
+    await expect(
+      ensureStaffAccess(
+        { auth: { uid: 'staff1', token: {} } } as any,
+        { clinicId: 'clinicA', doctorId: 'doctorB', action: 'update' }
+      )
+    ).resolves.toBeUndefined();
   });
 });

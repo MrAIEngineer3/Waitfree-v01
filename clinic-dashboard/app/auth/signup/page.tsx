@@ -5,11 +5,12 @@ import { addDoc, collection } from 'firebase/firestore';
 import { httpsCallable } from 'firebase/functions';
 import { useRouter } from 'next/navigation';
 import { useState } from 'react';
-import { Input } from '../../../components/ui/Input';
 import { Button } from '../../../components/ui/Button';
 import { Card } from '../../../components/ui/Card';
+import { Input } from '../../../components/ui/Input';
 import { Label } from '../../../components/ui/label';
 import { Separator } from '../../../components/ui/separator';
+import { assignDoctorsToCurrentUser } from '../../../lib/doctorAssignments';
 import { auth, db, functions } from '../../../lib/firebase';
 
 interface BootstrapResult { success: boolean; clinicId: string; doctorId: string; queueId: string; clinicShareCode?: string; }
@@ -49,8 +50,13 @@ export default function SignupPage() {
         const clinicId = data.clinicId;
         const colRef = collection(db, 'clinics', clinicId, 'doctors');
         const now = new Date().toISOString();
+        const newDoctorIds: string[] = [];
         for (const d of extra) {
-          await addDoc(colRef, { name: d.name.trim(), specialty: d.specialty.trim(), clinicId, createdAt: now });
+          const docRef = await addDoc(colRef, { name: d.name.trim(), specialty: d.specialty.trim(), clinicId, createdAt: now });
+          newDoctorIds.push(docRef.id);
+        }
+        if (newDoctorIds.length > 0) {
+          await assignDoctorsToCurrentUser(clinicId, newDoctorIds);
         }
       }
       router.replace('/dashboard');

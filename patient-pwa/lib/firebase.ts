@@ -1,7 +1,7 @@
 import { getAnalytics, isSupported, type Analytics } from 'firebase/analytics';
 import { initializeApp, type FirebaseOptions } from 'firebase/app';
 import { connectAuthEmulator, getAuth } from 'firebase/auth';
-import { connectFirestoreEmulator, getFirestore, type Firestore } from 'firebase/firestore';
+import { clearIndexedDbPersistence, connectFirestoreEmulator, enableIndexedDbPersistence, getFirestore, type Firestore } from 'firebase/firestore';
 import { connectFunctionsEmulator, getFunctions } from 'firebase/functions';
 
 // Your Firebase configuration
@@ -68,6 +68,7 @@ export const loadAnalytics = async (): Promise<Analytics | null> => {
   return instance;
 };
 
+
 type FirestoreInternals = Firestore & {
   _settings?: { host?: string };
   _app?: { options?: FirebaseOptions };
@@ -78,6 +79,7 @@ type FirestoreInternals = Firestore & {
 if (typeof window !== 'undefined') {
   const proj = firebaseConfig.projectId;
   const wantEmu = (process.env.NEXT_PUBLIC_USE_FIREBASE_EMULATOR === 'true' || process.env.NODE_ENV === 'development');
+  let persistenceBlockedReason: 'emulator-connected' | null = null;
   if (proj === 'demo-project') {
     console.warn('[patient-pwa][firebase] WARNING: Using placeholder projectId demo-project. Set NEXT_PUBLIC_FIREBASE_PROJECT_ID for consistent local dev.');
   }
@@ -96,6 +98,7 @@ if (typeof window !== 'undefined') {
       }
       const options = internal._app?.options ?? internal.app?.options;
       console.log('[patient-pwa][firebase] Emulator connected. projectId:', options?.projectId, 'host:', host);
+      persistenceBlockedReason = 'emulator-connected';
     } else {
       const internal = db as FirestoreInternals;
       const options = internal._app?.options ?? internal.app?.options;
@@ -103,6 +106,61 @@ if (typeof window !== 'undefined') {
     }
   } catch (err) {
     console.error('[patient-pwa][firebase] Fatal during emulator safety init:', err);
+  }
+
+  const persistencePref = process.env.NEXT_PUBLIC_ENABLE_PATIENT_PERSISTENCE;
+  const normalizedPref = typeof persistencePref === 'string' ? persistencePref.trim().toLowerCase() : undefined;
+  const persistenceOptIn = normalizedPref === 'true';
+  const persistenceOptOut = normalizedPref === 'false';
+  const defaultPersistenceEnabled = !wantEmu;
+  const wantsPersistence = persistenceOptIn || (!persistenceOptOut && defaultPersistenceEnabled);
+
+  if (wantEmu && persistenceOptIn && process.env.NODE_ENV === 'development') {
+    console.warn('[patient-pwa][firebase] Persistence explicitly enabled while using emulators. Proceed with caution; INTERNAL ASSERTION errors may resurface.');
+  }
+
+  if (!wantsPersistence) {
+    if (process.env.NODE_ENV === 'development') {
+      const reason = persistenceOptOut
+        ? 'env override'
+        : persistenceBlockedReason === 'emulator-connected'
+          ? 'disabled for emulator to avoid known Firestore INTERNAL ASSERTION failures'
+          : 'default configuration';
+      console.info('[patient-pwa][firebase] Firestore persistence not enabled:', reason);
+    }
+    void clearIndexedDbPersistence(db).catch((error: unknown) => {
+      if (process.env.NODE_ENV === 'development') {
+        console.info('[patient-pwa][firebase] Skipped clearing IndexedDB persistence:', error);
+      }
+    });
+  } else {
+    type PersistenceWindow = Window & {
+      __waitfreePatientPersistence?: Promise<void> | 'disabled';
+    };
+    const persistenceWindow = window as PersistenceWindow;
+    if (!persistenceWindow.__waitfreePatientPersistence) {
+      persistenceWindow.__waitfreePatientPersistence = enableIndexedDbPersistence(db)
+        .then(() => {
+          if (process.env.NODE_ENV === 'development') {
+            console.info('[patient-pwa][firebase] Firestore persistence enabled');
+          }
+        })
+        .catch((error: unknown) => {
+          const code = typeof error === 'object' && error && 'code' in error ? (error as { code?: string }).code : undefined;
+          if (code === 'failed-precondition') {
+            console.warn('[patient-pwa][firebase] Persistence skipped: multiple tabs detected');
+            persistenceWindow.__waitfreePatientPersistence = 'disabled';
+            return;
+          }
+          if (code === 'unimplemented') {
+            console.warn('[patient-pwa][firebase] Persistence unsupported in this browser');
+            persistenceWindow.__waitfreePatientPersistence = 'disabled';
+            return;
+          }
+          console.warn('[patient-pwa][firebase] Persistence setup failed:', error);
+          persistenceWindow.__waitfreePatientPersistence = 'disabled';
+        });
+    }
   }
 }
 

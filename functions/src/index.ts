@@ -39,10 +39,6 @@ import { isNotificationEnabled } from './settings/notificationPreferences';
 import { PatientValidationError, sanitizePatientInput } from './utils/patient';
 import { startTiming } from './utils/timing';
 
-// Export functions from other files to make them deployable
-export * from './notifier';
-export * from './scheduling';
-
 
 // Simplified CORS configuration:
 // - Production: prefer origins supplied via environment variable CORS_ALLOWED_ORIGINS
@@ -231,6 +227,7 @@ const schedulePhase1CompletionProcessing = (
     });
     const phaseStarted = process.hrtime.bigint();
     let serviceDurationMs: number | undefined;
+    let waitDurationMs: number | undefined;
     try {
       const patientSnap = options.preloadedPatientSnap ?? (await options.patientDocRef.get());
       const latest = patientSnap.data() as any;
@@ -243,6 +240,25 @@ const schedulePhase1CompletionProcessing = (
           }
         } catch (err) {
           functions.logger.warn('Failed to compute service duration', {
+            clinicId: options.clinicId,
+            doctorId: options.doctorId,
+            queueId: options.queueId,
+            patientId: options.patientId,
+            error: err instanceof Error ? err.message : String(err)
+          });
+        }
+      }
+
+      const joinedAtValue = latest?.joinedAt;
+      if (!waitDurationMs && svc.startedAt && typeof svc.startedAt.toMillis === 'function' && joinedAtValue && typeof joinedAtValue.toMillis === 'function') {
+        try {
+          const startedAtMs = svc.startedAt.toMillis();
+          const joinedAtMs = joinedAtValue.toMillis();
+          if (startedAtMs > joinedAtMs) {
+            waitDurationMs = startedAtMs - joinedAtMs;
+          }
+        } catch (err) {
+          functions.logger.warn('Failed to compute wait duration', {
             clinicId: options.clinicId,
             doctorId: options.doctorId,
             queueId: options.queueId,
@@ -270,35 +286,75 @@ const schedulePhase1CompletionProcessing = (
         }
       }
 
-      if (serviceDurationMs && serviceDurationMs > 0) {
+      const shouldUpdateMetrics = (serviceDurationMs && serviceDurationMs > 0) || (waitDurationMs && waitDurationMs > 0);
+      if (shouldUpdateMetrics) {
         const emaSpan = startTiming('updatePatientStatus.phase1Completion.updateQueueAvg', {
           clinicId: options.clinicId,
           doctorId: options.doctorId,
           queueId: options.queueId,
           patientId: options.patientId,
-          serviceDurationMs
+          serviceDurationMs: serviceDurationMs ?? null,
+          waitDurationMs: waitDurationMs ?? null
         });
         try {
           await db.runTransaction(async (tx) => {
             const qDoc = await tx.get(options.queueDocRef);
-            if (qDoc.exists) {
-              const qd: any = qDoc.data() || {};
-              const oldAvg = qd?.metrics?.avgServiceMs;
-              const alpha = 0.2;
-              const newAvg = oldAvg ? Math.round(oldAvg * (1 - alpha) + serviceDurationMs! * alpha) : serviceDurationMs!;
-              const metrics = { ...(qd.metrics || {}), avgServiceMs: newAvg, updatedAt: FieldValue.serverTimestamp() };
-              tx.set(options.queueDocRef, { metrics }, { merge: true });
-              functions.logger.debug('Phase1 updated queue avgServiceMs (background)', {
-                queueId: options.queueId,
-                newAvg,
-                serviceDurationMs
-              });
+            if (!qDoc.exists) {
+              return;
             }
+            const qd: any = qDoc.data() || {};
+            const metricsBefore: Record<string, any> = { ...(qd.metrics || {}) };
+            const alpha = 0.2;
+
+            const updates: Record<string, unknown> = {};
+
+            if (serviceDurationMs && serviceDurationMs > 0) {
+              const previousTotalService = typeof metricsBefore.totalServiceMs === 'number' ? metricsBefore.totalServiceMs : 0;
+              const previousServiceSamples = typeof metricsBefore.serviceSamples === 'number' ? metricsBefore.serviceSamples : 0;
+              const updatedServiceTotal = previousTotalService + serviceDurationMs;
+              const updatedServiceSamples = previousServiceSamples + 1;
+              const existingEma = typeof metricsBefore.avgServiceMs === 'number' ? metricsBefore.avgServiceMs : null;
+              const newEma = existingEma ? Math.round(existingEma * (1 - alpha) + serviceDurationMs * alpha) : serviceDurationMs;
+              updates.totalServiceMs = updatedServiceTotal;
+              updates.serviceSamples = updatedServiceSamples;
+              updates.avgServiceMs = newEma;
+            }
+
+            if (waitDurationMs && waitDurationMs > 0) {
+              const previousTotalWait = typeof metricsBefore.totalWaitMs === 'number' ? metricsBefore.totalWaitMs : 0;
+              const previousWaitSamples = typeof metricsBefore.waitSamples === 'number' ? metricsBefore.waitSamples : 0;
+              const updatedWaitTotal = previousTotalWait + waitDurationMs;
+              const updatedWaitSamples = previousWaitSamples + 1;
+              const existingWaitAvg = typeof metricsBefore.avgWaitMs === 'number' ? metricsBefore.avgWaitMs : null;
+              const newWaitAvg = existingWaitAvg ? Math.round(existingWaitAvg * (1 - alpha) + waitDurationMs * alpha) : waitDurationMs;
+              updates.totalWaitMs = updatedWaitTotal;
+              updates.waitSamples = updatedWaitSamples;
+              updates.avgWaitMs = newWaitAvg;
+            }
+
+            if (Object.keys(updates).length === 0) {
+              return;
+            }
+
+            updates.updatedAt = FieldValue.serverTimestamp();
+            const metricsPayload: Record<string, unknown> = {
+              ...(qd.metrics || {}),
+            };
+            for (const [key, value] of Object.entries(updates)) {
+              metricsPayload[key] = value;
+            }
+            tx.set(options.queueDocRef, { metrics: metricsPayload }, { merge: true });
+            functions.logger.debug('Phase1 updated queue metrics (background)', {
+              queueId: options.queueId,
+              serviceDurationMs: serviceDurationMs ?? null,
+              waitDurationMs: waitDurationMs ?? null,
+              updates
+            });
           });
           emaSpan.succeed({ updated: true });
         } catch (err) {
           emaSpan.fail({ error: err instanceof Error ? err.message : String(err) });
-          functions.logger.warn('Phase1 failed to update queue average service time', {
+          functions.logger.warn('Phase1 failed to update queue metrics', {
             clinicId: options.clinicId,
             doctorId: options.doctorId,
             queueId: options.queueId,
@@ -501,6 +557,12 @@ if (typeof warmPoolMinInstances === 'number') {
   v2GlobalOptions.minInstances = warmPoolMinInstances;
 }
 setGlobalOptions(v2GlobalOptions);
+
+// Export functions from other files to make them deployable
+export * from './analytics/dailySummary';
+export * from './analytics/retention';
+export * from './notifier';
+export * from './scheduling';
 
 type CallableCtx = functions.https.CallableContext;
 const adaptCallableContext = <T>(request: CallableRequest<T>): CallableCtx => {
@@ -1152,7 +1214,19 @@ type UserAccess = {
   roles: string[];
 };
 
-const userAccessCache = new Map<string, Promise<UserAccess>>();
+type UserAccessCacheEntry = {
+  promise: Promise<UserAccess>;
+  resolvedValue?: UserAccess;
+  timestamp: number;
+};
+
+const USER_ACCESS_CACHE_TTL_MS = 0;
+
+const userAccessCache = new Map<string, UserAccessCacheEntry>();
+
+const isCacheEntryFresh = (entry: UserAccessCacheEntry, now: number): boolean => {
+  return now - entry.timestamp < USER_ACCESS_CACHE_TTL_MS;
+};
 
 const toTrimmedString = (value: unknown): string | null => {
   if (typeof value !== 'string') {
@@ -1202,10 +1276,23 @@ const mergeUniqueIds = (...lists: string[][]): string[] => {
 };
 
 const loadUserAccess = async (uid: string): Promise<UserAccess> => {
+  const now = Date.now();
   const cached = userAccessCache.get(uid);
   if (cached) {
-    return cached;
+    if (cached.resolvedValue && isCacheEntryFresh(cached, now)) {
+      return cached.resolvedValue;
+    }
+    if (!cached.resolvedValue) {
+      return cached.promise;
+    }
+
+    userAccessCache.delete(uid);
   }
+
+  const cacheEntry: UserAccessCacheEntry = {
+    promise: Promise.resolve(null as unknown as UserAccess),
+    timestamp: now
+  };
 
   const promise = (async (): Promise<UserAccess> => {
     try {
@@ -1234,20 +1321,29 @@ const loadUserAccess = async (uid: string): Promise<UserAccess> => {
 
       const roles = mergeUniqueIds(toStringArray((data as Record<string, unknown>)['roles']));
 
-      return {
+      const access: UserAccess = {
         primaryClinicId,
         primaryDoctorId,
         additionalClinicIds,
         doctorAssignments,
         roles
       };
+
+      cacheEntry.resolvedValue = access;
+      cacheEntry.timestamp = Date.now();
+
+      return access;
     } catch (error) {
-      userAccessCache.delete(uid);
+      if (userAccessCache.get(uid) === cacheEntry) {
+        userAccessCache.delete(uid);
+      }
       throw error;
     }
   })();
 
-  userAccessCache.set(uid, promise);
+  cacheEntry.promise = promise;
+  userAccessCache.set(uid, cacheEntry);
+
   return promise;
 };
 
@@ -1820,14 +1916,27 @@ const joinQueueHandler = async (data: JoinQueueRequest, _context: CallableCtx): 
           currentToken: 0,
           totalPatients: 1,
           completedPatients: 0,
-          createdAt: FieldValue.serverTimestamp()
+          cancelledPatients: 0,
+          waitingPatients: 1,
+          inProgressPatients: 0,
+          createdAt: FieldValue.serverTimestamp(),
+          metrics: {
+            totalServiceMs: 0,
+            serviceSamples: 0,
+            totalWaitMs: 0,
+            waitSamples: 0,
+            avgServiceMs: null,
+            avgWaitMs: null,
+            updatedAt: FieldValue.serverTimestamp()
+          }
         };
         transaction.set(queueRef, newQueueData);
       } else {
         const queueData = queueDoc.data();
         newTokenNumber = (queueData?.totalPatients || 0) + 1;
         transaction.update(queueRef, {
-          totalPatients: newTokenNumber
+          totalPatients: newTokenNumber,
+          waitingPatients: FieldValue.increment(1)
         });
       }
 
@@ -2670,69 +2779,59 @@ const updatePatientStatusHandler = async (data: UpdatePatientStatusRequest, cont
             throw readErr;
           });
 
-        // 2. If completing OR moving to in-progress we need queue doc (start read before awaiting patient)
-        let queueDocPromise: Promise<admin.firestore.DocumentSnapshot<admin.firestore.DocumentData>> | null = null;
-        let readQueueSpan: ReturnType<typeof startTiming> | null = null;
-        if (newStatus === 'completed' || newStatus === 'in-progress') {
-          readQueueSpan = startTiming('updatePatientStatus.transaction.readQueue', {
-            clinicId,
-            doctorId,
-            queueId,
-            newStatus
-          });
-          queueDocPromise = transaction.get(queueRef)
-            .then((docSnap) => {
-              readQueueSpan?.succeed({ found: docSnap.exists });
-              return docSnap;
-            })
-            .catch((queueErr) => {
-              readQueueSpan?.fail({ error: queueErr instanceof Error ? queueErr.message : String(queueErr) });
-              throw queueErr;
-            });
-        }
-
         const patientDoc = await patientDocPromise;
         if (!patientDoc.exists) {
           throw new functions.https.HttpsError('not-found', 'Patient document not found.');
         }
         const patientData = patientDoc.data();
-
-        let queueDoc: admin.firestore.DocumentSnapshot<admin.firestore.DocumentData> | null = null;
-        if (queueDocPromise) {
-          queueDoc = await queueDocPromise;
-          if (!queueDoc.exists) {
-            throw new functions.https.HttpsError('not-found', 'Queue document not found.');
+        const previousStatusRaw = (patientData as any)?.status as PatientStatus | undefined;
+        const statusCounterFields: Record<PatientStatus, string> = {
+          waiting: 'waitingPatients',
+          'in-progress': 'inProgressPatients',
+          completed: 'completedPatients',
+          cancelled: 'cancelledPatients'
+        };
+        const statusChanged = previousStatusRaw !== newStatus;
+        const queueCounterDeltas: Record<string, number> = {};
+        const recordCounterDelta = (status: PatientStatus | undefined, delta: number) => {
+          if (!status) {
+            return;
           }
-        }
+          const fieldKey = statusCounterFields[status];
+          if (!fieldKey) {
+            return;
+          }
+          queueCounterDeltas[fieldKey] = (queueCounterDeltas[fieldKey] ?? 0) + delta;
+        };
 
-      // 3. If setting in-progress enforce single in-progress patient (read collection now)
-      if (newStatus === 'in-progress') {
-        const guardSpan = startTiming('updatePatientStatus.transaction.inProgressGuard', {
-          clinicId,
-          doctorId,
-          queueId,
-          patientId
-        });
-        try {
-          const patientsCollRef = queueRef.collection('patients');
-          const inProgressQuery = await patientsCollRef.where('status', '==', 'in-progress').limit(1).get();
-          if (!inProgressQuery.empty) {
-            const existing = inProgressQuery.docs[0];
-            if (existing.id !== patientId) {
-              guardSpan.fail({ conflictingPatientId: existing.id });
-              throw new functions.https.HttpsError('failed-precondition', 'Another patient is already in progress.');
+        // 3. If setting in-progress enforce single in-progress patient (read collection now)
+        if (newStatus === 'in-progress') {
+          const guardSpan = startTiming('updatePatientStatus.transaction.inProgressGuard', {
+            clinicId,
+            doctorId,
+            queueId,
+            patientId
+          });
+          try {
+            const patientsCollRef = queueRef.collection('patients');
+            const inProgressQuery = await patientsCollRef.where('status', '==', 'in-progress').limit(1).get();
+            if (!inProgressQuery.empty) {
+              const existing = inProgressQuery.docs[0];
+              if (existing.id !== patientId) {
+                guardSpan.fail({ conflictingPatientId: existing.id });
+                throw new functions.https.HttpsError('failed-precondition', 'Another patient is already in progress.');
+              }
+              guardSpan.succeed({ conflictsFound: 1 });
+            } else {
+              guardSpan.succeed({ conflictsFound: 0 });
             }
-            guardSpan.succeed({ conflictsFound: 1 });
-          } else {
-            guardSpan.succeed({ conflictsFound: 0 });
+          } catch (guardErr) {
+            if (!(guardErr instanceof functions.https.HttpsError && guardErr.code === 'failed-precondition')) {
+              guardSpan.fail({ error: guardErr instanceof Error ? guardErr.message : String(guardErr) });
+            }
+            throw guardErr;
           }
-        } catch (guardErr) {
-          if (!(guardErr instanceof functions.https.HttpsError && guardErr.code === 'failed-precondition')) {
-            guardSpan.fail({ error: guardErr instanceof Error ? guardErr.message : String(guardErr) });
-          }
-          throw guardErr;
         }
-      }
 
       // 4. Perform writes after all necessary reads gathered
       // Prepare base update
@@ -2790,25 +2889,29 @@ const updatePatientStatusHandler = async (data: UpdatePatientStatusRequest, cont
           }
         };
       }
+
+      if (statusChanged) {
+        recordCounterDelta(previousStatusRaw, -1);
+        recordCounterDelta(newStatus as PatientStatus, 1);
+      }
       transaction.update(patientRef, baseUpdate);
 
-      if (queueDoc) {
-        const patientTokenNumber = (patientData as any)?.tokenNumber || 0;
-        if (newStatus === 'completed') {
-          const queueData = queueDoc.data();
-            const currentCompletedPatients = queueData?.completedPatients || 0;
-            transaction.update(queueRef, {
-              completedPatients: currentCompletedPatients + 1,
-              currentToken: patientTokenNumber, // last completed patient token
-              updatedAt: FieldValue.serverTimestamp()
-            });
-        } else if (newStatus === 'in-progress') {
-          // Update currentToken immediately when we start serving a patient to avoid UI lag on patient view
-          transaction.update(queueRef, {
-            currentToken: patientTokenNumber,
-            updatedAt: FieldValue.serverTimestamp()
-          });
+      const queueUpdatePayload: Record<string, unknown> = {};
+      for (const [field, delta] of Object.entries(queueCounterDeltas)) {
+        if (!delta) {
+          continue;
         }
+        queueUpdatePayload[field] = FieldValue.increment(delta);
+      }
+
+      const patientTokenNumber = (patientData as any)?.tokenNumber || 0;
+      if (newStatus === 'completed' || newStatus === 'in-progress') {
+        queueUpdatePayload.currentToken = patientTokenNumber;
+      }
+
+      if (Object.keys(queueUpdatePayload).length > 0) {
+        queueUpdatePayload.updatedAt = FieldValue.serverTimestamp();
+        transaction.update(queueRef, queueUpdatePayload);
       }
       });
       txnSpan.succeed({});

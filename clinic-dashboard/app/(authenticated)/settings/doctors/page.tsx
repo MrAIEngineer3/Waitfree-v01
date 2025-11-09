@@ -9,6 +9,7 @@ import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Separator } from '@/components/ui/separator';
 import { Switch } from '@/components/ui/switch';
+import { assignDoctorsToCurrentUser } from '@/lib/doctorAssignments';
 import { db } from '@/lib/firebase';
 import { setDoctorRealTimeStatus, updateDoctorDefaultRota } from '@/lib/scheduling';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
@@ -521,8 +522,9 @@ export default function DoctorsSettingsPage() {
           email: form.email.trim() || null,
           phone: form.phone.trim() || null,
         });
+        await assignDoctorsToCurrentUser(clinicId, [editing.id]);
       } else {
-        await addDoc(doctorsCol, {
+        const docRef = await addDoc(doctorsCol, {
           name: form.name.trim(),
           specialty: form.specialty.trim(),
           email: form.email.trim() || null,
@@ -530,6 +532,7 @@ export default function DoctorsSettingsPage() {
           clinicId,
           createdAt: now,
         });
+        await assignDoctorsToCurrentUser(clinicId, [docRef.id]);
       }
       setEditing(null);
       setAdding(false);

@@ -3,15 +3,15 @@
 export const dynamic = "force-dynamic";
 
 import {
-    AlertDialog,
-    AlertDialogAction,
-    AlertDialogCancel,
-    AlertDialogContent,
-    AlertDialogDescription,
-    AlertDialogFooter,
-    AlertDialogHeader,
-    AlertDialogTitle,
-    AlertDialogTrigger
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogTrigger
 } from '@/components/ui/alert-dialog';
 import { Button } from '@/components/ui/button';
 import { useRejoinQueue } from '@/lib/hooks/use-join-queue';
@@ -26,12 +26,12 @@ import { derivePatientStatusFromQueue } from './patientStatusDerivation';
 import { buildRejoinRedirectUrl } from './rejoinUtils';
 import { buildSessionDeps, establishPatientSession, type EstablishSessionDeps } from './session';
 import {
-    buildDoctorFromSnapshot,
-    buildQueueFromSnapshot,
-    usePatientQueueRealtimeBridge,
-    type Doctor,
-    type Patient,
-    type Queue
+  buildDoctorFromSnapshot,
+  buildQueueFromSnapshot,
+  usePatientQueueRealtimeBridge,
+  type Doctor,
+  type Patient,
+  type Queue
 } from './usePatientQueueRealtimeBridge';
 
 interface PatientCancelTokenPayload {
@@ -172,6 +172,55 @@ export default function QueueStatus() {
     () => ['doctor', clinicId ?? '', doctorId ?? ''] as const,
     [clinicId, doctorId]
   );
+
+  useEffect(() => {
+    if (typeof document === 'undefined' || !hasRequiredParams) {
+      return;
+    }
+
+    let lastHiddenAt: number | null = null;
+
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'hidden') {
+        lastHiddenAt = Date.now();
+        return;
+      }
+
+      if (document.visibilityState !== 'visible') {
+        return;
+      }
+
+      const hiddenDuration = lastHiddenAt ? Date.now() - lastHiddenAt : 0;
+      lastHiddenAt = null;
+
+      if (!sessionReady || requiresRelogin || !accessToken) {
+        return;
+      }
+
+      if (hiddenDuration > 60_000) {
+        void refreshSession({ silent: true });
+      }
+
+      queryClient.invalidateQueries({ queryKey: patientQueryKey, exact: true });
+      queryClient.invalidateQueries({ queryKey: queueQueryKey, exact: true });
+      queryClient.invalidateQueries({ queryKey: doctorQueryKey, exact: true });
+    };
+
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    return () => {
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+    };
+  }, [
+    accessToken,
+    doctorQueryKey,
+    hasRequiredParams,
+    patientQueryKey,
+    queueQueryKey,
+    queryClient,
+    refreshSession,
+    requiresRelogin,
+    sessionReady,
+  ]);
 
   const initialPatientRef = useRef<Patient | undefined>(undefined);
   const initialQueueRef = useRef<Queue | undefined>(undefined);
@@ -336,6 +385,7 @@ export default function QueueStatus() {
     : null;
 
   const error = sessionError ?? realtimeError ?? queryErrorMessage;
+  const showErrorBanner = Boolean(error && !requiresRelogin);
 
   const patientPending = patientViewQuery.isPending && patientViewQuery.fetchStatus !== 'idle';
   const queuePending = queueQuery.isPending && queueQuery.fetchStatus !== 'idle';
@@ -598,6 +648,12 @@ export default function QueueStatus() {
               >
                 {sessionRetryPending ? 'Reconnecting…' : 'Reconnect to Queue'}
               </Button>
+            </div>
+          ) : null}
+
+          {showErrorBanner ? (
+            <div className="rounded-xl border border-blue-200 bg-blue-50/80 px-4 py-3 text-xs text-blue-900">
+              {error}
             </div>
           ) : null}
 

@@ -1,7 +1,7 @@
 import { getAnalytics, isSupported, type Analytics } from 'firebase/analytics';
 import { initializeApp } from 'firebase/app';
 import { connectAuthEmulator, getAuth } from 'firebase/auth';
-import { connectFirestoreEmulator, enableIndexedDbPersistence, getFirestore } from 'firebase/firestore';
+import { clearIndexedDbPersistence, connectFirestoreEmulator, enableIndexedDbPersistence, getFirestore } from 'firebase/firestore';
 import { connectFunctionsEmulator, getFunctions } from 'firebase/functions';
 import { connectStorageEmulator, getStorage } from 'firebase/storage';
 
@@ -83,7 +83,6 @@ export const loadAnalytics = async (): Promise<Analytics | null> => {
   analyticsInstance = instance;
   return instance;
 };
-
 const getClientState = (): FirebaseClientState | null => {
   if (typeof window === 'undefined') {
     return null;
@@ -99,6 +98,7 @@ if (typeof window !== 'undefined') {
   const clientState = getClientState();
   const wantEmu = (process.env.NEXT_PUBLIC_USE_FIREBASE_EMULATOR === 'true' || process.env.NODE_ENV === 'development');
   const proj = firebaseConfig.projectId;
+  let persistenceBlockedReason: 'emulator-connected' | null = null;
   if (proj === 'demo-project') {
     console.warn('[clinic-dashboard][firebase] WARNING: Using placeholder projectId demo-project. Set NEXT_PUBLIC_FIREBASE_PROJECT_ID.');
   }
@@ -120,6 +120,7 @@ if (typeof window !== 'undefined') {
           }
           console.log('[clinic-dashboard][firebase] Emulator connected. projectId:', proj, 'host:', host);
           clientState.emulatorsConnected = true;
+          persistenceBlockedReason = 'emulator-connected';
         } catch (error) {
           console.error('[clinic-dashboard][firebase] Emulator connection safety failure:', error);
         } finally {
@@ -130,11 +131,48 @@ if (typeof window !== 'undefined') {
   } else {
     console.log('[clinic-dashboard][firebase] Running without emulators. projectId:', proj);
   }
+
+  const persistencePref = process.env.NEXT_PUBLIC_ENABLE_CLINIC_PERSISTENCE ?? process.env.NEXT_PUBLIC_ENABLE_FIREBASE_PERSISTENCE;
+  const normalizedPersistencePref = typeof persistencePref === 'string' ? persistencePref.trim().toLowerCase() : undefined;
+  const persistenceOptIn = normalizedPersistencePref === 'true';
+  const persistenceOptOut = normalizedPersistencePref === 'false';
+  const defaultPersistenceEnabled = !wantEmu;
+  const wantsPersistence = persistenceOptIn || (!persistenceOptOut && defaultPersistenceEnabled);
+
+  if (wantEmu && persistenceOptIn && process.env.NODE_ENV === 'development') {
+    console.warn('[clinic-dashboard][firebase] Persistence explicitly enabled while using emulators. INTERNAL ASSERTION errors may occur.');
+  }
+
   if (clientState && !clientState.persistencePromise) {
     clientState.persistencePromise = (async () => {
       await (wantEmu ? clientState.emulatorPromise?.catch(() => undefined) : undefined);
+      if (!wantsPersistence) {
+        if (process.env.NODE_ENV === 'development') {
+          const reason = persistenceOptOut
+            ? 'env override'
+            : persistenceBlockedReason === 'emulator-connected'
+              ? 'disabled for emulator to avoid known Firestore INTERNAL ASSERTION failures'
+              : 'default configuration';
+          console.info('[clinic-dashboard][firebase] Skipping Firestore persistence:', reason);
+        }
+        try {
+          await clearIndexedDbPersistence(db);
+          if (process.env.NODE_ENV === 'development') {
+            console.info('[clinic-dashboard][firebase] Cleared IndexedDB persistence cache');
+          }
+        } catch (error) {
+          if (process.env.NODE_ENV === 'development') {
+            console.info('[clinic-dashboard][firebase] Skipped clearing IndexedDB persistence:', error);
+          }
+        }
+        return;
+      }
+
       try {
         await enableIndexedDbPersistence(db);
+        if (process.env.NODE_ENV === 'development') {
+          console.info('[clinic-dashboard][firebase] Firestore persistence enabled');
+        }
       } catch (error) {
         if (process.env.NODE_ENV === 'development') {
           console.warn('[clinic-dashboard][firebase] IndexedDB persistence disabled:', error);

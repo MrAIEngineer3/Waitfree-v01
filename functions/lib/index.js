@@ -60,9 +60,6 @@ const settings_1 = require("./scheduling/settings");
 const notificationPreferences_1 = require("./settings/notificationPreferences");
 const patient_1 = require("./utils/patient");
 const timing_1 = require("./utils/timing");
-// Export functions from other files to make them deployable
-__exportStar(require("./notifier"), exports);
-__exportStar(require("./scheduling"), exports);
 // Simplified CORS configuration:
 // - Production: prefer origins supplied via environment variable CORS_ALLOWED_ORIGINS
 // - Local dev fallback: allow localhost on the patient PWA dev port
@@ -219,6 +216,7 @@ const schedulePhase1CompletionProcessing = (db, options) => {
         });
         const phaseStarted = process.hrtime.bigint();
         let serviceDurationMs;
+        let waitDurationMs;
         try {
             const patientSnap = options.preloadedPatientSnap ?? (await options.patientDocRef.get());
             const latest = patientSnap.data();
@@ -231,6 +229,25 @@ const schedulePhase1CompletionProcessing = (db, options) => {
                 }
                 catch (err) {
                     functions.logger.warn('Failed to compute service duration', {
+                        clinicId: options.clinicId,
+                        doctorId: options.doctorId,
+                        queueId: options.queueId,
+                        patientId: options.patientId,
+                        error: err instanceof Error ? err.message : String(err)
+                    });
+                }
+            }
+            const joinedAtValue = latest?.joinedAt;
+            if (!waitDurationMs && svc.startedAt && typeof svc.startedAt.toMillis === 'function' && joinedAtValue && typeof joinedAtValue.toMillis === 'function') {
+                try {
+                    const startedAtMs = svc.startedAt.toMillis();
+                    const joinedAtMs = joinedAtValue.toMillis();
+                    if (startedAtMs > joinedAtMs) {
+                        waitDurationMs = startedAtMs - joinedAtMs;
+                    }
+                }
+                catch (err) {
+                    functions.logger.warn('Failed to compute wait duration', {
                         clinicId: options.clinicId,
                         doctorId: options.doctorId,
                         queueId: options.queueId,
@@ -257,36 +274,71 @@ const schedulePhase1CompletionProcessing = (db, options) => {
                     });
                 }
             }
-            if (serviceDurationMs && serviceDurationMs > 0) {
+            const shouldUpdateMetrics = (serviceDurationMs && serviceDurationMs > 0) || (waitDurationMs && waitDurationMs > 0);
+            if (shouldUpdateMetrics) {
                 const emaSpan = (0, timing_1.startTiming)('updatePatientStatus.phase1Completion.updateQueueAvg', {
                     clinicId: options.clinicId,
                     doctorId: options.doctorId,
                     queueId: options.queueId,
                     patientId: options.patientId,
-                    serviceDurationMs
+                    serviceDurationMs: serviceDurationMs ?? null,
+                    waitDurationMs: waitDurationMs ?? null
                 });
                 try {
                     await db.runTransaction(async (tx) => {
                         const qDoc = await tx.get(options.queueDocRef);
-                        if (qDoc.exists) {
-                            const qd = qDoc.data() || {};
-                            const oldAvg = qd?.metrics?.avgServiceMs;
-                            const alpha = 0.2;
-                            const newAvg = oldAvg ? Math.round(oldAvg * (1 - alpha) + serviceDurationMs * alpha) : serviceDurationMs;
-                            const metrics = { ...(qd.metrics || {}), avgServiceMs: newAvg, updatedAt: firestore_1.FieldValue.serverTimestamp() };
-                            tx.set(options.queueDocRef, { metrics }, { merge: true });
-                            functions.logger.debug('Phase1 updated queue avgServiceMs (background)', {
-                                queueId: options.queueId,
-                                newAvg,
-                                serviceDurationMs
-                            });
+                        if (!qDoc.exists) {
+                            return;
                         }
+                        const qd = qDoc.data() || {};
+                        const metricsBefore = { ...(qd.metrics || {}) };
+                        const alpha = 0.2;
+                        const updates = {};
+                        if (serviceDurationMs && serviceDurationMs > 0) {
+                            const previousTotalService = typeof metricsBefore.totalServiceMs === 'number' ? metricsBefore.totalServiceMs : 0;
+                            const previousServiceSamples = typeof metricsBefore.serviceSamples === 'number' ? metricsBefore.serviceSamples : 0;
+                            const updatedServiceTotal = previousTotalService + serviceDurationMs;
+                            const updatedServiceSamples = previousServiceSamples + 1;
+                            const existingEma = typeof metricsBefore.avgServiceMs === 'number' ? metricsBefore.avgServiceMs : null;
+                            const newEma = existingEma ? Math.round(existingEma * (1 - alpha) + serviceDurationMs * alpha) : serviceDurationMs;
+                            updates.totalServiceMs = updatedServiceTotal;
+                            updates.serviceSamples = updatedServiceSamples;
+                            updates.avgServiceMs = newEma;
+                        }
+                        if (waitDurationMs && waitDurationMs > 0) {
+                            const previousTotalWait = typeof metricsBefore.totalWaitMs === 'number' ? metricsBefore.totalWaitMs : 0;
+                            const previousWaitSamples = typeof metricsBefore.waitSamples === 'number' ? metricsBefore.waitSamples : 0;
+                            const updatedWaitTotal = previousTotalWait + waitDurationMs;
+                            const updatedWaitSamples = previousWaitSamples + 1;
+                            const existingWaitAvg = typeof metricsBefore.avgWaitMs === 'number' ? metricsBefore.avgWaitMs : null;
+                            const newWaitAvg = existingWaitAvg ? Math.round(existingWaitAvg * (1 - alpha) + waitDurationMs * alpha) : waitDurationMs;
+                            updates.totalWaitMs = updatedWaitTotal;
+                            updates.waitSamples = updatedWaitSamples;
+                            updates.avgWaitMs = newWaitAvg;
+                        }
+                        if (Object.keys(updates).length === 0) {
+                            return;
+                        }
+                        updates.updatedAt = firestore_1.FieldValue.serverTimestamp();
+                        const metricsPayload = {
+                            ...(qd.metrics || {}),
+                        };
+                        for (const [key, value] of Object.entries(updates)) {
+                            metricsPayload[key] = value;
+                        }
+                        tx.set(options.queueDocRef, { metrics: metricsPayload }, { merge: true });
+                        functions.logger.debug('Phase1 updated queue metrics (background)', {
+                            queueId: options.queueId,
+                            serviceDurationMs: serviceDurationMs ?? null,
+                            waitDurationMs: waitDurationMs ?? null,
+                            updates
+                        });
                     });
                     emaSpan.succeed({ updated: true });
                 }
                 catch (err) {
                     emaSpan.fail({ error: err instanceof Error ? err.message : String(err) });
-                    functions.logger.warn('Phase1 failed to update queue average service time', {
+                    functions.logger.warn('Phase1 failed to update queue metrics', {
                         clinicId: options.clinicId,
                         doctorId: options.doctorId,
                         queueId: options.queueId,
@@ -463,6 +515,11 @@ if (typeof warmPoolMinInstances === 'number') {
     v2GlobalOptions.minInstances = warmPoolMinInstances;
 }
 (0, v2_1.setGlobalOptions)(v2GlobalOptions);
+// Export functions from other files to make them deployable
+__exportStar(require("./analytics/dailySummary"), exports);
+__exportStar(require("./analytics/retention"), exports);
+__exportStar(require("./notifier"), exports);
+__exportStar(require("./scheduling"), exports);
 const adaptCallableContext = (request) => {
     let auth = request.auth;
     if (!auth) {
@@ -989,7 +1046,11 @@ const serializeAvailability = (result) => {
         debug: result.debug ?? null
     };
 };
+const USER_ACCESS_CACHE_TTL_MS = 0;
 const userAccessCache = new Map();
+const isCacheEntryFresh = (entry, now) => {
+    return now - entry.timestamp < USER_ACCESS_CACHE_TTL_MS;
+};
 const toTrimmedString = (value) => {
     if (typeof value !== 'string') {
         return null;
@@ -1034,10 +1095,21 @@ const mergeUniqueIds = (...lists) => {
     return Array.from(set);
 };
 const loadUserAccess = async (uid) => {
+    const now = Date.now();
     const cached = userAccessCache.get(uid);
     if (cached) {
-        return cached;
+        if (cached.resolvedValue && isCacheEntryFresh(cached, now)) {
+            return cached.resolvedValue;
+        }
+        if (!cached.resolvedValue) {
+            return cached.promise;
+        }
+        userAccessCache.delete(uid);
     }
+    const cacheEntry = {
+        promise: Promise.resolve(null),
+        timestamp: now
+    };
     const promise = (async () => {
         try {
             const snap = await firebaseAdmin_1.admin.firestore().collection('users').doc(uid).get();
@@ -1055,20 +1127,26 @@ const loadUserAccess = async (uid) => {
             };
             const doctorAssignments = toDoctorAssignments(doctorAssignmentsRaw);
             const roles = mergeUniqueIds(toStringArray(data['roles']));
-            return {
+            const access = {
                 primaryClinicId,
                 primaryDoctorId,
                 additionalClinicIds,
                 doctorAssignments,
                 roles
             };
+            cacheEntry.resolvedValue = access;
+            cacheEntry.timestamp = Date.now();
+            return access;
         }
         catch (error) {
-            userAccessCache.delete(uid);
+            if (userAccessCache.get(uid) === cacheEntry) {
+                userAccessCache.delete(uid);
+            }
             throw error;
         }
     })();
-    userAccessCache.set(uid, promise);
+    cacheEntry.promise = promise;
+    userAccessCache.set(uid, cacheEntry);
     return promise;
 };
 const collectClinicIds = (access) => {
@@ -1371,7 +1449,19 @@ const joinQueueHandler = async (data, _context) => {
                     currentToken: 0,
                     totalPatients: 1,
                     completedPatients: 0,
-                    createdAt: firestore_1.FieldValue.serverTimestamp()
+                    cancelledPatients: 0,
+                    waitingPatients: 1,
+                    inProgressPatients: 0,
+                    createdAt: firestore_1.FieldValue.serverTimestamp(),
+                    metrics: {
+                        totalServiceMs: 0,
+                        serviceSamples: 0,
+                        totalWaitMs: 0,
+                        waitSamples: 0,
+                        avgServiceMs: null,
+                        avgWaitMs: null,
+                        updatedAt: firestore_1.FieldValue.serverTimestamp()
+                    }
                 };
                 transaction.set(queueRef, newQueueData);
             }
@@ -1379,7 +1469,8 @@ const joinQueueHandler = async (data, _context) => {
                 const queueData = queueDoc.data();
                 newTokenNumber = (queueData?.totalPatients || 0) + 1;
                 transaction.update(queueRef, {
-                    totalPatients: newTokenNumber
+                    totalPatients: newTokenNumber,
+                    waitingPatients: firestore_1.FieldValue.increment(1)
                 });
             }
             rawAccessToken = crypto_1.default.randomBytes(32).toString('hex');
@@ -2132,38 +2223,30 @@ const updatePatientStatusHandler = async (data, context) => {
                     readPatientSpan.fail({ error: readErr instanceof Error ? readErr.message : String(readErr) });
                     throw readErr;
                 });
-                // 2. If completing OR moving to in-progress we need queue doc (start read before awaiting patient)
-                let queueDocPromise = null;
-                let readQueueSpan = null;
-                if (newStatus === 'completed' || newStatus === 'in-progress') {
-                    readQueueSpan = (0, timing_1.startTiming)('updatePatientStatus.transaction.readQueue', {
-                        clinicId,
-                        doctorId,
-                        queueId,
-                        newStatus
-                    });
-                    queueDocPromise = transaction.get(queueRef)
-                        .then((docSnap) => {
-                        readQueueSpan?.succeed({ found: docSnap.exists });
-                        return docSnap;
-                    })
-                        .catch((queueErr) => {
-                        readQueueSpan?.fail({ error: queueErr instanceof Error ? queueErr.message : String(queueErr) });
-                        throw queueErr;
-                    });
-                }
                 const patientDoc = await patientDocPromise;
                 if (!patientDoc.exists) {
                     throw new functions.https.HttpsError('not-found', 'Patient document not found.');
                 }
                 const patientData = patientDoc.data();
-                let queueDoc = null;
-                if (queueDocPromise) {
-                    queueDoc = await queueDocPromise;
-                    if (!queueDoc.exists) {
-                        throw new functions.https.HttpsError('not-found', 'Queue document not found.');
+                const previousStatusRaw = patientData?.status;
+                const statusCounterFields = {
+                    waiting: 'waitingPatients',
+                    'in-progress': 'inProgressPatients',
+                    completed: 'completedPatients',
+                    cancelled: 'cancelledPatients'
+                };
+                const statusChanged = previousStatusRaw !== newStatus;
+                const queueCounterDeltas = {};
+                const recordCounterDelta = (status, delta) => {
+                    if (!status) {
+                        return;
                     }
-                }
+                    const fieldKey = statusCounterFields[status];
+                    if (!fieldKey) {
+                        return;
+                    }
+                    queueCounterDeltas[fieldKey] = (queueCounterDeltas[fieldKey] ?? 0) + delta;
+                };
                 // 3. If setting in-progress enforce single in-progress patient (read collection now)
                 if (newStatus === 'in-progress') {
                     const guardSpan = (0, timing_1.startTiming)('updatePatientStatus.transaction.inProgressGuard', {
@@ -2247,25 +2330,25 @@ const updatePatientStatusHandler = async (data, context) => {
                         }
                     };
                 }
+                if (statusChanged) {
+                    recordCounterDelta(previousStatusRaw, -1);
+                    recordCounterDelta(newStatus, 1);
+                }
                 transaction.update(patientRef, baseUpdate);
-                if (queueDoc) {
-                    const patientTokenNumber = patientData?.tokenNumber || 0;
-                    if (newStatus === 'completed') {
-                        const queueData = queueDoc.data();
-                        const currentCompletedPatients = queueData?.completedPatients || 0;
-                        transaction.update(queueRef, {
-                            completedPatients: currentCompletedPatients + 1,
-                            currentToken: patientTokenNumber, // last completed patient token
-                            updatedAt: firestore_1.FieldValue.serverTimestamp()
-                        });
+                const queueUpdatePayload = {};
+                for (const [field, delta] of Object.entries(queueCounterDeltas)) {
+                    if (!delta) {
+                        continue;
                     }
-                    else if (newStatus === 'in-progress') {
-                        // Update currentToken immediately when we start serving a patient to avoid UI lag on patient view
-                        transaction.update(queueRef, {
-                            currentToken: patientTokenNumber,
-                            updatedAt: firestore_1.FieldValue.serverTimestamp()
-                        });
-                    }
+                    queueUpdatePayload[field] = firestore_1.FieldValue.increment(delta);
+                }
+                const patientTokenNumber = patientData?.tokenNumber || 0;
+                if (newStatus === 'completed' || newStatus === 'in-progress') {
+                    queueUpdatePayload.currentToken = patientTokenNumber;
+                }
+                if (Object.keys(queueUpdatePayload).length > 0) {
+                    queueUpdatePayload.updatedAt = firestore_1.FieldValue.serverTimestamp();
+                    transaction.update(queueRef, queueUpdatePayload);
                 }
             });
             txnSpan.succeed({});

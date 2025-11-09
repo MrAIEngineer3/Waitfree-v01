@@ -18,6 +18,8 @@ import {
     type QueueStatus,
 } from '../lib/hooks/use-dashboard-queue-realtime-bridge';
 import { markPhase, queueProfilingEnabled, recordRender, recordSnapshot } from '../lib/profiling';
+import { computeQueueSummaryStats } from '../lib/queueStats';
+import type { QueueSummaryStats } from '../types/queue';
 import ImprovedQueueList from './ImprovedQueueList';
 import { ManualAddPatientDialog } from './ManualAddPatientDialog';
 
@@ -87,6 +89,14 @@ export default function DashboardImpl() {
     gcTime: 30 * 60 * 1000,
   });
 
+  const patientsQuery = useQuery<DashboardQueuePatient[]>({
+    queryKey: patientsQueryKey,
+    enabled: false,
+    queryFn: async () => [],
+    staleTime: Infinity,
+    gcTime: 30 * 60 * 1000,
+  });
+
   const queueSnapshotLabel = useMemo(() => `${renderLabel}:queue`, [renderLabel]);
 
   const handleQueueRealtimeError = useCallback((message: string | null) => {
@@ -123,6 +133,11 @@ export default function DashboardImpl() {
   }, [clinicId, doctorId]);
 
   const queue = queueHydrated ? queueQuery.data ?? null : null;
+
+  const queueStats = useMemo<QueueSummaryStats>(
+    () => computeQueueSummaryStats({ patients: patientsQuery.data, queue }),
+    [patientsQuery.data, queue]
+  );
 
   useEffect(() => {
     const phaseLabel = `${renderLabelRef.current}:auth`;
@@ -261,7 +276,7 @@ export default function DashboardImpl() {
     <>
       <div className="space-y-4">
         {/* Compact Stats Bar */}
-        <CompactStatsBar />
+        <CompactStatsBar stats={queueStats} />
 
         {/* Main Queue Management - Hero Section */}
         <div className="w-full">

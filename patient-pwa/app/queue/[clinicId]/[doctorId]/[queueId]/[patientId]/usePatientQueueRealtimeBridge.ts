@@ -149,6 +149,7 @@ export function usePatientQueueRealtimeBridge({
       queue: { attempts: 0 },
       doctor: { attempts: 0 },
     };
+    const listenerOrder: ReadonlyArray<ListenerName> = ['patient', 'queue', 'doctor'];
 
     const cleanupListener = (name: ListenerName) => {
       const controller = listeners[name];
@@ -170,7 +171,7 @@ export function usePatientQueueRealtimeBridge({
     };
 
     const cleanupAll = () => {
-      (Object.keys(listeners) as ListenerName[]).forEach((name) => cleanupListener(name));
+      listenerOrder.forEach((name) => cleanupListener(name));
     };
 
     const scheduleRetry = (name: ListenerName, options?: { immediate?: boolean; resetAttempts?: boolean }) => {
@@ -258,6 +259,7 @@ export function usePatientQueueRealtimeBridge({
         }
 
         if (authState.attempts >= MAX_SILENT_AUTH_RETRIES) {
+          cleanupAll();
           handleAuthFailure(classification.message);
           return;
         }
@@ -275,8 +277,9 @@ export function usePatientQueueRealtimeBridge({
             if (result.ok) {
               authState.attempts = 0;
               reportError(null);
-              scheduleRetry(name, { immediate: true, resetAttempts: true });
+              restartAllListeners();
             } else if (authState.attempts >= MAX_SILENT_AUTH_RETRIES) {
+              cleanupAll();
               handleAuthFailure(result.message ?? classification.message);
             } else {
               reportError(result.message ?? classification.message);
@@ -290,6 +293,7 @@ export function usePatientQueueRealtimeBridge({
             }
             const fallbackMessage = refreshErr instanceof Error ? refreshErr.message : classification.message;
             if (authState.attempts >= MAX_SILENT_AUTH_RETRIES) {
+              cleanupAll();
               handleAuthFailure(fallbackMessage);
             } else {
               reportError(fallbackMessage);
@@ -481,6 +485,19 @@ export function usePatientQueueRealtimeBridge({
       doctor: subscribeDoctor,
     };
 
+    const restartAllListeners = () => {
+      if (cancelled) {
+        return;
+      }
+      listenerOrder.forEach((listenerName) => {
+        cleanupListener(listenerName);
+        listeners[listenerName].attempts = 0;
+      });
+      listenerOrder.forEach((listenerName) => {
+        scheduleRetry(listenerName, { immediate: true, resetAttempts: true });
+      });
+    };
+
     subscribePatient();
     subscribeQueue();
     subscribeDoctor();
@@ -529,6 +546,13 @@ export function classifyFirestoreError(error: unknown): FirestoreErrorClassifica
   }
 
   if (code && TRANSIENT_ERROR_CODES.has(code)) {
+    if (code === 'internal' && typeof firebaseError?.message === 'string' && /Unexpected state/i.test(firebaseError.message)) {
+      return {
+        code,
+        kind: 'fatal',
+        message: 'Realtime listener hit an unexpected internal state. Please refresh this page.',
+      };
+    }
     return {
       code,
       kind: 'transient',
