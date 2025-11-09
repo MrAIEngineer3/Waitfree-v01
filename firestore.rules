@@ -109,11 +109,11 @@ service cloud.firestore {
       allow create, update, delete: if false;
 
       match /doctors/{doctorId} {
-        allow get, list: if hasDoctorAccess(clinicId, doctorId);
+        allow get, list: if hasClinicAccess(clinicId);
         allow create, update, delete: if false;
 
         match /daily/{summaryId} {
-          allow get, list: if hasDoctorAccess(clinicId, doctorId);
+          allow get, list: if hasClinicAccess(clinicId);
           allow create, update, delete: if false;
         }
       }
