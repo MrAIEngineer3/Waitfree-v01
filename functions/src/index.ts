@@ -1,5 +1,5 @@
 import type { DocumentData, DocumentReference, DocumentSnapshot, Firestore } from 'firebase-admin/firestore';
-import { FieldValue } from 'firebase-admin/firestore';
+import { FieldPath, FieldValue } from 'firebase-admin/firestore';
 // Ensure local .env variables are loaded when running in emulator / local scripts
 import crypto from 'crypto';
 import * as functions from 'firebase-functions/v1';
@@ -1210,6 +1210,8 @@ type UserAccess = {
   primaryClinicId: string | null;
   primaryDoctorId: string | null;
   additionalClinicIds: string[];
+  managedClinicIds: string[];
+  staffClinicIds: string[];
   doctorAssignments: Record<string, string[]>;
   roles: string[];
 };
@@ -1301,10 +1303,13 @@ const loadUserAccess = async (uid: string): Promise<UserAccess> => {
       const primaryClinicId = toTrimmedString((data as Record<string, unknown>)['clinicId']);
       const primaryDoctorId = toTrimmedString((data as Record<string, unknown>)['doctorId']);
 
+      const primaryClinicIds = toStringArray((data as Record<string, unknown>)['clinicIds']);
+      const staffClinicIds = toStringArray((data as Record<string, unknown>)['staffClinicIds']);
+      const managedClinicIds = toStringArray((data as Record<string, unknown>)['managedClinics']);
       const additionalClinicIds = mergeUniqueIds(
-        toStringArray((data as Record<string, unknown>)['clinicIds']),
-        toStringArray((data as Record<string, unknown>)['staffClinicIds']),
-        toStringArray((data as Record<string, unknown>)['managedClinics']),
+        primaryClinicIds,
+        staffClinicIds,
+        managedClinicIds,
         toStringArray((data as Record<string, unknown>)['additionalClinicIds'])
       );
 
@@ -1325,6 +1330,8 @@ const loadUserAccess = async (uid: string): Promise<UserAccess> => {
         primaryClinicId,
         primaryDoctorId,
         additionalClinicIds,
+        managedClinicIds,
+        staffClinicIds,
         doctorAssignments,
         roles
       };
@@ -1351,6 +1358,16 @@ const collectClinicIds = (access: UserAccess): Set<string> => {
   const ids = new Set<string>();
   if (access.primaryClinicId) {
     ids.add(access.primaryClinicId);
+  }
+  for (const value of access.managedClinicIds) {
+    if (value) {
+      ids.add(value);
+    }
+  }
+  for (const value of access.staffClinicIds) {
+    if (value) {
+      ids.add(value);
+    }
   }
   for (const value of access.additionalClinicIds) {
     ids.add(value);
@@ -1420,7 +1437,31 @@ interface EnsureStaffAccessOptions {
   doctorId?: string;
   action: string;
   allowClinicAdminWithoutDoctor?: boolean;
+  autoAssignDoctorAccess?: boolean;
 }
+
+const assignDoctorAccessToUser = async (uid: string, clinicId: string, doctorId: string): Promise<void> => {
+  const userRef = admin.firestore().collection('users').doc(uid);
+  const fieldPath = new FieldPath('doctorAssignments', clinicId);
+  try {
+    await userRef.update(fieldPath, FieldValue.arrayUnion(doctorId));
+  } catch (error) {
+    const code = (error as { code?: number }).code;
+    const message = (error as { message?: string }).message ?? '';
+    const isMissing = code === 5 || message.includes('No document to update');
+    if (!isMissing) {
+      throw error;
+    }
+    await userRef.set(
+      {
+        doctorAssignments: {
+          [clinicId]: [doctorId]
+        }
+      },
+      { merge: true }
+    );
+  }
+};
 
 const ensureStaffAccess = async (
   context: CallableCtx,
@@ -1433,14 +1474,45 @@ const ensureStaffAccess = async (
     throw new functions.https.HttpsError('permission-denied', 'Patient session cannot perform this action');
   }
 
-  const access = await loadUserAccess(context.auth.uid);
+  const uid = context.auth.uid;
+  let access = await loadUserAccess(uid);
   if (!hasClinicAccess(access, options.clinicId)) {
     throw new functions.https.HttpsError('permission-denied', `Not authorized to ${options.action}`);
   }
   if (options.doctorId) {
-    const doctorAllowed =
-      hasDoctorAccess(access, options.clinicId, options.doctorId) ||
-      (options.allowClinicAdminWithoutDoctor === true && access.roles.includes('clinic-admin'));
+    const isDoctorAccessible = (currentAccess: UserAccess): boolean => {
+      const managerAllowed = options.allowClinicAdminWithoutDoctor === true && (
+        currentAccess.roles.includes('clinic-admin') || currentAccess.managedClinicIds.includes(options.clinicId)
+      );
+      return hasDoctorAccess(currentAccess, options.clinicId, options.doctorId!) || managerAllowed;
+    };
+
+    let doctorAllowed = isDoctorAccessible(access);
+
+    if (!doctorAllowed && options.autoAssignDoctorAccess === true) {
+      try {
+        await assignDoctorAccessToUser(uid, options.clinicId, options.doctorId);
+        functions.logger.debug('Auto-assigned doctor access for staff user', {
+          uid,
+          clinicId: options.clinicId,
+          doctorId: options.doctorId,
+          action: options.action
+        });
+        userAccessCache.delete(uid);
+        access = await loadUserAccess(uid);
+        doctorAllowed = isDoctorAccessible(access);
+      } catch (assignmentError) {
+        functions.logger.warn('Failed to auto-assign doctor access', {
+          uid,
+          clinicId: options.clinicId,
+          doctorId: options.doctorId,
+          actionTried: options.action,
+          error: assignmentError instanceof Error ? assignmentError.message : String(assignmentError)
+        });
+        throw new functions.https.HttpsError('permission-denied', `Not authorized to ${options.action} for this doctor`);
+      }
+    }
+
     if (!doctorAllowed) {
       throw new functions.https.HttpsError('permission-denied', `Not authorized to ${options.action} for this doctor`);
     }
@@ -2163,7 +2235,8 @@ const manualAddPatientHandler = async (data: ManualAddPatientRequest, context: C
     await ensureStaffAccess(context, {
       clinicId,
       doctorId,
-      action: 'manually add patient'
+      action: 'manually add patient',
+      autoAssignDoctorAccess: true
     });
 
     const patientInput = data?.patient ?? {};
@@ -2733,7 +2806,8 @@ const updatePatientStatusHandler = async (data: UpdatePatientStatusRequest, cont
       await ensureStaffAccess(context, {
         clinicId,
         doctorId,
-        action: 'update patient status'
+        action: 'update patient status',
+        autoAssignDoctorAccess: true
       });
     }
 
@@ -3444,7 +3518,8 @@ const advanceQueueHandler = async (data: AdvanceQueueRequest, context: CallableC
     await ensureStaffAccess(context, {
       clinicId,
       doctorId,
-      action: 'advance queue'
+      action: 'advance queue',
+      autoAssignDoctorAccess: true
     });
 
     const db = admin.firestore();
@@ -3593,7 +3668,8 @@ const updateQueueStatusHandler = async (data: UpdateQueueStatusRequest, _context
     await ensureStaffAccess(_context, {
       clinicId,
       doctorId,
-      action: 'update queue status'
+      action: 'update queue status',
+      autoAssignDoctorAccess: true
     });
 
     // Define database reference
@@ -3686,7 +3762,8 @@ const setQueueAutoAdvanceHandler = async (data: SetQueueAutoAdvanceRequest, _con
     await ensureStaffAccess(_context, {
       clinicId,
       doctorId,
-      action: 'update queue auto-advance'
+      action: 'update queue auto-advance',
+      autoAssignDoctorAccess: true
     });
     const ref = admin.firestore().collection('clinics').doc(clinicId)
       .collection('doctors').doc(doctorId)
@@ -3743,7 +3820,8 @@ const setRealTimeStatusHandler = async (data: SetRealTimeStatusRequest, context:
       clinicId,
       doctorId,
       action: 'update doctor real-time status',
-      allowClinicAdminWithoutDoctor: true
+      allowClinicAdminWithoutDoctor: true,
+      autoAssignDoctorAccess: true
     });
 
     const result = await applySetDoctorRealTimeStatus({
@@ -4073,7 +4151,8 @@ const updateDefaultRotaHandler = async (data: UpdateDefaultRotaRequest, context:
       clinicId,
       doctorId,
       action: 'update default rota',
-      allowClinicAdminWithoutDoctor: true
+      allowClinicAdminWithoutDoctor: true,
+      autoAssignDoctorAccess: true
     });
 
     const rota = await applyUpdateDoctorDefaultRota({
@@ -4142,7 +4221,8 @@ const createOverrideHandler = async (data: CreateOverrideRequest, context: Calla
       clinicId: payload.clinicId,
       doctorId: payload.doctorId,
       action: 'create schedule override',
-      allowClinicAdminWithoutDoctor: true
+      allowClinicAdminWithoutDoctor: true,
+      autoAssignDoctorAccess: true
     });
 
     const result = await applyCreateScheduleOverride(payload);
@@ -4206,7 +4286,8 @@ const updateOverrideHandler = async (data: CreateOverrideRequest, context: Calla
       clinicId: payload.clinicId,
       doctorId: payload.doctorId,
       action: 'update schedule override',
-      allowClinicAdminWithoutDoctor: true
+      allowClinicAdminWithoutDoctor: true,
+      autoAssignDoctorAccess: true
     });
 
     const result = await applyUpdateScheduleOverride(payload);
@@ -4257,7 +4338,8 @@ const deleteOverrideHandler = async (data: { clinicId?: string; doctorId?: strin
       clinicId,
       doctorId,
       action: 'delete schedule override',
-      allowClinicAdminWithoutDoctor: true
+      allowClinicAdminWithoutDoctor: true,
+      autoAssignDoctorAccess: true
     });
 
     const result = await applyDeleteScheduleOverride({ clinicId, doctorId, overrideId });
